@@ -35,9 +35,9 @@ class LessonCompletionService:
             if not lesson:
                 return False, "Lesson not found", {}
             
-            # Get lesson assessments
+            # Get lesson assessments (only published ones count as requirements)
             lesson_quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first()
-            lesson_assignment = Assignment.query.filter_by(lesson_id=lesson_id).first()
+            lesson_assignment = Assignment.query.filter_by(lesson_id=lesson_id, is_published=True).first()
             
             requirements = {
                 'reading_requirements_met': False,
@@ -263,6 +263,160 @@ class LessonCompletionService:
             return False, f"Error completing lesson: {str(e)}", {}
     
     @staticmethod
+    def _propagate_score_changes(student_id: int, lesson_id: int, lesson_completion: Optional[LessonCompletion] = None) -> None:
+        """
+        Push recalculated lesson scores up the stack:
+        lesson -> module score -> enrollment progress.
+        
+        Called whenever an assessment is published, regraded, removed or a
+        reading update changes the lesson score.
+        """
+        from ..services.progression_service import ProgressionService
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        from ..models.course_models import Enrollment
+        
+        if lesson_completion is None:
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+        if not lesson_completion:
+            return
+        
+        lesson = lesson_completion.lesson
+        if not lesson or not lesson.module:
+            return
+        
+        course_id = lesson.module.course_id
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id, course_id=course_id
+        ).first()
+        
+        if enrollment and lesson.module_id:
+            ProgressionService._update_course_contribution_score(
+                student_id, lesson.module_id, enrollment.id, commit=False
+            )
+        
+        # Re-derive enrollment progress/completion from published content
+        EnrollmentProgressService.sync_student_course(student_id, course_id, commit=True)
+    
+    @staticmethod
+    def store_and_propagate_lesson_scores(student_id: int, lesson_id: int, auto_complete: bool = True, propagate: bool = True) -> Optional[Dict]:
+        """
+        Recompute and persist stored component scores for a lesson, optionally
+        auto-complete the lesson when requirements become satisfied, then
+        propagate the new score to module and enrollment progress.
+        
+        Args:
+            auto_complete: mark the lesson completed when requirements become met
+            propagate: refresh the parent module score + enrollment progress
+        
+        Returns the recomputed score payload, or None when the student has no
+        progress record for this lesson.
+        """
+        try:
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+            
+            if not lesson_completion:
+                current_app.logger.warning(
+                    f"No lesson completion found for student {student_id}, lesson {lesson_id}"
+                )
+                return None
+            
+            score_data = lesson_completion.calculate_and_store_component_scores(commit=False)
+            
+            # Grading / publishing can make a lesson completable
+            if auto_complete:
+                can_complete, _, _ = LessonCompletionService.check_lesson_completion_requirements(
+                    student_id, lesson_id
+                )
+                if can_complete and not lesson_completion.completed:
+                    lesson_completion.completed = True
+                    lesson_completion.completed_at = now_local()
+                    current_app.logger.info(
+                        f"Lesson {lesson_id} auto-completed for student {student_id} after content change"
+                    )
+            
+            db.session.commit()
+            
+            if propagate:
+                LessonCompletionService._propagate_score_changes(
+                    student_id, lesson_id, lesson_completion
+                )
+            
+            return score_data
+            
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(
+                f"Error storing lesson scores for student {student_id}, lesson {lesson_id}: {str(e)}"
+            )
+            return None
+    
+    @staticmethod
+    def recalculate_lesson_for_all_students(lesson_id: int) -> Dict:
+        """
+        Recompute stored scores for EVERY student with progress in a lesson.
+        
+        Triggered when an assessment is created/published/unpublished/deleted or
+        a lesson's content changes, so scores taken before the assessment existed
+        are refreshed instead of staying stale.
+        """
+        summary = {"lesson_id": lesson_id, "students_updated": 0, "lessons_updated": 0}
+        try:
+            lesson = Lesson.query.get(lesson_id)
+            if not lesson:
+                return summary
+            
+            completions = LessonCompletion.query.filter_by(lesson_id=lesson_id).all()
+            if not completions:
+                return summary
+            
+            from ..services.progression_service import ProgressionService
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            from ..models.course_models import Enrollment
+            touched_students = set()
+            
+            for completion in completions:
+                completion.calculate_and_store_component_scores(commit=False)
+                can_complete, _, _ = LessonCompletionService.check_lesson_completion_requirements(
+                    completion.student_id, lesson_id
+                )
+                if can_complete and not completion.completed:
+                    completion.completed = True
+                    completion.completed_at = now_local()
+                touched_students.add(completion.student_id)
+                summary["lessons_updated"] += 1
+            
+            db.session.flush()
+            
+            # One module score refresh + one enrollment sync per affected student
+            course_id = lesson.module.course_id if lesson.module else None
+            for student_id in touched_students:
+                if course_id and lesson.module_id:
+                    enrollment = Enrollment.query.filter_by(
+                        student_id=student_id, course_id=course_id
+                    ).first()
+                    if enrollment:
+                        ProgressionService._update_course_contribution_score(
+                            student_id, lesson.module_id, enrollment.id, commit=False
+                        )
+                if course_id:
+                    EnrollmentProgressService.sync_student_course(
+                        student_id, course_id, commit=False
+                    )
+            
+            db.session.commit()
+            summary["students_updated"] = len(touched_students)
+            
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Lesson rescore failed for lesson {lesson_id}: {str(e)}")
+        
+        return summary
+    
+    @staticmethod
     def update_lesson_score_after_grading(student_id: int, lesson_id: int) -> bool:
         """
         Update lesson completion after quiz or assignment grading
@@ -282,6 +436,9 @@ class LessonCompletionService:
             if not lesson_completion:
                 return True  # No completion to update
             
+            # Persist freshly computed component scores (the grade just changed)
+            lesson_completion.calculate_and_store_component_scores(commit=False)
+            
             # Update timestamp to trigger score recalculation
             lesson_completion.updated_at = now_local()
             
@@ -296,6 +453,11 @@ class LessonCompletionService:
                 current_app.logger.info(f"Lesson {lesson_id} auto-completed for student {student_id} after grading")
             
             db.session.commit()
+            
+            # Push the new score to module + enrollment progress
+            LessonCompletionService._propagate_score_changes(
+                student_id, lesson_id, lesson_completion
+            )
             
             # Log score update
             new_score = lesson_completion.calculate_lesson_score()
@@ -386,8 +548,10 @@ class LessonCompletionService:
                 current_app.logger.warning(f"No lesson completion found for student {student_id}, lesson {lesson_id}")
                 return False
             
-            # Recalculate and store component scores
-            score_data = lesson_completion.calculate_and_store_component_scores()
+            # Recalculate, store and propagate component scores
+            score_data = LessonCompletionService.store_and_propagate_lesson_scores(student_id, lesson_id)
+            if not score_data:
+                return False
             
             current_app.logger.info(
                 f"Updated lesson score after quiz grading - Student: {student_id}, "
@@ -423,8 +587,10 @@ class LessonCompletionService:
                 current_app.logger.warning(f"No lesson completion found for student {student_id}, lesson {lesson_id}")
                 return False
             
-            # Recalculate and store component scores
-            score_data = lesson_completion.calculate_and_store_component_scores()
+            # Recalculate, store and propagate component scores
+            score_data = LessonCompletionService.store_and_propagate_lesson_scores(student_id, lesson_id)
+            if not score_data:
+                return False
             
             current_app.logger.info(
                 f"Updated lesson score after assignment grading - Student: {student_id}, "
@@ -460,8 +626,14 @@ class LessonCompletionService:
                 # No lesson completion record to update
                 return False
             
-            # Recalculate and store component scores
-            score_data = lesson_completion.calculate_and_store_component_scores()
+            # Recalculate and store component scores. Reading/engagement updates
+            # happen on autosave, so skip auto-completion and module/enrollment
+            # propagation here - those run on explicit completion and grading.
+            score_data = LessonCompletionService.store_and_propagate_lesson_scores(
+                student_id, lesson_id, auto_complete=False, propagate=False
+            )
+            if not score_data:
+                return False
             
             current_app.logger.info(
                 f"Updated lesson score after reading/engagement - Student: {student_id}, "
@@ -506,25 +678,19 @@ class LessonCompletionService:
                     'completion_status': 'not_started'
                 }
             
-            # Check if we have stored component scores
-            if lesson_completion.score_last_updated:
-                # Use stored scores
-                breakdown = {
-                    'lesson_score': lesson_completion.lesson_score or 0.0,
-                    'reading_component': lesson_completion.reading_component_score or 0.0,
-                    'engagement_component': lesson_completion.engagement_component_score or 0.0,
-                    'quiz_component': lesson_completion.quiz_component_score or 0.0,
-                    'assignment_component': lesson_completion.assignment_component_score or 0.0,
-                    'score_last_updated': lesson_completion.score_last_updated.isoformat() if lesson_completion.score_last_updated else None
-                }
-            else:
-                # Calculate fresh scores
-                breakdown = lesson_completion.calculate_and_store_component_scores()
+            # Always recompute from live data: a quiz/assignment may have been
+            # published, regraded or removed since the stored snapshot was taken.
+            # commit=False keeps this read path from opening its own transaction.
+            breakdown = lesson_completion.calculate_and_store_component_scores(commit=False)
+            breakdown['score_last_updated'] = (
+                lesson_completion.score_last_updated.isoformat()
+                if lesson_completion.score_last_updated else None
+            )
             
             # Add assessment availability info
             from ..models.course_models import Quiz, Assignment
             has_quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first() is not None
-            has_assignment = Assignment.query.filter_by(lesson_id=lesson_id).first() is not None
+            has_assignment = Assignment.query.filter_by(lesson_id=lesson_id, is_published=True).first() is not None
             
             breakdown.update({
                 'has_quiz': has_quiz,

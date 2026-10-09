@@ -51,6 +51,21 @@ def student_required(f):
 
 student_bp = Blueprint("student_bp", __name__, url_prefix="/api/v1/student")
 
+def _enforce_module_release_access(lesson, enrollment):
+    """
+    Block access to lessons in modules that are not yet released for the
+    learner's cohort (drip / manual release settings).
+    Returns an error response (or None when access is allowed).
+    """
+    from ..services.enrollment_progress_service import EnrollmentProgressService
+    if not EnrollmentProgressService.is_module_released(lesson.module, enrollment):
+        return jsonify({
+            "message": "This module has not been released yet for your cohort",
+            "error_code": "module_not_released",
+            "module_id": lesson.module_id
+        }), 403
+    return None
+
 # --- Student Dashboard Routes ---
 
 
@@ -230,6 +245,12 @@ def get_course_progress(course_id):
         course_id=course_id
     ).first()
     
+    # Fresh, published-course progress (never the released-only subset)
+    from ..services.enrollment_progress_service import EnrollmentProgressService
+    counts = EnrollmentProgressService.get_progress_counts(
+        current_user_id, course_id, enrollment
+    )
+    
     # Get completed lessons
     completed_lessons = LessonCompletion.query.filter_by(
         student_id=current_user_id,
@@ -282,7 +303,12 @@ def get_course_progress(course_id):
     
     return jsonify({
         'course': course.to_dict(),
-        'overall_progress': enrollment.progress * 100,
+        'overall_progress': counts["progress"] * 100,
+        'total_modules': counts["total_modules"],
+        'completed_modules': counts["completed_modules"],
+        'released_module_count': counts["released_modules"],
+        'total_lessons': counts["total_lessons"],
+        'completed_lessons': counts["completed_lessons"],
         'total_time_spent': user_progress.total_time_spent if user_progress else 0,
         'last_accessed': user_progress.last_accessed.isoformat() if user_progress else None,
         'current_lesson_id': user_progress.current_lesson_id if user_progress else None,
@@ -307,6 +333,10 @@ def update_lesson_progress(lesson_id):
     
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
+    
+    blocked = _enforce_module_release_access(lesson, enrollment)
+    if blocked:
+        return blocked
     
     # Find or create lesson completion record
     lesson_completion = LessonCompletion.query.filter_by(
@@ -556,10 +586,14 @@ def get_lesson_progress(lesson_id):
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
     
+    blocked = _enforce_module_release_access(lesson, enrollment)
+    if blocked:
+        return blocked
+    
     # Check if lesson has quiz or assignment for score calculation
     from ..models.course_models import Quiz, Assignment
-    has_quiz = Quiz.query.filter_by(lesson_id=lesson_id).first() is not None
-    has_assignment = Assignment.query.filter_by(lesson_id=lesson_id).first() is not None
+    has_quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first() is not None
+    has_assignment = Assignment.query.filter_by(lesson_id=lesson_id, is_published=True).first() is not None
     
     # Get lesson completion record
     lesson_completion = LessonCompletion.query.filter_by(
@@ -639,6 +673,10 @@ def complete_lesson(lesson_id):
     
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
+    
+    blocked = _enforce_module_release_access(lesson, enrollment)
+    if blocked:
+        return blocked
     
     # Update lesson progress first (reading, engagement, etc.)
     existing_completion = LessonCompletion.query.filter_by(
@@ -738,25 +776,21 @@ def complete_lesson(lesson_id):
                 user_progress.current_lesson_id = lesson_id
                 user_progress.last_accessed = now_local()
                 
-                # Calculate overall course progress
-                total_lessons = db.session.query(Lesson).join(Module).filter(
-                    Module.course_id == lesson.module.course_id
-                ).count()
-                
-                completed_lessons = db.session.query(LessonCompletion).join(Lesson).join(Module).filter(
-                    Module.course_id == lesson.module.course_id,
-                    LessonCompletion.student_id == current_user_id,
-                    LessonCompletion.completed == True  # Only count truly completed lessons
-                ).count()
-                
-                progress_percentage = completed_lessons / total_lessons if total_lessons > 0 else 0
-                
-                # Update enrollment progress
+                # Calculate overall course progress against the FULL published
+                # course (never the released subset, never draft modules).
+                from ..services.enrollment_progress_service import EnrollmentProgressService
+                counts = EnrollmentProgressService.get_progress_counts(
+                    current_user_id, lesson.module.course_id, enrollment
+                )
+
+                total_lessons = counts["total_lessons"]
+                completed_lessons = counts["completed_lessons"]
+                progress_percentage = counts["progress"]
+
+                # Update enrollment progress (handles completion / reopen)
+                EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
                 enrollment.progress = progress_percentage
-                if progress_percentage >= 1.0 and not enrollment.completed_at:
-                    enrollment.completed_at = now_local()
-                    enrollment.status = 'completed'
-                
+
                 user_progress.completion_percentage = progress_percentage * 100
                 
                 db.session.commit()
@@ -1598,38 +1632,31 @@ def complete_module(module_id):
             progress = UserProgress(
                 user_id=current_user_id,
                 course_id=module.course_id,
-                modules_completed=0,
-                lessons_completed=0,
                 total_time_spent=0,
                 last_accessed=now_local()
             )
             db.session.add(progress)
         
         # Update module completion
-        score = data.get('score', 0)
-        if score >= 80:  # Required passing score
-            progress.modules_completed += 1
-            progress.last_accessed = now_local()
-            
-            # Update enrollment progress
-            total_modules = len(module.course.modules) if module.course.modules else 1
-            enrollment.progress = min(progress.modules_completed / total_modules, 1.0)
-            
-            # Mark enrollment as completed when progress reaches 100%
-            if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = now_local()
-                enrollment.status = 'completed'
-            
-            if score > (enrollment.grade or 0):
-                enrollment.grade = score
+        score = data.get('score', 0) or 0
+        progress.last_accessed = now_local()
+        if score >= 80 and score > (enrollment.grade or 0):
+            enrollment.grade = score
+
+        # Progress / completion always derive from the published course.
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        counts = EnrollmentProgressService.sync_enrollment(enrollment, commit=False) or {}
+        progress.completion_percentage = (counts.get("progress") or 0.0) * 100
         
         db.session.commit()
         
         return jsonify({
             "message": "Module progress updated",
-            "progress": progress.to_dict() if hasattr(progress, 'to_dict') else {
-                'modules_completed': progress.modules_completed,
-                'lessons_completed': progress.lessons_completed,
+            "progress": {
+                'modules_completed': counts.get("completed_modules", 0),
+                'total_modules': counts.get("total_modules", 0),
+                'lessons_completed': counts.get("completed_lessons", 0),
+                'total_lessons': counts.get("total_lessons", 0),
                 'total_time_spent': progress.total_time_spent
             },
             "enrollment_progress": enrollment.progress,
@@ -1746,40 +1773,40 @@ def generate_certificate():
         if not course:
             return jsonify({"message": "Course not found"}), 404
         
-        # Check completion criteria
-        total_lessons = db.session.query(Lesson).join(Module).filter(
-            Module.course_id == course_id
-        ).count()
-        
-        completed_lessons = LessonCompletion.query.filter_by(
-            student_id=current_user_id,
-            completed=True
-        ).join(Lesson).join(Module).filter(
-            Module.course_id == course_id
-        ).count()
+        # Check completion criteria against the FULL published course.
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        counts = EnrollmentProgressService.get_progress_counts(
+            current_user_id, course_id, enrollment
+        )
+        total_lessons = counts["total_lessons"]
+        completed_lessons = counts["completed_lessons"]
+        published_modules = EnrollmentProgressService.get_published_modules(course)
         
         # Get module scores using cumulative_score (the actual calculated score)
         module_scores = []
-        modules = Module.query.filter_by(course_id=course_id).all()
-        for module in modules:
+        for module in published_modules:
             module_progress = ModuleProgress.query.filter_by(
                 student_id=current_user_id,
                 module_id=module.id
             ).first()
-            if module_progress:
-                # Use cumulative_score which is the properly calculated module score
-                module_scores.append(module_progress.cumulative_score or 0)
+            # Use cumulative_score which is the properly calculated module score
+            module_scores.append((module_progress.cumulative_score or 0) if module_progress else 0)
         
         overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
         
         # Check eligibility - require passing score (80%) for all modules
         # Lessons completion is tracked per-module, not globally
-        all_modules_passing = all(score >= 80 for score in module_scores) if module_scores else False
+        all_modules_passing = (
+            len(published_modules) > 0
+            and len(module_scores) == len(published_modules)
+            and all(score >= 80 for score in module_scores)
+        )
         passing_overall = overall_score >= 80
+        all_content_done = counts["is_complete"]
         
         # For certificate eligibility, we check if the student has passed all modules
         # (each module requires 80% to unlock the next one)
-        if not (all_modules_passing and passing_overall):
+        if not (all_modules_passing and passing_overall and all_content_done):
             return jsonify({
                 "success": False,
                 "message": "Course completion requirements not met",
@@ -1787,6 +1814,7 @@ def generate_certificate():
                     "lessons_completed": f"{completed_lessons}/{total_lessons}",
                     "overall_score": f"{overall_score:.1f}%",
                     "all_modules_passing": all_modules_passing,
+                    "modules_completed": f"{counts['completed_modules']}/{counts['total_modules']}",
                     "module_scores": [f"{score:.1f}%" for score in module_scores],
                     "eligible": False
                 }
@@ -1819,10 +1847,10 @@ def generate_certificate():
         
         db.session.add(certificate)
         
-        # Update enrollment completion
-        enrollment.completion_date = now_local()
+        # Update enrollment completion through the authoritative service
+        # (progress is derived, never hard-coded to 1.0)
         enrollment.grade = overall_score
-        enrollment.progress = 1.0
+        EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
         
         db.session.commit()
         

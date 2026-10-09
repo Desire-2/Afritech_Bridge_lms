@@ -599,21 +599,34 @@ def get_course_for_learning(course_id):
             db.session.commit()
 
         if enrollment:
-            completed_modules = sum(
-                1 for item in modules_progress
-                if item["progress"] and item["progress"].get("status") == "completed"
+            # Progress must be measured against the whole published course.
+            # Using only the currently released modules/lessons made an
+            # unfinished course show 100% as soon as the released part was done.
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            counts = EnrollmentProgressService.get_progress_counts(
+                student_id, course_id, enrollment
             )
+            completed_modules = counts["completed_modules"]
             progress_data = {
-                "overall_progress": (
-                    completed_modules / len(modules) * 100 if modules else 0
-                ),
+                "overall_progress": round(counts["progress"] * 100, 2),
                 "completed_modules": completed_modules,
-                "total_modules": len(modules),
-                "lessons_completed": completed_lessons_count,
-                "total_lessons": len(all_visible_lessons),
+                "total_modules": counts["total_modules"],
+                "lessons_completed": counts["completed_lessons"],
+                "total_lessons": counts["total_lessons"],
+                "released_module_count": counts["released_modules"],
+                "released_lessons_completed": completed_lessons_count,
+                "is_course_complete": counts["is_complete"],
                 "current_lesson_id": current_lesson_id,
                 "modules": modules_progress,
             }
+            # Keep the stored enrollment progress in step with the real numbers
+            # so admin/instructor views do not show a stale 100%.
+            try:
+                EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
+                db.session.commit()
+            except Exception as sync_error:
+                db.session.rollback()
+                current_app.logger.warning(f"Enrollment progress sync failed: {sync_error}")
         else:
             progress_data = {
                 "overall_progress": 0,

@@ -66,14 +66,14 @@ class LessonCompletion(db.Model):
     __table_args__ = (db.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_completion_uc'),)
     
     def has_quiz(self):
-        """Check if this lesson has an associated quiz"""
+        """Check if this lesson has an associated published quiz"""
         from ..models.course_models import Quiz
-        return Quiz.query.filter_by(lesson_id=self.lesson_id).first() is not None
+        return Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first() is not None
     
     def has_assignment(self):
-        """Check if this lesson has an associated assignment"""
+        """Check if this lesson has an associated published assignment"""
         from ..models.course_models import Assignment
-        return Assignment.query.filter_by(lesson_id=self.lesson_id).first() is not None
+        return Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first() is not None
     
     def calculate_lesson_score(self):
         """
@@ -102,7 +102,7 @@ class LessonCompletion(db.Model):
         from ..models.course_models import Quiz, Assignment, AssignmentSubmission
         
         lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
@@ -233,7 +233,7 @@ class LessonCompletion(db.Model):
         from ..models.course_models import Quiz, Assignment, AssignmentSubmission
         
         lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
@@ -360,10 +360,14 @@ class LessonCompletion(db.Model):
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None
         }
 
-    def calculate_and_store_component_scores(self):
+    def calculate_and_store_component_scores(self, commit: bool = True):
         """
         Calculate individual component scores and store them in the database.
         This should be called whenever quiz or assignment grades are updated.
+        
+        Args:
+            commit: Commit the transaction immediately. Pass False when the
+                    caller will commit a larger batch of changes itself.
         
         Returns:
             dict: Component scores and overall lesson score
@@ -377,7 +381,7 @@ class LessonCompletion(db.Model):
         
         # Check what assessments exist for this lesson
         lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
@@ -499,11 +503,14 @@ class LessonCompletion(db.Model):
         # Update the completion status
         self.updated_at = now_local()
         
-        try:
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            raise e
+        if commit:
+            try:
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                raise e
+        else:
+            db.session.flush()
             
         return {
             'reading_component': reading_component,
@@ -951,17 +958,16 @@ class ModuleProgress(db.Model):
         """
         Calculate the module score as the average of all lesson scores.
         Each lesson score is comprehensive (reading + engagement + quiz + assignment).
+        Lessons the student has not scored yet count as 0, so a partially done
+        module never reports a full score.
         Returns a score from 0-100.
         """
-        from sqlalchemy import func
-        
         # Get all lessons in this module
         module_lessons = self.module.lessons.all()
         if not module_lessons:
             return 0.0
         
         total_score = 0.0
-        scored_lessons = 0
         
         for lesson in module_lessons:
             # Get lesson completion for this student
@@ -972,12 +978,10 @@ class ModuleProgress(db.Model):
             
             if completion:
                 # Use the comprehensive lesson score calculation
-                lesson_score = completion.calculate_lesson_score()
-                total_score += lesson_score
-                scored_lessons += 1
+                total_score += completion.calculate_lesson_score()
+            # else: unattempted lesson contributes 0
         
-        # Calculate average, or return 0 if no lessons
-        return (total_score / scored_lessons) if scored_lessons > 0 else 0.0
+        return (total_score / len(module_lessons))
     
     def calculate_lessons_average_score(self):
         """Alias for calculate_module_score for backwards compatibility"""
@@ -1011,10 +1015,17 @@ class ModuleProgress(db.Model):
         lesson_ids = [lesson.id for lesson in self.module.lessons] if self.module else []
         
         # Check for lesson-level quizzes (quizzes linked to lessons in this module)
-        has_quizzes = Quiz.query.filter(Quiz.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        # Only PUBLISHED assessments affect weighting - drafts must not.
+        has_quizzes = Quiz.query.filter(
+            Quiz.lesson_id.in_(lesson_ids),
+            Quiz.is_published == True  # noqa: E712
+        ).first() is not None if lesson_ids else False
         
         # Check for lesson-level assignments
-        has_assignments = Assignment.query.filter(Assignment.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        has_assignments = Assignment.query.filter(
+            Assignment.lesson_id.in_(lesson_ids),
+            Assignment.is_published == True  # noqa: E712
+        ).first() is not None if lesson_ids else False
         
         # Check for module-level final assessment quiz (quiz with module_id but no lesson_id)
         # This correctly identifies if a final assessment EXISTS, not just if one has been taken

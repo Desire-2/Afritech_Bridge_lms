@@ -76,6 +76,11 @@ def create_quiz():
         db.session.add(quiz)
         db.session.commit()
         
+        # Keep affected lesson scores in sync when a quiz is published
+        if quiz.is_published and quiz.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(quiz.lesson_id)
+        
         return jsonify({
             "message": "Quiz created successfully",
             "quiz": quiz.to_dict()
@@ -101,6 +106,8 @@ def assign_quiz():
         if quiz.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
+        previous_lesson_id = quiz.lesson_id
+        
         # Update assignment
         quiz.module_id = data.get('module_id')
         quiz.lesson_id = data.get('lesson_id')
@@ -118,6 +125,11 @@ def assign_quiz():
                 return jsonify({"message": "Lesson does not belong to the specified module"}), 400
         
         db.session.commit()
+        
+        # Re-linking a quiz changes the score math for both lessons
+        if previous_lesson_id != quiz.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lessons
+            rescore_lessons([previous_lesson_id, quiz.lesson_id])
         
         return jsonify({
             "message": "Quiz assignment updated successfully",
@@ -275,6 +287,11 @@ def create_assignment():
         db.session.add(assignment)
         db.session.commit()
         
+        # Keep affected lesson scores in sync when an assignment is published
+        if assignment.is_published and assignment.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(assignment.lesson_id)
+        
         return jsonify({
             "message": "Assignment created successfully",
             "assignment": assignment.to_dict()
@@ -300,6 +317,8 @@ def assign_assignment():
         if assignment.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
+        previous_lesson_id = assignment.lesson_id
+        
         # Update assignment
         assignment.module_id = data.get('module_id')
         assignment.lesson_id = data.get('lesson_id')
@@ -317,6 +336,11 @@ def assign_assignment():
                 return jsonify({"message": "Lesson does not belong to the specified module"}), 400
         
         db.session.commit()
+        
+        # Re-linking an assignment changes the score math for both lessons
+        if previous_lesson_id != assignment.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lessons
+            rescore_lessons([previous_lesson_id, assignment.lesson_id])
         
         return jsonify({
             "message": "Assignment updated successfully",

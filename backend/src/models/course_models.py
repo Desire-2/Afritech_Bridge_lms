@@ -173,7 +173,7 @@ class Course(db.Model):
         Calculate how many modules should be released based on settings and current date.
         Returns None if all modules should be released.
         """
-        from datetime import datetime
+        from ..utils.time_utils import now_local
         
         # If no release count set, all modules are released
         if self.module_release_count is None:
@@ -184,7 +184,10 @@ class Course(db.Model):
         if not start_date:
             return None
         
-        now = datetime.utcnow()
+        # Timestamps are stored in local wall-clock time, so compare against
+        # now_local() - comparing against utc() made freshly created courses
+        # look like they "hadn't started yet" for the first ~2 hours.
+        now = now_local()
         
         # Ensure both datetimes are naive for comparison
         start_naive = start_date.replace(tzinfo=None) if hasattr(start_date, 'tzinfo') and start_date.tzinfo else start_date
@@ -949,18 +952,19 @@ class Enrollment(db.Model):
     
     def calculate_course_score(self):
         """
-        Calculate the overall course score as the average of all module scores.
+        Calculate the overall course score as the average of all published
+        module scores. Modules the student has not scored yet count as 0, so
+        an unfinished course can never report a full score.
         Returns a score from 0-100.
         """
         from ..models.student_models import ModuleProgress
         
-        # Get all modules in this course
-        course_modules = self.course.modules.all()
+        # Only modules that are actually part of the course (drafts excluded)
+        course_modules = [m for m in self.course.modules.all() if m.is_published]
         if not course_modules:
             return 0.0
         
         total_score = 0.0
-        scored_modules = 0
         
         for module in course_modules:
             # Get module progress for this student
@@ -972,12 +976,10 @@ class Enrollment(db.Model):
             
             if module_progress:
                 # Use the module score (average of all lesson scores)
-                module_score = module_progress.calculate_module_score()
-                total_score += module_score
-                scored_modules += 1
+                total_score += module_progress.calculate_module_score()
+            # else: unattempted published module contributes 0
         
-        # Calculate average, or return 0 if no modules
-        return (total_score / scored_modules) if scored_modules > 0 else 0.0
+        return (total_score / len(course_modules))
 
     def to_dict(self):
         student_data = None

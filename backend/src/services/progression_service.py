@@ -38,13 +38,26 @@ class ProgressionService:
             course = Course.query.get(course_id)
             # Use cohort-aware module release logic
             cohort_id = enrollment.application_window_id if enrollment else None
+            # Released modules are what the learner may work on RIGHT NOW.
             modules = course.get_released_modules(cohort_id=cohort_id)
-            
+
+            # Progress/completion is measured against the whole published
+            # course - releasing content gradually must never make an
+            # unfinished course look 100% complete.
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            counts = EnrollmentProgressService.get_progress_counts(
+                student_id, course_id, enrollment
+            )
+
             progress_data = {
                 "course": course.to_dict(),
                 "enrollment": enrollment.to_dict(),
                 "modules": [],
-                "overall_progress": 0.0,
+                "overall_progress": counts["progress"] * 100,
+                "total_modules": counts["total_modules"],
+                "completed_modules": counts["completed_modules"],
+                "released_module_count": counts["released_modules"],
+                "is_course_complete": counts["is_complete"],
                 "current_module": None,
                 "can_proceed": False,
                 "locked_modules": 0,
@@ -82,8 +95,8 @@ class ProgressionService:
                     ).first()
                     
                     lesson_data = lesson.to_dict()
-                    lesson_data['completed'] = completion is not None
-                    lesson_data['completed_at'] = completion.completed_at.isoformat() if completion else None
+                    lesson_data['completed'] = bool(completion and completion.completed)
+                    lesson_data['completed_at'] = completion.completed_at.isoformat() if completion and completion.completed else None
                     lesson_data['time_spent'] = completion.time_spent if completion else 0
                     
                     module_data["lessons_completed"].append(lesson_data)
@@ -107,9 +120,10 @@ class ProgressionService:
                 
                 progress_data["modules"].append(module_data)
             
-            # Calculate overall progress
-            if modules:
-                progress_data["overall_progress"] = (completed_modules / len(modules)) * 100
+            # NOTE: overall_progress was previously derived from the released
+            # modules only, so finishing the currently released modules made a
+            # course look 100% complete. It now comes from the published-course
+            # counts computed above.
             
             # Check if can proceed (unlock next modules)
             progress_data["can_proceed"] = ProgressionService._can_unlock_next_module(
@@ -224,7 +238,8 @@ class ProgressionService:
                 return False, "Module is locked. Complete previous modules first", {}
             
             # Check if previous lessons in module are completed (strict progression)
-            if course.strict_progression:
+            # The column is optional/legacy - never crash when it is absent.
+            if getattr(course, 'strict_progression', False):
                 previous_lessons = module.lessons.filter(
                     Lesson.order < lesson.order
                 ).all()
@@ -507,8 +522,16 @@ class ProgressionService:
         
         # Check if this is the first module in course
         module = Module.query.get(module_id)
-        first_module = module.course.modules.order_by('order').first()
-        
+        enrollment = Enrollment.query.get(enrollment_id)
+
+        released_modules = []
+        if module and module.course:
+            released_modules = module.course.get_released_modules(
+                cohort_id=enrollment.application_window_id if enrollment else None
+            )
+        released_ids = {m.id for m in released_modules}
+        is_released = module.id in released_ids
+
         # Restore a module when the student has any saved lesson history in it.
         # A partial LessonCompletion record is enough to prove that the module
         # was previously accessible; checking only completed lessons could lock
@@ -525,9 +548,19 @@ class ProgressionService:
             has_lesson_progress = progress_count > 0
         
         # Determine initial status
-        if module.id == first_module.id:
-            initial_status = 'unlocked'
-            is_unlocked = True
+        if not is_released:
+            # Not released yet for this learner's cohort (drip settings, cohort
+            # block, ...). Lesson history still wins so nobody loses progress.
+            if has_lesson_progress:
+                initial_status = 'in_progress'
+                is_unlocked = True
+                current_app.logger.info(
+                    f"Restoring unreleased module {module_id} as in_progress "
+                    f"(found {progress_count} lesson progress records)"
+                )
+            else:
+                initial_status = 'locked'
+                is_unlocked = False
         elif has_lesson_progress:
             # If student has lesson history, the module must have been unlocked before
             initial_status = 'in_progress'
@@ -537,13 +570,14 @@ class ProgressionService:
                 f"(found {progress_count} lesson progress records)"
             )
         else:
-            # Check if previous modules are completed (should be unlocked)
-            previous_modules = module.course.modules.filter(
-                Module.order < module.order
-            ).order_by('order').all()
-            
+            # Unlocked when every previously RELEASED module is completed.
+            # Unpublished / not-yet-released predecessors must not block a
+            # module the learner is allowed to start.
+            ordered_released = sorted(released_modules, key=lambda m: m.order)
+            prior_modules = [m for m in ordered_released if m.order < module.order]
+
             all_previous_completed = True
-            for prev_mod in previous_modules:
+            for prev_mod in prior_modules:
                 prev_progress = ModuleProgress.query.filter_by(
                     student_id=student_id,
                     module_id=prev_mod.id,
@@ -552,7 +586,11 @@ class ProgressionService:
                 if not prev_progress or prev_progress.status != 'completed':
                     all_previous_completed = False
                     break
-            
+
+            # First released module is always available
+            if not prior_modules:
+                all_previous_completed = True
+
             initial_status = 'unlocked' if all_previous_completed else 'locked'
             is_unlocked = all_previous_completed
         
@@ -572,7 +610,7 @@ class ProgressionService:
     def _can_unlock_next_module(student_id: int, course_id: int, enrollment_id: int) -> bool:
         """Check if student can unlock the next module"""
         course = Course.query.get(course_id)
-        modules = course.modules.order_by('order').all()
+        modules = course.modules.filter_by(is_published=True).order_by('order').all()
         
         for i, module in enumerate(modules):
             module_progress = ModuleProgress.query.filter_by(
@@ -638,7 +676,7 @@ class ProgressionService:
             current_app.logger.info(f"No next module found after module {completed_module_id} - this may be the last module")
     
     @staticmethod
-    def _update_course_contribution_score(student_id: int, module_id: int, enrollment_id: int):
+    def _update_course_contribution_score(student_id: int, module_id: int, enrollment_id: int, commit: bool = True):
         """Update the course contribution score (10% of total grade) based on lesson scores"""
         module_progress = ModuleProgress.query.filter_by(
             student_id=student_id,
@@ -658,11 +696,14 @@ class ProgressionService:
             module_progress.calculate_module_weighted_score()
             
             # Commit changes to database
-            try:
-                db.session.commit()
-            except Exception as e:
-                db.session.rollback()
-                current_app.logger.error(f"Failed to update course contribution score: {str(e)}")
+            if commit:
+                try:
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    current_app.logger.error(f"Failed to update course contribution score: {str(e)}")
+            else:
+                db.session.flush()
     
     @staticmethod
     def _suspend_student_from_course(student_id: int, module_id: int, enrollment_id: int, total_attempts: int) -> Tuple[bool, str]:

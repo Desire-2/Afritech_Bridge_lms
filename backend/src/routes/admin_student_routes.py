@@ -170,6 +170,15 @@ def list_students():
         student_list = []
         for student in students:
             enrollments = Enrollment.query.filter_by(student_id=student.id).all()
+
+            # Recompute progress from the published course for every enrollment
+            # so the list never shows a stale 100% (e.g. after new modules or
+            # assessments were published).
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            for enr in enrollments:
+                EnrollmentProgressService.sync_enrollment(enr, commit=False)
+            db.session.commit()
+
             total_enrollments = len(enrollments)
             active_enrollments = sum(1 for e in enrollments if e.status == "active")
             completed_enrollments = sum(1 for e in enrollments if e.status == "completed")
@@ -378,6 +387,13 @@ def get_student_detail(student_id):
 
         # --- Enrollments with course details ---
         enrollments = Enrollment.query.filter_by(student_id=student_id).all()
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        for enrollment in enrollments:
+            # Recompute from the published course so the detail view never
+            # shows a stale 100%.
+            EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
+        db.session.commit()
+
         enrollment_details = []
         for enrollment in enrollments:
             course = enrollment.course
@@ -400,17 +416,16 @@ def get_student_detail(student_id):
                     "completed_at": mp.completed_at.isoformat() if mp.completed_at else None,
                 })
             
-            # Count lessons completed for this course
-            course_lessons = Lesson.query.join(Module).filter(Module.course_id == course.id).all()
-            lesson_ids = [l.id for l in course_lessons]
-            lessons_done = LessonCompletion.query.filter(
-                LessonCompletion.student_id == student_id,
-                LessonCompletion.lesson_id.in_(lesson_ids),
-                LessonCompletion.completed == True
-            ).count() if lesson_ids else 0
+            # Count lessons completed for this course (published modules only)
+            counts = EnrollmentProgressService.get_progress_counts(
+                student_id, enrollment.course_id, enrollment
+            )
             
-            e_data["lessons_completed"] = lessons_done
-            e_data["total_lessons"] = len(lesson_ids)
+            e_data["lessons_completed"] = counts["completed_lessons"]
+            e_data["total_lessons"] = counts["total_lessons"]
+            e_data["completed_modules"] = counts["completed_modules"]
+            e_data["total_modules"] = counts["total_modules"]
+            e_data["released_module_count"] = counts["released_modules"]
             
             enrollment_details.append(e_data)
 
@@ -1785,7 +1800,7 @@ def validate_certificate_admin(student_id, course_id):
         
         # Now generate certificate (should be eligible after status update)
         success, message, certificate_data = CertificateService.generate_certificate(
-            student_id, course_id
+            student_id, course_id, force=override_incomplete
         )
         
         if success:

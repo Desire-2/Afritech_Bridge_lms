@@ -356,6 +356,8 @@ def update_module(course_id, module_id):
         module = Module.query.filter_by(id=module_id, course_id=course_id).first_or_404()
         data = request.get_json()
         
+        previous_is_published = bool(module.is_published)
+        
         # Update module fields
         if 'title' in data:
             module.title = data['title']
@@ -369,6 +371,13 @@ def update_module(course_id, module_id):
             module.is_published = data['is_published']
         
         db.session.commit()
+        
+        # Publishing/unpublishing a module changes the progress denominator for
+        # every enrolled student in the course - re-sync so no enrollment shows
+        # a stale 100%.
+        if 'is_published' in data and bool(module.is_published) != previous_is_published:
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            EnrollmentProgressService.sync_course(course_id, commit=True)
         
         return jsonify({
             "message": "Module updated successfully",

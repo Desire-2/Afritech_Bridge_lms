@@ -250,6 +250,12 @@ def create_quiz():
         # Refresh quiz to get updated relationships
         db.session.refresh(quiz)
         
+        # Keep affected lesson scores in sync: a newly published quiz must be
+        # reflected for students who already started (or finished) the lesson.
+        if quiz.is_published and quiz.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(quiz.lesson_id)
+        
         # Debug: Check what was actually saved using BOTH print and logger
         print("\n" + "="*80, flush=True)
         print("QUIZ CREATED SUCCESSFULLY", flush=True)
@@ -320,6 +326,10 @@ def update_quiz(quiz_id):
         # Log the comparison for debugging
         logger.info(f"Update quiz check: quiz.course.instructor_id={quiz.course.instructor_id}, current_user_id={current_user_id}")
         
+        # Snapshot before mutation so we can resync scores afterwards
+        previous_lesson_id = quiz.lesson_id
+        previous_is_published = bool(quiz.is_published)
+        
         # Verify instructor owns the course
         if quiz.course.instructor_id != current_user_id:
             logger.warning(f"User {current_user_id} attempted to update quiz {quiz_id} owned by instructor {quiz.course.instructor_id}")
@@ -374,7 +384,15 @@ def update_quiz(quiz_id):
         if 'show_correct_answers' in data:
             quiz.show_correct_answers = bool(data['show_correct_answers'])
         
+        updated_lesson_id = quiz.lesson_id
+        updated_is_published = bool(quiz.is_published)
         db.session.commit()
+        
+        # Publishing / unpublishing / re-linking a quiz changes the score math
+        # for every student who has progress on the affected lessons.
+        if (updated_is_published != previous_is_published or updated_lesson_id != previous_lesson_id):
+            from ..services.assessment_change_hooks import rescore_lessons
+            rescore_lessons([previous_lesson_id, updated_lesson_id])
         
         return jsonify({
             "message": "Quiz updated successfully",
@@ -425,8 +443,15 @@ def delete_quiz(quiz_id):
                 }
             }), 403
         
+        deleted_lesson_id = quiz.lesson_id
         db.session.delete(quiz)
         db.session.commit()
+        
+        # Removing a quiz changes the weighting of remaining components for
+        # every student who has progress on the affected lesson.
+        if deleted_lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(deleted_lesson_id)
         
         logger.info(f"Quiz {quiz_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Quiz deleted successfully"}), 200
@@ -947,6 +972,12 @@ def create_assignment():
         db.session.add(assignment)
         db.session.commit()
         
+        # Keep affected lesson scores in sync: a newly published assignment must
+        # be reflected for students who already started (or finished) the lesson.
+        if assignment.is_published and assignment.lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(assignment.lesson_id)
+        
         return jsonify({
             "message": "Assignment created successfully",
             "assignment": assignment.to_dict()
@@ -1005,6 +1036,11 @@ def update_assignment(assignment_id):
                 }
             }), 403
         
+        # Snapshot before mutation so we can resync scores afterwards
+        previous_lesson_id = assignment.lesson_id
+        previous_is_published = bool(assignment.is_published)
+        previous_points_possible = assignment.points_possible
+        
         # Update assignment fields
         if 'title' in data:
             assignment.title = data['title']
@@ -1037,7 +1073,20 @@ def update_assignment(assignment_id):
         # Note: allow_late_submission and late_penalty fields don't exist in Assignment model
         # They would need to be added via database migration if needed
         
+        updated_lesson_id = assignment.lesson_id
+        updated_is_published = bool(assignment.is_published)
+        updated_points_possible = assignment.points_possible
         db.session.commit()
+        
+        # Publishing / unpublishing / re-linking / re-grading-scale changes
+        # the score math for every student with progress on the lesson.
+        if (
+            updated_is_published != previous_is_published
+            or updated_lesson_id != previous_lesson_id
+            or updated_points_possible != previous_points_possible
+        ):
+            from ..services.assessment_change_hooks import rescore_lessons
+            rescore_lessons([previous_lesson_id, updated_lesson_id])
         
         return jsonify({
             "message": "Assignment updated successfully",
@@ -1088,8 +1137,15 @@ def delete_assignment(assignment_id):
                 }
             }), 403
         
+        deleted_lesson_id = assignment.lesson_id
         db.session.delete(assignment)
         db.session.commit()
+        
+        # Removing an assignment changes the weighting of remaining components
+        # for every student who has progress on the affected lesson.
+        if deleted_lesson_id:
+            from ..services.assessment_change_hooks import rescore_lesson
+            rescore_lesson(deleted_lesson_id)
         
         logger.info(f"Assignment {assignment_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Assignment deleted successfully"}), 200

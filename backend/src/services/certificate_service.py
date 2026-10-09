@@ -42,20 +42,33 @@ class CertificateService:
             if not course:
                 return False, "Course not found", {}
             
-            # PRIMARY CHECK: Use enrollment completion status as source of truth
-            if enrollment.completed_at or enrollment.status == 'completed':
-                # Course is marked as complete - eligible for certificate
-                overall_score = enrollment.calculate_course_score()
+            # Recompute real completion from the published course. A stale
+            # `completed_at` / status flag must never make a learner eligible
+            # for a certificate they have not earned, and unpublished draft
+            # modules must not block someone who finished every real module.
+            from .enrollment_progress_service import EnrollmentProgressService
+            counts = EnrollmentProgressService.get_progress_counts(
+                student_id, course_id, enrollment
+            )
+            modules = EnrollmentProgressService.get_published_modules(course)
+
+            # PRIMARY CHECK: authoritative completion of all published modules
+            passing_score = getattr(course, 'passing_score', 80) or 80
+            overall_score = enrollment.calculate_course_score() if counts["is_complete"] else 0
+            if counts["is_complete"] and overall_score >= passing_score:
                 requirements_status = {
                     "completed": True,
                     "overall_score": overall_score,
                     "completion_date": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
-                    "enrollment_status": enrollment.status
+                    "enrollment_status": enrollment.status,
+                    "completed_modules": counts["completed_modules"],
+                    "total_modules": counts["total_modules"],
+                    "lessons_completed": counts["completed_lessons"],
+                    "total_lessons": counts["total_lessons"],
                 }
                 return True, "Eligible for certificate", requirements_status
             
             # SECONDARY CHECK: Check module completion status in detail
-            modules = course.modules.order_by('order').all()
             requirements_status = {
                 "total_modules": len(modules),
                 "completed_modules": 0,
@@ -203,13 +216,15 @@ class CertificateService:
             return False, "Failed to create preliminary certificate", {}
     
     @staticmethod
-    def generate_certificate(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
+    def generate_certificate(student_id: int, course_id: int, force: bool = False) -> Tuple[bool, str, Dict]:
         """
         Generate course completion certificate
         
         Args:
             student_id: ID of the student
             course_id: ID of the course
+            force: Admin override - skip the recomputed eligibility check and
+                   do not reopen a manually completed enrollment.
             
         Returns:
             Tuple of (success, message, certificate_data)
@@ -223,16 +238,29 @@ class CertificateService:
             if not enrollment:
                 return False, "Enrollment not found", {}
             
-            # FIX: Auto-mark enrollment as completed if progress is 100% but not marked
-            if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = now_local()
-                enrollment.status = 'completed'
-                db.session.flush()  # Flush to database before eligibility check
+            from .enrollment_progress_service import EnrollmentProgressService
             
-            # Check eligibility first
-            eligible, reason, requirements = CertificateService.check_certificate_eligibility(
-                student_id, course_id
-            )
+            if force:
+                # Admin override: honour the manually set completion state.
+                if enrollment.status != 'completed':
+                    enrollment.status = 'completed'
+                if not enrollment.completed_at:
+                    enrollment.completed_at = now_local()
+                overall_score_forced = enrollment.calculate_course_score()
+                eligible = True
+                reason = "Forced by admin"
+                requirements = {"completed": True, "overall_score": overall_score_forced}
+            else:
+                # Reconcile progress/completion from the published course before the
+                # eligibility check (stale 100% flags must not grant certificates).
+                from .enrollment_progress_service import EnrollmentProgressService
+                EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
+                db.session.flush()  # Flush to database before eligibility check
+                
+                # Check eligibility first
+                eligible, reason, requirements = CertificateService.check_certificate_eligibility(
+                    student_id, course_id
+                )
             
             if not eligible:
                 return False, f"Not eligible for certificate: {reason}", {}
@@ -278,12 +306,10 @@ class CertificateService:
                 db.session.add(certificate)
                 message = "Certificate generated successfully"
             
-            # Mark enrollment as completed (use correct field names)
-            if not enrollment.completed_at:
-                enrollment.completed_at = now_local()
-            if enrollment.status != 'completed':
-                enrollment.status = 'completed'
-            enrollment.progress = 1.0  # 100% completion
+            # Mark enrollment as completed through the authoritative service
+            # (skipped on admin force so a manual override is not reopened)
+            if not force:
+                EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
             
             db.session.commit()
             
@@ -423,21 +449,19 @@ class CertificateService:
                 # Get enrollment for completion data
                 enrollment = cert.enrollment
                 if enrollment:
-                    # FIX: Auto-mark enrollment as completed if progress is 100% but not marked
-                    if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                        enrollment.completed_at = now_local()
-                        enrollment.status = 'completed'
-                        db.session.commit()
+                    # Compute fresh progress from the published course instead of
+                    # trusting (or latching onto) a stale 100% enrollment flag.
+                    from .enrollment_progress_service import EnrollmentProgressService
+                    counts = EnrollmentProgressService.get_progress_counts(
+                        enrollment.student_id, enrollment.course_id, enrollment
+                    )
+                    completion_percentage = int((counts["progress"] or 0.0) * 100)
                     
-                    # Use enrollment.progress field (0.0-1.0) for completion percentage
-                    # This is the authoritative source of truth for course progress
-                    completion_percentage = int((enrollment.progress or 0.0) * 100)
-                    
-                    # Determine completion status based on enrollment state
-                    if enrollment.completed_at or enrollment.status == 'completed':
+                    # Determine completion status based on real progress
+                    if counts["is_complete"]:
                         completion_status = "completed"
                         is_locked = False
-                        completion_percentage = 100  # Override to 100 if marked complete
+                        completion_percentage = 100
                     elif completion_percentage > 0:
                         completion_status = "in_progress"
                         is_locked = True

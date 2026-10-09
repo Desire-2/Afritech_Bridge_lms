@@ -255,7 +255,10 @@ class EnhancedModuleUnlockService:
                 return {"error": "Enrollment not found"}
             
             course = enrollment.course
-            modules = course.modules.order_by(Module.order).all()
+            # Whole published course - locked/unpublished draft modules must not
+            # dilute the reported progress percentage.
+            from .enrollment_progress_service import EnrollmentProgressService
+            modules = EnrollmentProgressService.get_published_modules(course)
             
             progress_data = {
                 "course_id": course.id,
@@ -921,17 +924,21 @@ class EnhancedModuleUnlockService:
         """Check if entire course is completed and handle course completion logic."""
         try:
             course = Course.query.get(course_id)
-            modules = course.modules.all()
-            
+            # Completion is judged over the published course only; draft or
+            # never-published modules must neither block nor inflate progress.
+            from .enrollment_progress_service import EnrollmentProgressService
+            published_modules = EnrollmentProgressService.get_published_modules(course)
+            modules = published_modules
+
             completed_modules = ModuleProgress.query.filter_by(
                 student_id=student_id,
                 enrollment_id=enrollment_id,
                 status='completed'
             ).filter(
                 ModuleProgress.module_id.in_([m.id for m in modules])
-            ).all()
+            ).all() if modules else []
             
-            is_completed = len(completed_modules) == len(modules)
+            is_completed = bool(modules) and len(completed_modules) == len(modules)
             
             if is_completed:
                 # Calculate overall course score
@@ -939,10 +946,12 @@ class EnhancedModuleUnlockService:
                 
                 # Update enrollment
                 enrollment = Enrollment.query.get(enrollment_id)
-                if not enrollment.completed_at:
-                    enrollment.completed_at = now_local()
-                enrollment.status = 'completed'
-                enrollment.progress = 1.0
+                if enrollment:
+                    EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
+                    if not enrollment.completed_at:
+                        enrollment.completed_at = now_local()
+                    enrollment.status = 'completed'
+                    enrollment.progress = 1.0
                 
                 db.session.commit()
                 
@@ -951,7 +960,7 @@ class EnhancedModuleUnlockService:
                     "overall_score": total_score,
                     "completed_modules": len(completed_modules),
                     "total_modules": len(modules),
-                    "completion_date": enrollment.completed_at.isoformat()
+                    "completion_date": enrollment.completed_at.isoformat() if enrollment and enrollment.completed_at else None
                 }
             
             return {
