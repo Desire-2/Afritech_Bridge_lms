@@ -468,6 +468,16 @@ def grade_assignment_submission(submission_id):
                         enrollment_id=enrollment.id
                     ).first()
                     
+                    if not module_progress:
+                        # Progress row may not exist yet when the instructor
+                        # grades before the student opened the module — create
+                        # it so the grade is not silently dropped
+                        from ..services.progression_service import ProgressionService
+                        module_progress = ProgressionService._initialize_module_progress(
+                            student_id, module_id, enrollment.id
+                        )
+                        db.session.flush()
+                    
                     if module_progress:
                         # Use best assignment score (keep the higher score)
                         current_assignment_score = module_progress.assignment_score or 0.0

@@ -1095,6 +1095,69 @@ class ModuleProgress(db.Model):
     def calculate_cumulative_score(self):
         """Alias for calculate_module_weighted_score for backwards compatibility"""
         return self.calculate_module_weighted_score()
+
+    def sync_scores_from_assessments(self):
+        """Recompute assignment/project scores from graded submissions.
+
+        The grading routes persist scores incrementally, but a grade can be
+        dropped when the module_progress row does not exist yet (instructor
+        grading before the student opened the module), leaving the stored
+        field at 0 while the submissions themselves hold real grades. The
+        score breakdown and the unlock gate then disagree with what the
+        student sees on the assignments page. Recomputing from the graded
+        submissions (keeping the higher of stored vs. live, matching the
+        grading routes' best-score semantics) heals that silently.
+        """
+        from .course_models import (
+            Assignment, AssignmentSubmission, Project, ProjectSubmission
+        )
+
+        if not self.module:
+            return
+
+        # ── lesson assignments: best graded percentage across the module ──
+        lesson_ids = [lesson.id for lesson in self.module.lessons]
+        if lesson_ids:
+            best_assignment = 0.0
+            submissions = (
+                AssignmentSubmission.query
+                .join(Assignment, AssignmentSubmission.assignment_id == Assignment.id)
+                .filter(
+                    Assignment.lesson_id.in_(lesson_ids),
+                    Assignment.is_published == True,  # noqa: E712
+                    AssignmentSubmission.student_id == self.student_id,
+                    AssignmentSubmission.grade.isnot(None)
+                )
+                .all()
+            )
+            for submission in submissions:
+                points_possible = submission.assignment.points_possible or 100
+                if points_possible > 0:
+                    percentage = (submission.grade / points_possible) * 100
+                    best_assignment = max(best_assignment, min(100.0, percentage))
+            if best_assignment > (self.assignment_score or 0.0):
+                self.assignment_score = best_assignment
+
+        # ── projects: best graded percentage across covering projects ─────
+        best_project = 0.0
+        for project in Project.query.filter_by(
+            course_id=self.module.course_id, is_published=True
+        ).all():
+            covered = project.get_modules()
+            if covered and self.module_id not in covered:
+                continue
+            submissions = ProjectSubmission.query.filter_by(
+                project_id=project.id,
+                student_id=self.student_id
+            ).filter(ProjectSubmission.grade.isnot(None)).all()
+            points_possible = project.points_possible or 100
+            if points_possible > 0:
+                for submission in submissions:
+                    percentage = (submission.grade / points_possible) * 100
+                    best_project = max(best_project, min(100.0, percentage))
+        if best_project > (self.project_score or 0.0):
+            self.project_score = best_project
+
     
     def can_proceed_to_next(self):
         """

@@ -579,6 +579,9 @@ class EnhancedModuleUnlockService:
                 "assessment_availability": {}
             }
         
+        # Heal stored scores from graded submissions before computing
+        module_progress.sync_scores_from_assessments()
+        
         # Calculate with dynamic weights
         total_score = module_progress.calculate_module_weighted_score()
         lessons_score = module_progress.calculate_module_score()

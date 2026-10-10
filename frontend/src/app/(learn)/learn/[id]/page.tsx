@@ -2012,13 +2012,17 @@ const LearningPage = () => {
       return;
     }
     
-    // Get current module score (recalculate first)
+    // Get current module score (recalculate first). Use the FRESH state
+    // returned by recalculate() — reading moduleScoring here would see the
+    // stale values from the last render, so the modal could show a score and
+    // breakdown that disagree with each other and with the weights fetch.
+    let freshScoring: any = null;
     if (moduleScoring?.recalculate) {
-      await moduleScoring.recalculate();
+      freshScoring = await moduleScoring.recalculate();
     }
     
     const passingThreshold = MODULE_PASSING_THRESHOLD;
-    const currentScore = moduleScoring?.cumulativeScore || 0;
+    const currentScore = freshScoring?.cumulativeScore ?? moduleScoring?.cumulativeScore ?? 0;
     const isPassing = currentScore >= passingThreshold;
     
     // Find current module and next module
@@ -2044,37 +2048,47 @@ const LearningPage = () => {
         // Non-fatal: continue with local breakdown/weights
       }
 
-      // Fetch detailed score breakdown with dynamic weights from API
-      let weights = { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 };
-      let assessmentInfo = { hasQuizzes: true, hasAssignments: true, hasFinalAssessment: true, isReadingOnly: false };
+      // Weights/assessment info: prefer the fresh recalc state (single source
+      // with the scores above), then the API, then defaults
+      let weights: any = freshScoring?.weights || null;
+      let assessmentInfo: any = freshScoring?.assessmentInfo || null;
       
-      try {
-        const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
-        if (scoreBreakdown?.breakdown) {
-          weights = {
-            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
-            quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
-            assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
-            projects: scoreBreakdown.breakdown.projects?.weight ?? 0,
-            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0
-          };
+      if (!weights || !assessmentInfo) {
+        try {
+          const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
+          if (scoreBreakdown?.breakdown && !weights) {
+            weights = {
+              courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
+              quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
+              assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+              projects: scoreBreakdown.breakdown.projects?.weight ?? 0,
+              finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0
+            };
+          }
+          if (scoreBreakdown?.assessment_info && !assessmentInfo) {
+            assessmentInfo = {
+              hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
+              hasAssignments: scoreBreakdown.assessment_info.has_assignments,
+              hasProjects: scoreBreakdown.assessment_info.has_projects,
+              hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
+              isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
+            };
+          }
+        } catch (err) {
+          console.warn('Could not fetch dynamic weights, using defaults');
         }
-        if (scoreBreakdown?.assessment_info) {
-          assessmentInfo = {
-            hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
-            hasAssignments: scoreBreakdown.assessment_info.has_assignments,
-            hasProjects: scoreBreakdown.assessment_info.has_projects,
-            hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
-            isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
-          };
-        }
-      } catch (err) {
-        console.warn('Could not fetch dynamic weights, using defaults');
+      }
+      
+      if (!weights) {
+        weights = { courseContribution: 10, quizzes: 30, assignments: 40, projects: 0, finalAssessment: 20 };
+      }
+      if (!assessmentInfo) {
+        assessmentInfo = { hasQuizzes: true, hasAssignments: true, hasProjects: false, hasFinalAssessment: true, isReadingOnly: false };
       }
       
       // Show what's missing to reach the passing score
       const missingItems: string[] = [];
-      const breakdown = moduleScoring?.breakdown || {
+      const breakdown = freshScoring?.breakdown || moduleScoring?.breakdown || {
         courseContribution: 0,
         quizzes: 0,
         assignments: 0,
@@ -2154,7 +2168,7 @@ const LearningPage = () => {
       try {
         const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(nextModule.id);
         const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
-        const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, projects: 0, finalAssessment: 0 };
+        const breakdown = freshScoring?.breakdown || moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, projects: 0, finalAssessment: 0 };
 
         // Fetch dynamic weights so the modal reflects correct percentages
         // (quiz becomes 50% when no final assessment is available)

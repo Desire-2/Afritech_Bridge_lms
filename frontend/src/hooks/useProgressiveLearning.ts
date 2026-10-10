@@ -348,10 +348,16 @@ export const useModuleScoring = (moduleId: number) => {
 
         // Use backend-calculated weighted_score if available (already uses dynamic weights)
         // Otherwise fall back to static weights calculation
+        const projectScore = progress.project_score || 0;
+        const assignmentScore = progress.assignment_score || 0;
+        // Mirror the backend's display split for the shared hands-on weight
+        const handsOnWeights = projectScore > 0
+          ? (assignmentScore > 0 ? { assignments: 20, projects: 20 } : { assignments: 0, projects: 40 })
+          : { assignments: 40, projects: 0 };
         const cumulative = progress.weighted_score ?? progress.cumulative_score ?? (
           ((progress.course_contribution_score || 0) * 0.10) +
           ((progress.quiz_score || 0) * 0.30) +
-          ((progress.assignment_score || 0) * 0.40) +
+          ((assignmentScore * handsOnWeights.assignments) + (projectScore * handsOnWeights.projects)) / 100 +
           ((progress.final_assessment_score || 0) * 0.20)
         );
 
@@ -372,15 +378,15 @@ export const useModuleScoring = (moduleId: number) => {
           breakdown: {
             courseContribution: progress.course_contribution_score || 0,
             quizzes: progress.quiz_score || 0,
-            assignments: progress.assignment_score || 0,
-            projects: progress.project_score || 0,
+            assignments: assignmentScore,
+            projects: projectScore,
             finalAssessment: progress.final_assessment_score || 0,
           },
           weights: {
             courseContribution: 10,
             quizzes: 30,
-            assignments: 40,
-            projects: 0,
+            assignments: handsOnWeights.assignments,
+            projects: handsOnWeights.projects,
             finalAssessment: 20,
           },
           missingPoints: Math.max(0, MODULE_PASSING_THRESHOLD - cumulative),
@@ -430,7 +436,7 @@ export const useModuleScoring = (moduleId: number) => {
           finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0,
         };
 
-        setScoringState({
+        const freshState: ScoringState = {
           cumulativeScore: scoreBreakdown.cumulative_score || 0,
           passingThreshold: scoreBreakdown.passing_threshold || MODULE_PASSING_THRESHOLD,
           isPassing: scoreBreakdown.is_passing || false,
@@ -444,8 +450,9 @@ export const useModuleScoring = (moduleId: number) => {
           weights,
           missingPoints: scoreBreakdown.points_needed || Math.max(0, MODULE_PASSING_THRESHOLD - (scoreBreakdown.cumulative_score || 0)),
           assessmentInfo: scoreBreakdown.assessment_info,
-        });
-        return;
+        };
+        setScoringState(freshState);
+        return freshState;
       }
 
       // Fallback to module progress API
@@ -458,59 +465,71 @@ export const useModuleScoring = (moduleId: number) => {
       // Check if progress data exists
       if (!progress) {
         console.warn('No progress data available for module:', moduleId);
-        setScoringState({
+        const emptyState: ScoringState = {
           cumulativeScore: 0,
-            passingThreshold: MODULE_PASSING_THRESHOLD,
+          passingThreshold: MODULE_PASSING_THRESHOLD,
           isPassing: false,
           breakdown: {
             courseContribution: 0,
             quizzes: 0,
             assignments: 0,
+            projects: 0,
             finalAssessment: 0,
           },
           weights: {
             courseContribution: 10,
             quizzes: 30,
             assignments: 40,
+            projects: 0,
             finalAssessment: 20,
           },
           missingPoints: MODULE_PASSING_THRESHOLD,
-        });
-        return;
+        };
+        setScoringState(emptyState);
+        return emptyState;
       }
 
       // Use backend-calculated weighted_score if available (already uses dynamic weights)
+      const projectScore = progress.project_score || 0;
+      const assignmentScore = progress.assignment_score || 0;
+      // Mirror the backend's display split for the shared hands-on weight
+      const handsOnWeights = projectScore > 0
+        ? (assignmentScore > 0 ? { assignments: 20, projects: 20 } : { assignments: 0, projects: 40 })
+        : { assignments: 40, projects: 0 };
       const cumulative = progress.weighted_score ?? progress.cumulative_score ?? (
         ((progress.course_contribution_score || 0) * 0.10) +
         ((progress.quiz_score || 0) * 0.30) +
-        ((progress.assignment_score || 0) * 0.40) +
+        ((assignmentScore * handsOnWeights.assignments) + (projectScore * handsOnWeights.projects)) / 100 +
         ((progress.final_assessment_score || 0) * 0.20)
       );
 
       console.log('✅ Recalculated cumulative score:', cumulative);
 
-      setScoringState({
+      const fallbackState: ScoringState = {
         cumulativeScore: cumulative,
         passingThreshold: MODULE_PASSING_THRESHOLD,
         isPassing: cumulative >= MODULE_PASSING_THRESHOLD,
         breakdown: {
           courseContribution: progress.course_contribution_score || 0,
           quizzes: progress.quiz_score || 0,
-          assignments: progress.assignment_score || 0,
-          projects: progress.project_score || 0,
+          assignments: assignmentScore,
+          projects: projectScore,
           finalAssessment: progress.final_assessment_score || 0,
         },
         weights: {
           courseContribution: 10,
           quizzes: 30,
-          assignments: 40,
-          projects: 0,
+          assignments: handsOnWeights.assignments,
+          projects: handsOnWeights.projects,
           finalAssessment: 20,
         },
         missingPoints: Math.max(0, MODULE_PASSING_THRESHOLD - cumulative),
-      });
+      };
+      setScoringState(fallbackState);
+      return fallbackState;
     } catch (error) {
       console.error('Failed to recalculate scoring:', error);
+      return undefined;
     } finally {
       setLoading(false);
     }

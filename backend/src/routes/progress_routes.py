@@ -223,6 +223,11 @@ def get_module_score_breakdown(module_id):
             )
             db.session.commit()
         
+        # Heal stored scores from graded submissions (a grade can be dropped
+        # when the progress row is created after grading, leaving 0 in the
+        # stored fields while the submissions hold real scores)
+        module_progress.sync_scores_from_assessments()
+        
         # Check what assessments exist in this module
         lesson_ids = [lesson.id for lesson in module.lessons]
         
@@ -532,6 +537,9 @@ def recalculate_module_score(module_id):
         
         if not module_progress:
             return jsonify({"error": "Module progress not found"}), 404
+        
+        # Sync stored scores from graded submissions before recomputing
+        module_progress.sync_scores_from_assessments()
         
         # Recalculate scores
         lessons_avg = module_progress.calculate_lessons_average_score()
