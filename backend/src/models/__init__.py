@@ -86,6 +86,22 @@ try:
 except ImportError:
     pass
 
+# Workflow / Autonomous Course-Creation Models
+from .workflow_models import (
+    CourseWorkflow,
+    WorkflowTask,
+    TaskDependency,
+    WorkflowEvent,
+    AgentRun,
+    QualityReview,
+    RepairAttempt,
+    CourseGenerationVersion,
+    AgentMemory,
+    WorkflowStatus,
+    WorkflowTaskStatus,
+    AgentResultStatus,
+)
+
 __all__ = [
     # Course Models
     'Course',
@@ -125,6 +141,20 @@ __all__ = [
     
     # Excel AI Grading
     'ExcelGradingResult',
+
+    # Workflow Models
+    'CourseWorkflow',
+    'WorkflowTask',
+    'TaskDependency',
+    'WorkflowEvent',
+    'AgentRun',
+    'QualityReview',
+    'RepairAttempt',
+    'CourseGenerationVersion',
+    'AgentMemory',
+    'WorkflowStatus',
+    'WorkflowTaskStatus',
+    'AgentResultStatus',
 ]
 
 print("✅ Models package loaded - Quiz consolidation complete")
