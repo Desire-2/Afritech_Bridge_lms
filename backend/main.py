@@ -585,6 +585,11 @@ def _bootstrap_schema():
                 conn.execute(_text("SELECT pg_advisory_lock(7412345)"))
                 try:
                     db.metadata.create_all(bind=conn, checkfirst=True)
+                    # PostgreSQL DDL is transactional: without an explicit
+                    # commit the created tables are rolled back when the
+                    # connection returns to the pool, so every boot on a
+                    # database missing a new table silently created nothing.
+                    conn.commit()
                 finally:
                     conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
         else:
@@ -609,12 +614,29 @@ with app.app_context():
         _bootstrap_schema()
 
         # _auto_migrate_missing_columns() issues raw ALTER TABLE statements.
-        # Running it against the production (PostgreSQL) database from every
-        # gunicorn worker on every restart caused concurrent-DDL races
-        # (duplicate-column / lock errors) and unrequested schema changes.
-        # Those columns are managed by Alembic migrations in production, so
-        # this is limited to local SQLite development only.
-        if not is_postgresql:
+        # On PostgreSQL every gunicorn worker would otherwise run them
+        # concurrently on boot (duplicate-column / lock races), so the DDL is
+        # serialized behind the same session advisory lock _bootstrap_schema
+        # uses for CREATE TABLE. Alembic migrations remain the primary schema
+        # mechanism (`flask db upgrade`), but deployments whose build/start
+        # command never runs Alembic still need this self-heal: a newly
+        # shipped model column that the production table lacks turns every
+        # query against that table into a 500 (e.g. module_progress
+        # .project_score). Every block inspects the schema first, so this is
+        # a no-op once the column exists — and migration b8c9d0e1f2a3 is
+        # guarded the same way, so the two paths cannot collide.
+        if is_postgresql:
+            try:
+                from sqlalchemy import text as _text
+                with db.engine.connect() as lock_conn:
+                    lock_conn.execute(_text("SELECT pg_advisory_lock(7412345)"))
+                    try:
+                        _auto_migrate_missing_columns()
+                    finally:
+                        lock_conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
+            except Exception as e:
+                logger.warning(f"⚠️ Column auto-migration skipped (non-fatal): {e}")
+        else:
             _auto_migrate_missing_columns()
 
     if not RUNNING_FLASK_DB_CLI:
