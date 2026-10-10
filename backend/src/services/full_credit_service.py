@@ -6,7 +6,7 @@ from flask import current_app
 import logging
 
 from ..models.user_models import db
-from ..models.course_models import Module, Lesson, Quiz, Assignment, AssignmentSubmission
+from ..models.course_models import Module, Lesson, Quiz, Assignment, AssignmentSubmission, Enrollment
 from ..models.student_models import LessonCompletion, ModuleProgress
 from ..models.quiz_progress_models import QuizAttempt, QuizAttemptStatus
 
@@ -44,12 +44,16 @@ class FullCreditService:
             details = {
                 "lessons_updated": 0,
                 "quizzes_updated": 0,
-                "assignments_updated": 0
+                "assignments_updated": 0,
+                "projects_updated": 0
             }
             
-            # 1. Award full credit for all lessons in the module
-            lessons = Lesson.query.filter_by(module_id=module_id).all()
-            logger.info(f"Found {len(lessons)} lessons in module {module_id}")
+            # 1. Award full credit for all lessons in the module (published only)
+            lessons = Lesson.query.filter_by(
+                module_id=module_id, is_published=True
+            ).all()
+            lesson_ids = [lesson.id for lesson in lessons]
+            logger.info(f"Found {len(lessons)} published lessons in module {module_id}")
             for lesson in lessons:
                 try:
                     FullCreditService._award_lesson_full_credit(student_id, lesson.id, details)
@@ -58,9 +62,17 @@ class FullCreditService:
                     logger.error(f"Error awarding lesson {lesson.id} credit: {str(lesson_error)}")
                     raise lesson_error
             
-            # 2. Award full credit for all quizzes in the module
-            quizzes = Quiz.query.filter_by(module_id=module_id).all()
-            logger.info(f"Found {len(quizzes)} quizzes in module {module_id}")
+            # 2. Award full credit for all quizzes in the module —
+            # module-level finals AND lesson-linked quizzes
+            from sqlalchemy import or_
+            quizzes = Quiz.query.filter(
+                or_(
+                    Quiz.module_id == module_id,
+                    Quiz.lesson_id.in_(lesson_ids) if lesson_ids else False
+                ),
+                Quiz.is_published == True  # noqa: E712
+            ).all()
+            logger.info(f"Found {len(quizzes)} published quizzes in module {module_id}")
             for quiz in quizzes:
                 try:
                     FullCreditService._award_quiz_full_credit(student_id, quiz.id, details)
@@ -69,9 +81,16 @@ class FullCreditService:
                     logger.error(f"Error awarding quiz {quiz.id} credit: {str(quiz_error)}")
                     raise quiz_error
             
-            # 3. Award full credit for all assignments in the module
-            assignments = Assignment.query.filter_by(module_id=module_id).all()
-            logger.info(f"Found {len(assignments)} assignments in module {module_id}")
+            # 3. Award full credit for all assignments in the module —
+            # module-linked AND lesson-linked
+            assignments = Assignment.query.filter(
+                or_(
+                    Assignment.module_id == module_id,
+                    Assignment.lesson_id.in_(lesson_ids) if lesson_ids else False
+                ),
+                Assignment.is_published == True  # noqa: E712
+            ).all()
+            logger.info(f"Found {len(assignments)} published assignments in module {module_id}")
             for assignment in assignments:
                 try:
                     FullCreditService._award_assignment_full_credit(student_id, assignment.id, instructor_id, details)
@@ -79,6 +98,22 @@ class FullCreditService:
                 except Exception as assignment_error:
                     logger.error(f"Error awarding assignment {assignment.id} credit: {str(assignment_error)}")
                     raise assignment_error
+            
+            # 3b. Award full credit for published projects covering this module
+            from ..models.course_models import Project, ProjectSubmission
+            for project in Project.query.filter_by(
+                course_id=module.course_id, is_published=True
+            ).all():
+                covered = project.get_modules()
+                if covered and module_id not in covered:
+                    continue
+                try:
+                    FullCreditService._award_project_full_credit(
+                        student_id, project, instructor_id, details
+                    )
+                except Exception as project_error:
+                    logger.error(f"Error awarding project {project.id} credit: {str(project_error)}")
+                    raise project_error
             
             # 4. Update module progress
             try:
@@ -99,6 +134,30 @@ class FullCreditService:
             # 6. Commit all changes
             db.session.commit()
             logger.info(f"Full credit committed successfully for student {student_id}, module {module_id}")
+            
+            # 7. Unlock the next module and sync enrollment so a full-credit
+            # grant can never strand the learner behind a locked module
+            try:
+                from .progression_service import ProgressionService
+                from .enrollment_progress_service import EnrollmentProgressService
+                ProgressionService._unlock_next_module(
+                    student_id=student_id,
+                    completed_module_id=module_id,
+                    enrollment_id=enrollment_id
+                )
+                enrollment = Enrollment.query.get(enrollment_id)
+                if enrollment:
+                    EnrollmentProgressService.sync_enrollment(enrollment, commit=True)
+                else:
+                    db.session.commit()
+                logger.info(f"Unlocked next module and synced enrollment {enrollment_id}")
+            except Exception as followup_error:
+                db.session.rollback()
+                logger.error(
+                    f"Full credit committed but unlock/sync failed for student "
+                    f"{student_id}, module {module_id}: {str(followup_error)}",
+                    exc_info=True
+                )
             
             # Use logger instead of current_app.logger for better reliability
             logger.info(f"Full credit awarded to student {student_id} for module {module_id} by instructor {instructor_id}")
@@ -257,6 +316,45 @@ class FullCreditService:
             raise e
     
     @staticmethod
+    def _award_project_full_credit(student_id: int, project, instructor_id: int, details: Dict):
+        """Award full credit for a published project covering the module."""
+        from ..models.course_models import ProjectSubmission
+        
+        submission = ProjectSubmission.query.filter_by(
+            student_id=student_id,
+            project_id=project.id
+        ).first()
+        
+        max_points = project.points_possible or 100
+        feedback = (
+            f"Full credit awarded by instructor on "
+            f"{now_local().strftime('%Y-%m-%d %H:%M')}"
+        )
+        
+        if submission:
+            # Idempotent: only raise the grade, never lower it
+            submission.grade = max(submission.grade or 0.0, max_points)
+            submission.feedback = feedback
+            submission.graded_at = now_local()
+            submission.graded_by = instructor_id
+        else:
+            submission = ProjectSubmission(
+                student_id=student_id,
+                project_id=project.id,
+                text_content="Full credit awarded by instructor - no submission required",
+                grade=max_points,
+                feedback=feedback,
+                graded_at=now_local(),
+                graded_by=instructor_id
+            )
+            db.session.add(submission)
+        
+        details["projects_updated"] += 1
+        logger.debug(
+            f"Awarded project credit for project {project.id} to student {student_id}"
+        )
+    
+    @staticmethod
     def _update_module_progress(student_id: int, module_id: int, enrollment_id: int, details: Dict):
         """Update module progress to reflect full completion"""
         try:
@@ -268,11 +366,12 @@ class FullCreditService:
             ).first()
             
             if progress:
-                # Update existing progress
+                # Update existing progress — course_contribution_score is on
+                # the 0-100 scale (lesson average), not 0-10
                 progress.status = 'completed'
                 progress.completed_at = now_local()
                 progress.cumulative_score = 100.0
-                progress.course_contribution_score = 10.0  # Full course contribution
+                progress.course_contribution_score = 100.0
                 progress.quiz_score = 100.0
                 progress.assignment_score = 100.0
                 progress.project_score = 100.0
@@ -289,7 +388,7 @@ class FullCreditService:
                     started_at=now_local(),
                     unlocked_at=now_local(),
                     cumulative_score=100.0,
-                    course_contribution_score=10.0,
+                    course_contribution_score=100.0,
                     quiz_score=100.0,
                     assignment_score=100.0,
                     project_score=100.0,

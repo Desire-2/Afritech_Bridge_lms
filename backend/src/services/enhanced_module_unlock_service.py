@@ -62,10 +62,12 @@ class EnhancedModuleUnlockService:
                     "recommendations": []
                 }
             
-            # Find the previous module that needs to be completed to unlock target
+            # Find the previous module that needs to be completed to unlock target.
+            # Published modules only — drafts must not gate published content.
             previous_module = target_module.course.modules.filter(
-                Module.order < target_module.order
-            ).order_by(Module.order.desc()).first()
+                Module.order < target_module.order,
+                Module.is_published == True  # noqa: E712
+            ).order_by(Module.order.desc(), Module.id.desc()).first()
             
             if not previous_module:
                 # This is the first module - should be unlocked by default
@@ -120,7 +122,7 @@ class EnhancedModuleUnlockService:
                 "lesson_requirements": lesson_requirements,
                 "scoring_breakdown": scoring_breakdown,
                 "recommendations": recommendations,
-                "unlock_timestamp": datetime.utcnow().isoformat(),
+                "unlock_timestamp": now_local().isoformat(),
                 "target_module": {
                     "id": target_module.id,
                     "title": target_module.title,
@@ -163,16 +165,20 @@ class EnhancedModuleUnlockService:
                     "current_status": module_progress.status
                 }
             
-            # Find the previous module that needs to be completed
+            # Find the previous module that needs to be completed.
+            # Published modules only — drafts must not gate published content.
             previous_module = target_module.course.modules.filter(
-                Module.order < target_module.order
-            ).order_by(Module.order.desc()).first()
+                Module.order < target_module.order,
+                Module.is_published == True  # noqa: E712
+            ).order_by(Module.order.desc(), Module.id.desc()).first()
             
             if not previous_module:
                 # This is the first module, it should be unlocked by default
                 unlock_result = EnhancedModuleUnlockService._perform_next_module_unlock(
                     student_id, target_module_id, enrollment_id
                 )
+                if unlock_result.get("success"):
+                    db.session.commit()
                 unlock_result.update({
                     "message": "First module unlocked successfully",
                     "next_module": {
@@ -201,18 +207,28 @@ class EnhancedModuleUnlockService:
                     }
                 }
             
-            # Complete previous module
+            # Complete previous module (flush only — no intermediate commit)
             completion_result = EnhancedModuleUnlockService._complete_current_module(
                 student_id, previous_module.id, enrollment_id
             )
             
             if not completion_result["success"]:
+                db.session.rollback()
                 return completion_result
             
-            # Unlock target module
+            # Unlock target module (flush only)
             unlock_result = EnhancedModuleUnlockService._perform_next_module_unlock(
                 student_id, target_module_id, enrollment_id
             )
+            
+            if not unlock_result.get("success"):
+                # Roll back the completion too — never strand a completed
+                # module with its successor still locked
+                db.session.rollback()
+                return unlock_result
+            
+            # Single transaction: completion + unlock land together
+            db.session.commit()
             
             # Add celebration and notification data
             unlock_result.update({
@@ -345,7 +361,7 @@ class EnhancedModuleUnlockService:
                 "student_id": student_id,
                 "module_id": module_id,
                 "module_title": module.title,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": now_local().isoformat()
             }
             
             if notification_type == "pre_unlock_warning":
@@ -447,7 +463,11 @@ class EnhancedModuleUnlockService:
         Returns detailed information about each lesson's status and requirements.
         """
         module = Module.query.get(module_id)
-        lessons = module.lessons.order_by(Lesson.order).all()
+        # Published lessons only — drafts must not block unlock eligibility
+        lessons = [
+            lesson for lesson in module.lessons.order_by(Lesson.order).all()
+            if getattr(lesson, 'is_published', True)
+        ]
         
         passed_lessons = []
         failed_lessons = []
@@ -731,15 +751,19 @@ class EnhancedModuleUnlockService:
                     "validation_errors": ["Module not found"]
                 }
             
-            lessons = module.lessons.order_by(Lesson.order).all()
+            # Published lessons only — drafts must not block completion
+            lessons = [
+                lesson for lesson in module.lessons.order_by(Lesson.order).all()
+                if getattr(lesson, 'is_published', True)
+            ]
             if not lessons:
                 return {
                     "can_complete": False,
-                    "message": "No lessons found in module",
+                    "message": "No published lessons found in module",
                     "total_score": 0.0,
                     "breakdown": {},
                     "failed_lessons": [],
-                    "validation_errors": ["No lessons in module"]
+                    "validation_errors": ["No published lessons in module"]
                 }
             
             # STRICT VALIDATION: Check each lesson individually
@@ -881,12 +905,13 @@ class EnhancedModuleUnlockService:
             # Calculate final score
             final_score = module_progress.calculate_module_weighted_score()
             
-            # Update completion status
+            # Update completion status (NO commit here — attempt_module_unlock
+            # commits completion + unlock together so a failure cannot strand
+            # a completed-but-locked module)
             module_progress.status = 'completed'
             module_progress.completed_at = now_local()
             module_progress.cumulative_score = final_score
-            
-            db.session.commit()
+            db.session.flush()
             
             return {
                 "success": True,
@@ -895,7 +920,6 @@ class EnhancedModuleUnlockService:
             }
             
         except Exception as e:
-            db.session.rollback()
             current_app.logger.error(f"Module completion error: {str(e)}")
             return {"success": False, "error": f"Completion failed: {str(e)}"}
     
@@ -926,7 +950,7 @@ class EnhancedModuleUnlockService:
                 next_progress.unlocked_at = now_local()
                 next_progress.prerequisites_met = True
             
-            db.session.commit()
+            db.session.flush()
             
             return {
                 "success": True,
@@ -937,7 +961,6 @@ class EnhancedModuleUnlockService:
             }
             
         except Exception as e:
-            db.session.rollback()
             current_app.logger.error(f"Next module unlock error: {str(e)}")
             return {"success": False, "error": f"Next module unlock failed: {str(e)}"}
     
@@ -997,10 +1020,11 @@ class EnhancedModuleUnlockService:
     
     @staticmethod
     def _get_next_module_info(current_module: Module) -> Optional[Dict[str, Any]]:
-        """Get information about the next module in sequence."""
+        """Get information about the next module in sequence (published only)."""
         next_module = current_module.course.modules.filter(
-            Module.order > current_module.order
-        ).order_by(Module.order).first()
+            Module.order > current_module.order,
+            Module.is_published == True  # noqa: E712
+        ).order_by(Module.order.asc(), Module.id.asc()).first()
         
         if next_module:
             return {

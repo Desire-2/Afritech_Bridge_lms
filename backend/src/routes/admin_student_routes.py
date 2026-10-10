@@ -689,26 +689,23 @@ def remove_enrollment(student_id, enrollment_id):
 
         course_title = enrollment.course.title if enrollment.course else "Unknown"
 
-        # Clean up progress data for this enrollment
-        ModuleProgress.query.filter_by(
-            student_id=student_id, enrollment_id=enrollment_id
-        ).delete()
-
-        # Remove lesson completions for lessons in this course
-        course_lessons = Lesson.query.join(Module).filter(
-            Module.course_id == enrollment.course_id
-        ).all()
-        lesson_ids = [l.id for l in course_lessons]
-        if lesson_ids:
-            LessonCompletion.query.filter(
-                LessonCompletion.student_id == student_id,
-                LessonCompletion.lesson_id.in_(lesson_ids)
-            ).delete(synchronize_session='fetch')
+        # Centralized cleanup: ModuleProgress + LessonCompletion +
+        # QuizAttempt + AssignmentSubmission + ProjectSubmission for
+        # this enrollment's course (flush only — commit below)
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        deleted = EnrollmentProgressService.cleanup_enrollment_progress(
+            student_id=student_id,
+            course_id=enrollment.course_id,
+            enrollment_id=enrollment_id
+        )
 
         db.session.delete(enrollment)
         db.session.commit()
 
-        logger.info(f"Enrollment {enrollment_id} removed for student {student_id}")
+        logger.info(
+            f"Enrollment {enrollment_id} removed for student {student_id} "
+            f"(cleaned: {deleted})"
+        )
         return jsonify({
             "message": f"Enrollment in '{course_title}' removed successfully"
         }), 200

@@ -379,6 +379,7 @@ const LearningPage = () => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
+  const certificateIssuedRef = useRef<boolean>(false);
   const unlockingRef = useRef<boolean>(false);
   const contentRequestRef = useRef(0);
   const navigationIntentRef = useRef(0);
@@ -1226,49 +1227,43 @@ const LearningPage = () => {
   const checkCourseCompletion = useCallback(async () => {
     if (!courseData?.course) return;
     try {
-      const progressData = await StudentApiService.getCourseProgress(courseId);
-      const modules = courseData.course.modules || [];
-
-      const moduleScores = await Promise.all(
-        modules.map(async (module: any) => {
-          try {
-            const moduleProgress = await StudentApiService.getModuleProgress(module.id);
-            return (moduleProgress.weighted_score ?? moduleProgress.cumulative_score ?? 0);
-          } catch {
-            return 0;
-          }
-        })
-      );
-
-      const overallScore = moduleScores.length > 0
-        ? moduleScores.reduce((sum: number, score: number) => sum + score, 0) / moduleScores.length
-        : 0;
-      
+      // Authoritative backend completion decision (published modules only,
+      // module-level completed status + weighted scores). Never infer
+      // completion from client-side lesson counting.
+      const state = await StudentApiService.getCourseCompletionState(courseId);
       const completion = {
-        totalLessons: modules.reduce((sum: number, m: any) => sum + (m.lessons?.length || 0), 0),
-        completedLessons: progressData.lessons_completed || 0,
-        totalQuizzes: progressData.total_quizzes || 0,
-        completedQuizzes: progressData.completed_quizzes || 0,
-        totalAssignments: progressData.total_assignments || 0,
-        completedAssignments: progressData.completed_assignments || 0,
-        overallScore,
+        totalLessons: state.total_modules,
+        completedLessons: state.completed_modules,
+        totalQuizzes: 0,
+        completedQuizzes: 0,
+        totalAssignments: 0,
+        completedAssignments: 0,
+        overallScore: state.overall_score,
         passingThreshold: LESSON_PASSING_THRESHOLD
       };
-
       setCourseCompletion(completion);
 
-      if (completion.completedLessons >= completion.totalLessons && 
-          completion.completedQuizzes >= completion.totalQuizzes && 
-          completion.completedAssignments >= completion.totalAssignments && 
-          overallScore >= LESSON_PASSING_THRESHOLD) {
+      if (state.course_completed && !certificateIssuedRef.current) {
+        certificateIssuedRef.current = true;
         try {
           const certificateResponse = await StudentApiService.generateCertificate(courseId);
           if (certificateResponse.success) {
             setShowCertificateNotification(true);
             setTimeout(() => setShowCertificateNotification(false), 5000);
+          } else {
+            // Allow a later retry if generation was rejected
+            certificateIssuedRef.current = false;
           }
-        } catch (error) {
-          console.error('Error generating certificate:', error);
+        } catch (error: any) {
+          certificateIssuedRef.current = false;
+          // 409/duplicate responses mean the certificate already exists —
+          // treat as success without re-issuing
+          if (error?.response?.status === 409) {
+            setShowCertificateNotification(true);
+            setTimeout(() => setShowCertificateNotification(false), 5000);
+          } else {
+            console.error('Error generating certificate:', error);
+          }
         }
       }
     } catch (error) {
@@ -1297,13 +1292,27 @@ const LearningPage = () => {
       const moduleIndex = courseData.course.modules.findIndex((m: any) => m.id === currentModuleId);
       const nextModule = courseData.course.modules[moduleIndex + 1];
       if (nextModule && nextModule.lessons?.[0]) {
-        handleModuleUnlock(nextModule.title || 'Next Module');
-        setTimeout(() => {
+        // L-1: call the real backend unlock (checks scores, writes
+        // ModuleProgress, unlocks successor) BEFORE any celebration or
+        // navigation — a local toast alone leaves the module locked
+        // server-side while the UI pretends it opened.
+        const runUnlock = async () => {
+          try {
+            if (checkAndUnlockNextModuleRef.current) {
+              await checkAndUnlockNextModuleRef.current();
+            } else {
+              await EnhancedModuleUnlockService.attemptModuleUnlock(nextModule.id);
+              handleModuleUnlock(nextModule.title || 'Next Module');
+            }
+          } catch (err) {
+            console.warn('Auto-advance unlock failed:', err);
+          }
           const nextLessonId = nextModule.lessons?.[0]?.id;
           if (nextLessonId) {
             handleLessonSelect(nextLessonId, nextModule.id);
           }
-        }, 2000);
+        };
+        runUnlock();
       }
     }
   }, [courseData, currentLesson, currentModuleId, isLessonCompleted]);

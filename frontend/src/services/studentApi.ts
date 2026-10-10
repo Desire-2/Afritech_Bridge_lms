@@ -719,8 +719,30 @@ export class StudentApiService {
 
   // Get module progress with scores
   static async getModuleProgress(moduleId: number): Promise<ModuleProgress> {
-    const response = await api.get(`/student/modules/${moduleId}/progress`);
-    return response.data;
+    const response = await api.get(`/student/progress/module/${moduleId}`);
+    // Envelope: { success, data: { module, progress, time_analytics } }
+    const progress = response.data?.data?.progress;
+    if (!progress) {
+      throw new Error('Module progress data missing from response');
+    }
+    return progress;
+  }
+
+  // Authoritative course-completion state from the backend
+  static async getCourseCompletionState(courseId: number): Promise<{
+    course_completed: boolean;
+    completed_modules: number;
+    total_modules: number;
+    locked_modules: number;
+    overall_score: number;
+    enrollment_completed: boolean;
+    incomplete_modules: Array<{ id: number; title: string; status: string; score: number }>;
+  }> {
+    const response = await api.get(`/student/progress/course/${courseId}/completion-state`);
+    if (!response.data?.success || !response.data?.data) {
+      throw new Error(response.data?.error || 'Failed to load course completion state');
+    }
+    return response.data.data;
   }
 
   static async checkCertificateEligibility(courseId: number): Promise<any> {

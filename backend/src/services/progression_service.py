@@ -179,9 +179,10 @@ class ProgressionService:
             if not quiz:
                 return False, None
             
-            # Get best attempt
+            # Get best attempt. QuizAttempt.user_id is the mapped column
+            # (there is no student_id on the model).
             attempts = QuizAttempt.query.filter_by(
-                student_id=student_id,
+                user_id=student_id,
                 quiz_id=quiz_id
             ).order_by(QuizAttempt.created_at.desc()).all()
             
@@ -195,8 +196,8 @@ class ProgressionService:
             return score >= passing_score, score
             
         except Exception as e:
-            current_app.logger.error(f"Quiz pass check error: {str(e)}")
-            return False, None
+            current_app.logger.exception(f"Quiz pass check error for quiz {quiz_id}: {str(e)}")
+            raise
     
     @staticmethod
     def complete_lesson(student_id: int, lesson_id: int, time_spent: int = 0) -> Tuple[bool, str, Dict]:
@@ -252,12 +253,14 @@ class ProgressionService:
                     if not completion:
                         return False, f"Complete lesson '{prev_lesson.title}' first", {}
             
-            # Check if already completed
+            # Check if already completed — upgrade autosave rows rather than
+            # returning early: an existing LessonCompletion with completed=False
+            # is a progress snapshot, not a completion record.
             existing_completion = LessonCompletion.query.filter_by(
                 student_id=student_id, lesson_id=lesson_id
             ).first()
             
-            if existing_completion:
+            if existing_completion and existing_completion.completed:
                 return True, "Lesson already completed", existing_completion.to_dict()
             
             # ✅ NEW: Check if lesson has a quiz requirement
@@ -278,20 +281,32 @@ class ProgressionService:
                         "message": f"Complete and pass the quiz '{quiz_info['quiz_title']}' (minimum {quiz_info['passing_score']}%) to complete this lesson"
                     }
             
-            # Create completion record with proper flags set
-            completion = LessonCompletion(
-                student_id=student_id,
-                lesson_id=lesson_id,
-                time_spent=time_spent,
-                completed=True,  # Mark as completed
-                completed_at=now_local(),
-                reading_progress=100.0,  # Default to 100% if completing manually
-                engagement_score=100.0  # Default to 100% for completed lessons
-            )
+            # Create or upgrade the completion record
+            if existing_completion:
+                existing_completion.completed = True
+                existing_completion.completed_at = now_local()
+                existing_completion.time_spent = time_spent
+                existing_completion.reading_progress = max(
+                    existing_completion.reading_progress or 0.0, 100.0
+                )
+                existing_completion.engagement_score = max(
+                    existing_completion.engagement_score or 0.0, 100.0
+                )
+                existing_completion.updated_at = now_local()
+                completion = existing_completion
+            else:
+                completion = LessonCompletion(
+                    student_id=student_id,
+                    lesson_id=lesson_id,
+                    time_spent=time_spent,
+                    completed=True,  # Mark as completed
+                    completed_at=now_local(),
+                    reading_progress=100.0,  # Default to 100% if completing manually
+                    engagement_score=100.0  # Default to 100% for completed lessons
+                )
+                db.session.add(completion)
             
-            current_app.logger.info(f"📚 Creating lesson completion: lesson_id={lesson_id}, student_id={student_id}, completed=True, reading_progress=100.0, engagement_score=100.0")
-            
-            db.session.add(completion)
+            current_app.logger.info(f"📚 Lesson completion prepared: lesson_id={lesson_id}, student_id={student_id}")
             
             # Update module progress if needed
             if module_progress.status == 'unlocked':
@@ -350,9 +365,15 @@ class ProgressionService:
             if not module:
                 return False, "Module not found"
                 
-            lessons = module.lessons.order_by(Lesson.order).all()
+            # Published lessons only — drafts must not block completion
+            lessons = [
+                lesson for lesson in module.lessons.order_by(Lesson.order).all()
+                if getattr(lesson, 'is_published', True)
+            ]
             if not lessons:
-                return False, "No lessons found in module"
+                # No published lessons: fall back to score-only evaluation
+                # (empty-module policy: assessments alone can satisfy a module)
+                lessons = []
             
             # STRICT LESSON VALIDATION: Check EVERY lesson individually
             from ..services.lesson_completion_service import LessonCompletionService
@@ -424,6 +445,13 @@ class ProgressionService:
                 # Module score insufficient even though lessons passed
                 current_app.logger.info(f"Module {module_id} lessons passed but score {cumulative_score:.2f}% < 70%")
                 
+                # M-9: never downgrade a completed module on recomputation
+                if module_progress.status == 'completed':
+                    return False, (
+                        f"Module already completed with {module_progress.cumulative_score or 0:.1f}%; "
+                        f"current recomputation {cumulative_score:.1f}% does not reopen it"
+                    )
+                
                 # Check if this is a final attempt that fails
                 if module_progress.attempts_count >= module_progress.max_attempts:
                     # Suspend student from course
@@ -435,10 +463,12 @@ class ProgressionService:
                     else:
                         return False, f"All lessons satisfied but insufficient module score: {cumulative_score:.1f}% and suspension failed: {suspension_msg}"
                 else:
-                    # Mark as failed but allow retake
-                    module_progress.status = 'failed'
-                    module_progress.failed_at = now_local()
-                    db.session.commit()
+                    # Mark as failed but allow retake — only write once to avoid
+                    # rewriting failed_at on every frontend poll (M-5)
+                    if module_progress.status != 'failed':
+                        module_progress.status = 'failed'
+                        module_progress.failed_at = now_local()
+                        db.session.commit()
                     remaining_attempts = module_progress.max_attempts - module_progress.attempts_count
                     return False, f"All lessons satisfied but module score {cumulative_score:.1f}% < 70% required. {remaining_attempts} attempts remaining."
                 
@@ -475,11 +505,21 @@ class ProgressionService:
             if module_progress.attempts_count >= module_progress.max_attempts:
                 return False, "Maximum attempts reached. Course access revoked"
             
+            from ..models.quiz_progress_models import QuizAttempt
+            from ..models.course_models import (
+                Quiz, Assignment, AssignmentSubmission, Project, ProjectSubmission
+            )
+            from sqlalchemy import or_
+            
+            module = Module.query.get(module_id)
+            lesson_ids = [lesson.id for lesson in module.lessons] if module else []
+            
             # Reset module progress for retake
             module_progress.attempts_count += 1
             module_progress.status = 'unlocked'
             module_progress.started_at = None
             module_progress.failed_at = None
+            module_progress.completed_at = None
             
             # Reset scores
             module_progress.course_contribution_score = 0.0
@@ -498,6 +538,51 @@ class ProgressionService:
             AssessmentAttempt.query.filter_by(
                 student_id=student_id, module_id=module_id
             ).delete(synchronize_session='fetch')
+            
+            # Invalidate quiz attempts (lesson quizzes + module-level final)
+            # so score synchronization cannot resurrect pre-retake grades
+            if lesson_ids or module:
+                quiz_ids = [
+                    q.id for q in Quiz.query.filter(
+                        or_(
+                            Quiz.lesson_id.in_(lesson_ids) if lesson_ids else False,
+                            Quiz.module_id == module_id
+                        )
+                    ).all()
+                ] if (lesson_ids or module) else []
+                if quiz_ids:
+                    QuizAttempt.query.filter(
+                        QuizAttempt.user_id == student_id,
+                        QuizAttempt.quiz_id.in_(quiz_ids)
+                    ).delete(synchronize_session='fetch')
+            
+            # Invalidate assignment submissions attached to this module —
+            # lesson-linked AND module-linked assignments both count
+            assignment_conditions = [Assignment.module_id == module_id]
+            if lesson_ids:
+                assignment_conditions.append(Assignment.lesson_id.in_(lesson_ids))
+            assignment_ids = [
+                a.id for a in Assignment.query.filter(
+                    or_(*assignment_conditions)
+                ).all()
+            ]
+            if assignment_ids:
+                AssignmentSubmission.query.filter(
+                    AssignmentSubmission.student_id == student_id,
+                    AssignmentSubmission.assignment_id.in_(assignment_ids)
+                ).delete(synchronize_session='fetch')
+            
+            # Invalidate project submissions for projects covering this module
+            if module:
+                for project in Project.query.filter_by(
+                    course_id=module.course_id
+                ).all():
+                    covered = project.get_modules()
+                    if not covered or module_id in covered:
+                        ProjectSubmission.query.filter(
+                            ProjectSubmission.student_id == student_id,
+                            ProjectSubmission.project_id == project.id
+                        ).delete(synchronize_session='fetch')
             
             db.session.commit()
             
@@ -609,11 +694,19 @@ class ProgressionService:
     
     @staticmethod
     def _can_unlock_next_module(student_id: int, course_id: int, enrollment_id: int) -> bool:
-        """Check if student can unlock the next module"""
+        """Check if student can unlock the next module.
+
+        True when at least one published module after the last completed one
+        exists and is not yet completed — i.e. there is a next module whose
+        prerequisites (the preceding completed modules) are satisfied.
+        """
         course = Course.query.get(course_id)
-        modules = course.modules.filter_by(is_published=True).order_by('order').all()
+        modules = course.modules.filter_by(is_published=True).order_by(
+            Module.order.asc(), Module.id.asc()
+        ).all()
         
-        for i, module in enumerate(modules):
+        seen_completed = False
+        for module in modules:
             module_progress = ModuleProgress.query.filter_by(
                 student_id=student_id,
                 module_id=module.id,
@@ -621,11 +714,12 @@ class ProgressionService:
             ).first()
             
             if module_progress and module_progress.status == 'completed':
+                seen_completed = True
                 continue
-            elif module_progress and module_progress.can_proceed_to_next():
-                return True
-            else:
-                break
+            # First non-completed published module: unlockable when every
+            # earlier module is completed (guaranteed by loop order) and it
+            # is not already finished
+            return True
         
         return False
     
@@ -639,10 +733,11 @@ class ProgressionService:
             
         course = completed_module.course
         
-        # Find next module
+        # Find next published module — drafts must not gate the sequence
         next_module = course.modules.filter(
-            Module.order > completed_module.order
-        ).order_by('order').first()
+            Module.order > completed_module.order,
+            Module.is_published == True  # noqa: E712
+        ).order_by(Module.order.asc(), Module.id.asc()).first()
         
         if next_module:
             current_app.logger.info(f"Attempting to unlock next module {next_module.id} ({next_module.title}) for student {student_id}")

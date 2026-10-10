@@ -66,6 +66,34 @@ def _enforce_module_release_access(lesson, enrollment):
         }), 403
     return None
 
+
+def _enforce_enrollment_access(enrollment):
+    """Block mutations for suspended/terminated/unpaid enrollments (M-7).
+
+    Reuses the same WaitlistService rules as the learning-path routes so the
+    two route families cannot disagree about who may write progress.
+    Returns an error response (or None when access is allowed).
+    """
+    from ..services.waitlist_service import WaitlistService
+    access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
+    if access_allowed:
+        return None
+    reason_lower = (access_reason or "").lower()
+    if 'terminated' in reason_lower or 'suspended' in reason_lower:
+        return jsonify({
+            "message": access_reason,
+            "error_code": "enrollment_blocked"
+        }), 403
+    if 'cohort has not started' in reason_lower:
+        return jsonify({
+            "message": access_reason,
+            "error_code": "cohort_not_started"
+        }), 403
+    return jsonify({
+        "message": access_reason or "Payment required to continue",
+        "error_code": "payment_required"
+    }), 402
+
 # --- Student Dashboard Routes ---
 
 
@@ -333,6 +361,10 @@ def update_lesson_progress(lesson_id):
     
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
+    
+    access_blocked = _enforce_enrollment_access(enrollment)
+    if access_blocked:
+        return access_blocked
     
     blocked = _enforce_module_release_access(lesson, enrollment)
     if blocked:
@@ -674,6 +706,10 @@ def complete_lesson(lesson_id):
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
     
+    access_blocked = _enforce_enrollment_access(enrollment)
+    if access_blocked:
+        return access_blocked
+    
     blocked = _enforce_module_release_access(lesson, enrollment)
     if blocked:
         return blocked
@@ -748,7 +784,8 @@ def complete_lesson(lesson_id):
                 from ..services.progression_service import ProgressionService
                 module_progress = ModuleProgress.query.filter_by(
                     student_id=current_user_id,
-                    module_id=lesson.module_id
+                    module_id=lesson.module_id,
+                    enrollment_id=enrollment.id
                 ).first()
                 
                 if module_progress:
@@ -1385,14 +1422,21 @@ def get_detailed_progress():
                 'lessonsCompleted': 3 + (i % 2)
             })
         
-        # Weak areas (courses with low scores)
+        # Weak areas (courses with low scores) — derived from enrollment-scoped
+        # ModuleProgress (Enrollment has no grade column)
         weak_areas = []
         for enrollment in enrollments:
-            if enrollment.grade and enrollment.grade < 80:
+            avg_score = db.session.query(
+                db.func.avg(ModuleProgress.cumulative_score)
+            ).filter(
+                ModuleProgress.enrollment_id == enrollment.id,
+                ModuleProgress.status == 'completed'
+            ).scalar()
+            if avg_score is not None and avg_score < 80:
                 weak_areas.append({
                     'topic': enrollment.course.title,
-                    'score': int(enrollment.grade),
-                    'attempts': 1,  # This would come from actual attempt tracking
+                    'score': int(avg_score),
+                    'attempts': 1,
                     'recommendedResources': [
                         f"Review {enrollment.course.title} materials",
                         "Practice exercises for this topic"
@@ -1637,11 +1681,25 @@ def complete_module(module_id):
             )
             db.session.add(progress)
         
-        # Update module completion
-        score = data.get('score', 0) or 0
+        # Server-authoritative: score comes from stored ModuleProgress
+        # (lesson quizzes, assignments, projects, final assessment) — never
+        # from the client payload. Route through the same completion check
+        # as the learning API so grades can't be forged here.
+        from ..services.progression_service import ProgressionService
+        passed, reason = ProgressionService.check_module_completion(
+            student_id=current_user_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id,
+        )
+        module_progress = ModuleProgress.query.filter_by(
+            student_id=current_user_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id,
+        ).first()
+        if module_progress and passed:
+            module_progress.sync_scores_from_assessments()
+        score = (module_progress.cumulative_score if module_progress else 0) or 0
         progress.last_accessed = now_local()
-        if score >= 80 and score > (enrollment.grade or 0):
-            enrollment.grade = score
 
         # Progress / completion always derive from the published course.
         from ..services.enrollment_progress_service import EnrollmentProgressService
@@ -1660,7 +1718,9 @@ def complete_module(module_id):
                 'total_time_spent': progress.total_time_spent
             },
             "enrollment_progress": enrollment.progress,
-            "passed": score >= 80
+            "passed": passed,
+            "reason": reason,
+            "score": score
         }), 200
         
     except Exception as e:
@@ -1782,38 +1842,51 @@ def generate_certificate():
         completed_lessons = counts["completed_lessons"]
         published_modules = EnrollmentProgressService.get_published_modules(course)
         
-        # Get module scores using cumulative_score (the actual calculated score)
+        # Eligibility = every published module is COMPLETED (that status is
+        # only set by the progression gate: all lesson requirements met and
+        # cumulative score >= the 70% passing threshold). Requiring an extra
+        # 80% here made certificates unreachable for legitimate graduates.
+        from ..models.student_models import ModuleProgress as _MP
+        completed_module_ids = {
+            row[0]
+            for row in db.session.query(_MP.module_id)
+            .filter(
+                _MP.student_id == current_user_id,
+                _MP.enrollment_id == enrollment.id,
+                _MP.module_id.in_([m.id for m in published_modules]),
+                _MP.status == "completed",
+            )
+            .all()
+        } if published_modules else set()
+        
+        # Get module scores using the authoritative weighted calculation
         module_scores = []
         for module in published_modules:
             module_progress = ModuleProgress.query.filter_by(
                 student_id=current_user_id,
-                module_id=module.id
+                module_id=module.id,
+                enrollment_id=enrollment.id
             ).first()
-            # Use cumulative_score which is the properly calculated module score
-            module_scores.append((module_progress.cumulative_score or 0) if module_progress else 0)
+            module_scores.append(
+                (module_progress.cumulative_score or 0) if module_progress else 0
+            )
         
         overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
         
-        # Check eligibility - require passing score (80%) for all modules
-        # Lessons completion is tracked per-module, not globally
-        all_modules_passing = (
+        all_modules_completed = (
             len(published_modules) > 0
-            and len(module_scores) == len(published_modules)
-            and all(score >= 80 for score in module_scores)
+            and len(completed_module_ids) == len(published_modules)
         )
-        passing_overall = overall_score >= 80
         all_content_done = counts["is_complete"]
         
-        # For certificate eligibility, we check if the student has passed all modules
-        # (each module requires 80% to unlock the next one)
-        if not (all_modules_passing and passing_overall and all_content_done):
+        if not (all_modules_completed and all_content_done):
             return jsonify({
                 "success": False,
                 "message": "Course completion requirements not met",
                 "requirements": {
                     "lessons_completed": f"{completed_lessons}/{total_lessons}",
                     "overall_score": f"{overall_score:.1f}%",
-                    "all_modules_passing": all_modules_passing,
+                    "all_modules_completed": all_modules_completed,
                     "modules_completed": f"{counts['completed_modules']}/{counts['total_modules']}",
                     "module_scores": [f"{score:.1f}%" for score in module_scores],
                     "eligible": False
@@ -1849,7 +1922,6 @@ def generate_certificate():
         
         # Update enrollment completion through the authoritative service
         # (progress is derived, never hard-coded to 1.0)
-        enrollment.grade = overall_score
         EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
         
         db.session.commit()
@@ -1871,9 +1943,15 @@ def get_detailed_course_progress(course_id):
     current_user_id = int(get_jwt_identity())
     
     try:
-        # Get course modules and lessons
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        
         course = Course.query.get_or_404(course_id)
-        modules = Module.query.filter_by(course_id=course_id).all()
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id, course_id=course_id
+        ).first()
+        
+        # Published modules/lessons only — drafts must not affect student stats
+        modules = EnrollmentProgressService.get_published_modules(course)
         
         total_lessons = 0
         completed_lessons = 0
@@ -1883,8 +1961,10 @@ def get_detailed_course_progress(course_id):
         completed_assignments = 0
         
         for module in modules:
-            # Count lessons
-            module_lessons = Lesson.query.filter_by(module_id=module.id).all()
+            module_lessons = [
+                lesson for lesson in module.lessons
+                if getattr(lesson, 'is_published', True)
+            ]
             total_lessons += len(module_lessons)
             
             for lesson in module_lessons:
@@ -1896,27 +1976,27 @@ def get_detailed_course_progress(course_id):
                 if lesson_progress:
                     completed_lessons += 1
             
-            # Count quizzes (would need Quiz model - placeholder for now)
-            # total_quizzes += Quiz.query.filter_by(module_id=module.id).count()
-            
-            # Count assignments (would need Assignment model - placeholder for now)
-            # total_assignments += Assignment.query.filter_by(module_id=module.id).count()
+            lesson_ids = [lesson.id for lesson in module_lessons]
+            if lesson_ids:
+                total_quizzes += Quiz.query.filter(
+                    Quiz.lesson_id.in_(lesson_ids),
+                    Quiz.is_published == True  # noqa: E712
+                ).count()
+                total_assignments += Assignment.query.filter(
+                    Assignment.lesson_id.in_(lesson_ids),
+                    Assignment.is_published == True  # noqa: E712
+                ).count()
         
-        # Calculate overall score from module progress
+        # Overall score from the authoritative weighted calculation
         module_scores = []
         for module in modules:
             module_progress = ModuleProgress.query.filter_by(
                 student_id=current_user_id,
-                module_id=module.id
+                module_id=module.id,
+                **({"enrollment_id": enrollment.id} if enrollment else {})
             ).first()
             if module_progress:
-                score = (
-                    module_progress.course_contribution_score * 0.10 +
-                    module_progress.quiz_score * 0.30 +
-                    module_progress.assignment_score * 0.40 +
-                    module_progress.final_assessment_score * 0.20
-                )
-                module_scores.append(score)
+                module_scores.append(module_progress.calculate_module_weighted_score())
         
         overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
         
@@ -1948,11 +2028,13 @@ def get_certificates():
         certificates = []
         for enrollment in completed_enrollments:
             course = enrollment.course
+            cert = Certificate.query.filter_by(enrollment_id=enrollment.id).first()
             certificates.append({
                 'id': f"cert_{enrollment.id}",
                 'course_title': course.title,
-                'completion_date': enrollment.completion_date.isoformat() if enrollment.completion_date else None,
-                'final_grade': enrollment.grade,
+                'completion_date': enrollment.completed_at.isoformat()
+                    if enrollment.completed_at else None,
+                'final_grade': cert.overall_score if cert else None,
                 'certificate_url': f"/certificates/{enrollment.id}",
                 'skills_earned': [course.category] if course.category else ['General Programming'],
                 'instructor': course.instructor.first_name + " " + course.instructor.last_name if course.instructor else "Unknown"
@@ -2272,15 +2354,27 @@ def submit_quiz(quiz_id):
                     enrollment_id=enrollment.id
                 ).first()
                 
-                if module_progress:
-                    # Use best quiz score (keep the higher score)
+                if not module_progress:
+                    # Progress row may not exist yet (deep link / quiz-first
+                    # flow) — create it so the grade is not silently dropped
+                    from ..services.progression_service import ProgressionService
+                    module_progress = ProgressionService._initialize_module_progress(
+                        current_user_id, module_id, enrollment.id
+                    )
+                    db.session.flush()
+                
+                # Module-level final assessment (module_id set, lesson_id NULL)
+                # belongs in final_assessment_score; lesson-linked quizzes feed
+                # the quiz_score bucket. Best-attempt semantics for both.
+                if quiz.lesson_id is None:
+                    current_final = module_progress.final_assessment_score or 0.0
+                    module_progress.final_assessment_score = max(current_final, score_percentage)
+                else:
                     current_quiz_score = module_progress.quiz_score or 0.0
                     module_progress.quiz_score = max(current_quiz_score, score_percentage)
-                    module_progress.calculate_cumulative_score()
-                    db.session.commit()
-                    print(f"✅ Updated module {module_id} quiz score: {module_progress.quiz_score}%")
-                else:
-                    print(f"⚠️ No module progress found for module {module_id}")
+                module_progress.calculate_cumulative_score()
+                db.session.commit()
+                print(f"✅ Updated module {module_id} quiz/final score for student {current_user_id}")
             except Exception as mp_error:
                 print(f"⚠️ Error updating module progress: {str(mp_error)}")
                 # Don't fail the whole request, just log the error

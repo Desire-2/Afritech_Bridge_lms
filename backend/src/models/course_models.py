@@ -225,8 +225,12 @@ class Course(db.Model):
                 return cohort.get_released_modules_for_cohort()
         
         # Fallback: course-level logic (no cohort context)
-        # First filter for published modules only
-        published_modules = list(self.modules.filter_by(is_published=True).order_by(Module.order).all())
+        # First filter for published modules only (stable order: order, id)
+        published_modules = list(
+            self.modules.filter_by(is_published=True).order_by(
+                Module.order.asc(), Module.id.asc()
+            ).all()
+        )
         released_count = self.get_released_module_count()
         
         # If no limit, return all published modules
@@ -613,7 +617,9 @@ class ApplicationWindow(db.Model):
             return []
 
         published_modules = list(
-            self.course.modules.filter_by(is_published=True).order_by(Module.order).all()
+            self.course.modules.filter_by(is_published=True).order_by(
+                Module.order.asc(), Module.id.asc()
+            ).all()
         )
         released_count = self.get_released_module_count_for_cohort()
 

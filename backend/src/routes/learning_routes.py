@@ -243,6 +243,22 @@ def complete_lesson(lesson_id):
         
         # Expire session to ensure fresh data on subsequent queries
         if success:
+            # Sync enrollment progress so dashboard/course % stay accurate
+            # (matches the student_routes completion behavior)
+            try:
+                _lesson = _Lesson.query.get(lesson_id)
+                if _lesson:
+                    _mod = Module.query.get(_lesson.module_id)
+                    if _mod:
+                        _enr = Enrollment.query.filter_by(
+                            student_id=student_id, course_id=_mod.course_id
+                        ).first()
+                        if _enr:
+                            from ..services.enrollment_progress_service import EnrollmentProgressService
+                            EnrollmentProgressService.sync_enrollment(_enr, commit=True)
+            except Exception as sync_err:
+                current_app.logger.warning(f"Enrollment sync after lesson completion failed: {sync_err}")
+
             get_db().session.expire_all()
             
             # Check for celebration milestone
@@ -442,9 +458,9 @@ def get_course_for_learning(course_id):
             }
 
         # Repair legacy records where a module stayed locked even though the
-        # learner has a saved (possibly incomplete) lesson record in it.
-        # Without this, the resume lesson is returned but rejected by the
-        # module-access check in the frontend.
+        # learner legitimately unlocked it (first module, or previous published
+        # module completed). Never promote a locked module that still has
+        # unmet prerequisites — that would let deep links bypass progression.
         if enrollment and completion_map:
             history_module_ids = {
                 lesson.module_id
@@ -454,7 +470,25 @@ def get_course_for_learning(course_id):
             restored_progress = False
             for module_id in history_module_ids:
                 module_progress = existing_progress_map.get(module_id)
-                if module_progress and module_progress.status == "locked":
+                if not (module_progress and module_progress.status == "locked"):
+                    continue
+                module_obj = next((m for m in modules if m.id == module_id), None)
+                if not module_obj:
+                    continue
+                # Authorized only when this is the first published module or
+                # its immediate published predecessor is completed
+                prev_module = module_obj.course.modules.filter(
+                    Module.order < module_obj.order,
+                    Module.is_published == True  # noqa: E712
+                ).order_by(Module.order.desc(), Module.id.desc()).first()
+                if prev_module is None:
+                    legitimately_unlocked = True
+                else:
+                    prev_progress = existing_progress_map.get(prev_module.id)
+                    legitimately_unlocked = bool(
+                        prev_progress and prev_progress.status == "completed"
+                    )
+                if legitimately_unlocked:
                     module_progress.status = "in_progress"
                     module_progress.prerequisites_met = True
                     module_progress.started_at = module_progress.started_at or now_local()
@@ -827,10 +861,12 @@ def get_course_modules(course_id):
                 ).first()
                 
                 if not module_progress:
-                    # Initialize if missing
+                    # Initialize if missing — commit explicitly so the row
+                    # persists (GET handlers previously left it unflushed)
                     module_progress = ProgressionService._initialize_module_progress(
                         student_id, module.id, enrollment.id
                     )
+                    db.session.commit()
 
                 if (
                     module.id in history_module_ids

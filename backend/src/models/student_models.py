@@ -963,8 +963,12 @@ class ModuleProgress(db.Model):
         module never reports a full score.
         Returns a score from 0-100.
         """
-        # Get all lessons in this module
-        module_lessons = self.module.lessons.all()
+        # Published lessons only — instructor drafts must not dilute the
+        # module score or count against enrolled students
+        module_lessons = [
+            lesson for lesson in self.module.lessons.all()
+            if getattr(lesson, 'is_published', True)
+        ]
         if not module_lessons:
             return 0.0
         
@@ -983,7 +987,7 @@ class ModuleProgress(db.Model):
             # else: unattempted lesson contributes 0
         
         return (total_score / len(module_lessons))
-    
+
     def calculate_lessons_average_score(self):
         """Alias for calculate_module_score for backwards compatibility"""
         return self.calculate_module_score()
@@ -1012,8 +1016,11 @@ class ModuleProgress(db.Model):
         assignment = self.assignment_score or 0.0
         final = self.final_assessment_score or 0.0
         
-        # Check what assessments exist in this module
-        lesson_ids = [lesson.id for lesson in self.module.lessons] if self.module else []
+        # Check what assessments exist in this module — published lessons only
+        lesson_ids = [
+            lesson.id for lesson in self.module.lessons
+            if getattr(lesson, 'is_published', True)
+        ] if self.module else []
         
         # Check for lesson-level quizzes (quizzes linked to lessons in this module)
         # Only PUBLISHED assessments affect weighting - drafts must not.
@@ -1097,26 +1104,39 @@ class ModuleProgress(db.Model):
         return self.calculate_module_weighted_score()
 
     def sync_scores_from_assessments(self):
-        """Recompute assignment/project scores from graded submissions.
+        """Recompute assignment/project/quiz/final scores from attempt records.
 
-        The grading routes persist scores incrementally, but a grade can be
-        dropped when the module_progress row does not exist yet (instructor
-        grading before the student opened the module), leaving the stored
-        field at 0 while the submissions themselves hold real grades. The
-        score breakdown and the unlock gate then disagree with what the
+        The grading and submission routes persist scores incrementally, but a
+        grade can be dropped when the module_progress row does not exist yet
+        (instructor grading before the student opened the module), leaving the
+        stored field at 0 while the submissions themselves hold real grades.
+        The score breakdown and the unlock gate then disagree with what the
         student sees on the assignments page. Recomputing from the graded
         submissions (keeping the higher of stored vs. live, matching the
         grading routes' best-score semantics) heals that silently.
+
+        Policy: best-attempt across published assessments only. Draft lessons
+        and unpublished assessments never influence student scores. Safe to
+        run repeatedly; only raises stored scores, never lowers them.
         """
         from .course_models import (
             Assignment, AssignmentSubmission, Project, ProjectSubmission
         )
+        from .quiz_progress_models import QuizAttempt
+        from .course_models import Quiz
+        from sqlalchemy import or_
 
         if not self.module:
             return
 
+        # Published lessons only — drafts must not dilute or block scoring
+        published_lessons = [
+            lesson for lesson in self.module.lessons
+            if getattr(lesson, 'is_published', True)
+        ]
+        lesson_ids = [lesson.id for lesson in published_lessons]
+
         # ── lesson assignments: best graded percentage across the module ──
-        lesson_ids = [lesson.id for lesson in self.module.lessons]
         if lesson_ids:
             best_assignment = 0.0
             submissions = (
@@ -1138,6 +1158,48 @@ class ModuleProgress(db.Model):
             if best_assignment > (self.assignment_score or 0.0):
                 self.assignment_score = best_assignment
 
+        # ── lesson quizzes: best attempt across published lesson quizzes ───
+        if lesson_ids:
+            best_quiz = 0.0
+            quiz_attempts = (
+                QuizAttempt.query
+                .join(Quiz, QuizAttempt.quiz_id == Quiz.id)
+                .filter(
+                    Quiz.lesson_id.in_(lesson_ids),
+                    Quiz.is_published == True,  # noqa: E712
+                    QuizAttempt.user_id == self.student_id,
+                    QuizAttempt.score_percentage.isnot(None),
+                    or_(QuizAttempt.security_violation == False,  # noqa: E712
+                        QuizAttempt.security_violation.is_(None))
+                )
+                .all()
+            )
+            for attempt in quiz_attempts:
+                best_quiz = max(best_quiz, min(100.0, attempt.score_percentage or 0.0))
+            if best_quiz > (self.quiz_score or 0.0):
+                self.quiz_score = best_quiz
+
+        # ── module-level final assessment: module_id set, lesson_id NULL ───
+        best_final = 0.0
+        final_attempts = (
+            QuizAttempt.query
+            .join(Quiz, QuizAttempt.quiz_id == Quiz.id)
+            .filter(
+                Quiz.module_id == self.module_id,
+                Quiz.lesson_id.is_(None),
+                Quiz.is_published == True,  # noqa: E712
+                QuizAttempt.user_id == self.student_id,
+                QuizAttempt.score_percentage.isnot(None),
+                or_(QuizAttempt.security_violation == False,  # noqa: E712
+                    QuizAttempt.security_violation.is_(None))
+            )
+            .all()
+        )
+        for attempt in final_attempts:
+            best_final = max(best_final, min(100.0, attempt.score_percentage or 0.0))
+        if best_final > (self.final_assessment_score or 0.0):
+            self.final_assessment_score = best_final
+
         # ── projects: best graded percentage across covering projects ─────
         best_project = 0.0
         for project in Project.query.filter_by(
@@ -1157,6 +1219,9 @@ class ModuleProgress(db.Model):
                     best_project = max(best_project, min(100.0, percentage))
         if best_project > (self.project_score or 0.0):
             self.project_score = best_project
+
+        # Recompute cumulative with the healed fields
+        self.calculate_cumulative_score()
 
     
     def can_proceed_to_next(self):
@@ -1179,7 +1244,11 @@ class ModuleProgress(db.Model):
         from ..services.lesson_completion_service import LessonCompletionService
         
         module = self.module
-        lessons = module.lessons.all()
+        # Published lessons only — drafts must not block progression
+        lessons = [
+            lesson for lesson in module.lessons.all()
+            if getattr(lesson, 'is_published', True)
+        ]
         
         for lesson in lessons:
             completion = LessonCompletion.query.filter_by(
@@ -1191,12 +1260,15 @@ class ModuleProgress(db.Model):
                 # Lesson not started - cannot proceed
                 return False
             
-            # Check comprehensive lesson requirements
-            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
-                self.student_id, lesson.id
+            # Check comprehensive lesson requirements.
+            # Service returns (can_complete, reason, requirements_dict).
+            can_complete_lesson, _reason, _reqs = (
+                LessonCompletionService.check_lesson_completion_requirements(
+                    self.student_id, lesson.id
+                )
             )
             
-            if not requirements_status["can_complete"]:
+            if not can_complete_lesson:
                 # Lesson requirements not satisfied - cannot proceed
                 return False
             
@@ -1231,7 +1303,10 @@ class ModuleProgress(db.Model):
         from ..services.lesson_completion_service import LessonCompletionService
         
         module = self.module
-        lessons = module.lessons.all()
+        lessons = [
+            lesson for lesson in module.lessons.all()
+            if getattr(lesson, 'is_published', True)
+        ]
         failed_lessons = []
         
         for lesson in lessons:
@@ -1248,16 +1323,19 @@ class ModuleProgress(db.Model):
                 })
                 continue
             
-            # Check lesson requirements
-            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
-                self.student_id, lesson.id
+            # Check lesson requirements — returns (can_complete, reason, dict)
+            can_complete_lesson, req_reason, req_dict = (
+                LessonCompletionService.check_lesson_completion_requirements(
+                    self.student_id, lesson.id
+                )
             )
             
-            if not requirements_status["can_complete"]:
-                missing_reqs = requirements_status.get("missing_requirements", [])
+            if not can_complete_lesson:
+                req_data = req_dict if isinstance(req_dict, dict) else {}
+                missing_reqs = req_data.get("missing_requirements", [])
                 failed_lessons.append({
                     "title": lesson.title,
-                    "issue": f"Requirements not met: {', '.join(missing_reqs)}",
+                    "issue": f"Requirements not met: {', '.join(missing_reqs) if missing_reqs else req_reason}",
                     "recommendation": "Satisfy all lesson requirements"
                 })
                 continue

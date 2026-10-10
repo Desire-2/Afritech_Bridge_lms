@@ -886,16 +886,23 @@ def unenroll_user_from_course(user_id):
 
         course_title = enrollment.course.title if enrollment.course else "Unknown"
 
-        # Clean up progress data
-        from ..models.student_models import ModuleProgress
-        ModuleProgress.query.filter_by(
-            student_id=user_id, enrollment_id=enrollment_id
-        ).delete()
+        # Centralized cleanup: ModuleProgress + LessonCompletion +
+        # QuizAttempt + AssignmentSubmission + ProjectSubmission for
+        # this enrollment's course (flush only — commit below)
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        deleted = EnrollmentProgressService.cleanup_enrollment_progress(
+            student_id=user_id,
+            course_id=enrollment.course_id,
+            enrollment_id=enrollment_id
+        )
 
         db.session.delete(enrollment)
         db.session.commit()
 
-        logger.info(f"Admin removed enrollment {enrollment_id} for user {user.username}")
+        logger.info(
+            f"Admin removed enrollment {enrollment_id} for user {user.username} "
+            f"(cleaned: {deleted})"
+        )
         return jsonify({
             "message": f"Enrollment in '{course_title}' removed successfully"
         }), 200

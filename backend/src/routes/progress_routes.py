@@ -139,6 +139,101 @@ def get_module_progress(module_id):
             "error": "Failed to load module progress"
         }), 500
 
+@progress_bp.route("/course/<int:course_id>/completion-state", methods=["GET"])
+@student_required
+def get_course_completion_state(course_id):
+    """Authoritative course-completion decision (M-10).
+
+    Counts only published modules; a module counts as completed when its
+    ModuleProgress.status is 'completed'. The overall score uses the same
+    authoritative weighted-score calculation as progression gates.
+    Certificate generation must key off this response, not client-side
+    lesson counting.
+    """
+    try:
+        student_id = int(get_jwt_identity())
+
+        from ..models.course_models import Course, Enrollment
+        from ..models.student_models import ModuleProgress
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+
+        course = Course.query.get(course_id)
+        if not course:
+            return jsonify({"success": False, "error": "Course not found"}), 404
+
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id, course_id=course_id
+        ).first()
+        if not enrollment:
+            return jsonify({"success": False, "error": "Not enrolled in course"}), 403
+
+        published_modules = EnrollmentProgressService.get_published_modules(course)
+        completed_modules = 0
+        locked_modules = 0
+        scores = []
+        incomplete = []
+
+        for module in published_modules:
+            progress = ModuleProgress.query.filter_by(
+                student_id=student_id,
+                module_id=module.id,
+                enrollment_id=enrollment.id
+            ).first()
+            status = progress.status if progress else 'locked'
+            if status == 'completed':
+                completed_modules += 1
+                scores.append(progress.cumulative_score or 0.0)
+            else:
+                locked_modules += 1
+                incomplete.append({
+                    "id": module.id,
+                    "title": module.title,
+                    "status": status,
+                    "score": (progress.cumulative_score or 0.0) if progress else 0.0
+                })
+            # Heal score fields for reporting without persisting
+            if progress:
+                progress.sync_scores_from_assessments()
+
+        total_modules = len(published_modules)
+        overall_score = (sum(scores) / len(scores)) if scores else 0.0
+        course_completed = total_modules > 0 and completed_modules == total_modules
+
+        # Keep the enrollment row in sync with the authoritative counts
+        if course_completed and not enrollment.completed_at:
+            from src.utils.time_utils import now_local
+            enrollment.completed_at = now_local()
+            enrollment.status = 'completed'
+            enrollment.progress = 1.0
+            db.session.commit()
+        elif not course_completed and enrollment.status == 'completed':
+            # Completed module count dropped (e.g. retake) — reopen honestly
+            enrollment.completed_at = None
+            enrollment.status = 'active'
+            enrollment.progress = completed_modules / total_modules if total_modules else 0.0
+            db.session.commit()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "course_completed": course_completed,
+                "completed_modules": completed_modules,
+                "total_modules": total_modules,
+                "locked_modules": locked_modules,
+                "overall_score": round(overall_score, 2),
+                "enrollment_completed": bool(enrollment.completed_at),
+                "incomplete_modules": incomplete
+            }
+        }), 200
+
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Course completion state error: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to evaluate course completion"
+        }), 500
+
 @progress_bp.route("/analytics", methods=["GET"])
 @student_required
 def get_progress_analytics():
@@ -371,24 +466,19 @@ def get_module_score_breakdown(module_id):
             assignment_display_weight = weights['assignments']
             project_display_weight = 0.0
 
-        # Calculate weighted scores with dynamic weights (using fresh lesson average)
+        # Authoritative cumulative — single weight derivation lives in
+        # ModuleProgress.calculate_module_weighted_score (same redistribution
+        # rules as the display table above). Display entries below use true
+        # component × weight math; only the headline total is persisted.
+        cumulative_score = module_progress.calculate_module_weighted_score()
+        module_progress.cumulative_score = cumulative_score
+        db.session.commit()
+
         course_contribution_weighted = fresh_lessons_avg * (weights['course_contribution'] / 100)
         quiz_weighted = (module_progress.quiz_score or 0.0) * (weights['quizzes'] / 100)
         assignment_weighted = raw_assignment * (assignment_display_weight / 100)
         project_weighted = project_score_val * (project_display_weight / 100)
         final_weighted = (module_progress.final_assessment_score or 0.0) * (weights['final_assessment'] / 100)
-        
-        # Calculate cumulative score with dynamic weights
-        cumulative_score = (
-            course_contribution_weighted
-            + quiz_weighted
-            + (hands_on_score * (weights['assignments'] / 100))
-            + final_weighted
-        )
-        
-        # Update module progress with recalculated score
-        module_progress.cumulative_score = cumulative_score
-        db.session.commit()
         
         # Build breakdown with dynamic weights
         breakdown = {

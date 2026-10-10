@@ -82,7 +82,11 @@ class EnrollmentProgressService:
             lesson_ids = [
                 lid
                 for (lid,) in db.session.query(Lesson.id)
-                .filter(Lesson.module_id.in_(module_ids))
+                .filter(
+                    Lesson.module_id.in_(module_ids),
+                    # Published lessons only — drafts must not dilute progress
+                    Lesson.is_published == True,  # noqa: E712
+                )
                 .all()
             ]
 
@@ -231,3 +235,99 @@ class EnrollmentProgressService:
             return False
         released = course.get_released_modules(cohort_id=enrollment.application_window_id)
         return any(m.id == module.id for m in released)
+
+    # ------------------------------------------------------------------
+    # Unenrollment cleanup (single source of truth — admin delete routes
+    # must call this instead of ad-hoc partial cleanup)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def cleanup_enrollment_progress(
+        student_id: int, course_id: int, enrollment_id: int
+    ) -> Dict[str, int]:
+        """Delete every progress artifact tied to one enrollment.
+
+        Removes ModuleProgress, course LessonCompletion, QuizAttempt (lesson
+        and module-level), AssignmentSubmission, and ProjectSubmission rows so
+        a later re-enrollment starts from a clean state. Flushes but does NOT
+        commit — the caller owns the transaction boundary.
+        """
+        from sqlalchemy import or_
+        from ..models.course_models import (
+            Quiz, Assignment, AssignmentSubmission, Project, ProjectSubmission
+        )
+        from ..models.quiz_progress_models import QuizAttempt
+
+        module_ids = [
+            mid for (mid,) in db.session.query(Module.id).filter(
+                Module.course_id == course_id
+            ).all()
+        ]
+        lesson_ids = [
+            lid for (lid,) in db.session.query(Lesson.id).filter(
+                Lesson.module_id.in_(module_ids) if module_ids else False
+            ).all()
+        ]
+
+        deleted = {
+            "module_progress": ModuleProgress.query.filter_by(
+                student_id=student_id, enrollment_id=enrollment_id
+            ).delete(synchronize_session='fetch'),
+            "lesson_completions": 0,
+            "quiz_attempts": 0,
+            "assignment_submissions": 0,
+            "project_submissions": 0,
+        }
+
+        if lesson_ids or module_ids:
+            if lesson_ids:
+                deleted["lesson_completions"] = LessonCompletion.query.filter(
+                    LessonCompletion.student_id == student_id,
+                    LessonCompletion.lesson_id.in_(lesson_ids)
+                ).delete(synchronize_session='fetch')
+
+            quiz_conditions = []
+            if lesson_ids:
+                quiz_conditions.append(Quiz.lesson_id.in_(lesson_ids))
+            if module_ids:
+                quiz_conditions.append(Quiz.module_id.in_(module_ids))
+            quiz_ids = [
+                qid for (qid,) in db.session.query(Quiz.id).filter(
+                    or_(*quiz_conditions)
+                ).all()
+            ]
+            if quiz_ids:
+                deleted["quiz_attempts"] = QuizAttempt.query.filter(
+                    QuizAttempt.user_id == student_id,
+                    QuizAttempt.quiz_id.in_(quiz_ids)
+                ).delete(synchronize_session='fetch')
+
+            assignment_conditions = []
+            if lesson_ids:
+                assignment_conditions.append(Assignment.lesson_id.in_(lesson_ids))
+            if module_ids:
+                assignment_conditions.append(Assignment.module_id.in_(module_ids))
+            assignment_conditions.append(Assignment.course_id == course_id)
+            assignment_ids = [
+                aid for (aid,) in db.session.query(Assignment.id).filter(
+                    or_(*assignment_conditions)
+                ).all()
+            ]
+            if assignment_ids:
+                deleted["assignment_submissions"] = AssignmentSubmission.query.filter(
+                    AssignmentSubmission.student_id == student_id,
+                    AssignmentSubmission.assignment_id.in_(assignment_ids)
+                ).delete(synchronize_session='fetch')
+
+        project_ids = [
+            pid for (pid,) in db.session.query(Project.id).filter(
+                Project.course_id == course_id
+            ).all()
+        ]
+        if project_ids:
+            deleted["project_submissions"] = ProjectSubmission.query.filter(
+                ProjectSubmission.student_id == student_id,
+                ProjectSubmission.project_id.in_(project_ids)
+            ).delete(synchronize_session='fetch')
+
+        db.session.flush()
+        return deleted

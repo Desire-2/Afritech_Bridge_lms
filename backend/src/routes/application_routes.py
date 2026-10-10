@@ -2720,7 +2720,11 @@ def approve_application(app_id):
         
         # Initialize progress tracking for course modules (skip if already exists)
         from ..models.student_models import ModuleProgress
-        modules = course.modules.filter_by(is_published=True).all()
+        from ..models.course_models import Module
+        modules = course.modules.filter_by(is_published=True).order_by(
+            Module.order.asc(), Module.id.asc()
+        ).all()
+        first_module_id = modules[0].id if modules else None
         for module in modules:
             # Check if module progress already exists
             existing_progress = ModuleProgress.query.filter_by(
@@ -2730,10 +2734,16 @@ def approve_application(app_id):
             ).first()
             
             if not existing_progress:
+                is_first = module.id == first_module_id
                 module_progress = ModuleProgress(
                     student_id=user.id,
                     module_id=module.id,
-                    enrollment_id=enrollment.id
+                    enrollment_id=enrollment.id,
+                    # The first published module in sequence starts unlocked;
+                    # cohort release / payment gates still apply at request time.
+                    status='unlocked' if is_first else 'locked',
+                    unlocked_at=now_local() if is_first else None,
+                    prerequisites_met=is_first,
                 )
                 db.session.add(module_progress)
             else:
