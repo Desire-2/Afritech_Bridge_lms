@@ -386,12 +386,15 @@ def get_course_for_learning(course_id):
         
         module_ids = [m.id for m in modules]
         
-        # Batch load all lessons for these modules
+        # Batch load all lessons for these modules.
+        # Students must never see draft (unpublished) lessons — they are
+        # invisible in the sidebar AND their content endpoints stay dark.
         if module_ids:
             lessons_by_module = {}
-            all_lessons = Lesson.query.filter(
-                Lesson.module_id.in_(module_ids)
-            ).order_by(Lesson.module_id, Lesson.order).all()
+            lesson_query = Lesson.query.filter(Lesson.module_id.in_(module_ids))
+            if not (is_instructor or is_admin):
+                lesson_query = lesson_query.filter(Lesson.is_published == True)  # noqa: E712
+            all_lessons = lesson_query.order_by(Lesson.module_id, Lesson.order).all()
             
             for lesson in all_lessons:
                 if lesson.module_id not in lessons_by_module:
@@ -449,6 +452,9 @@ def get_course_for_learning(course_id):
         lesson_ids = [lesson.id for lesson in all_visible_lessons]
         completion_map = {}
         if enrollment and lesson_ids:
+            # NOTE: LessonCompletion is unique on (student_id, lesson_id) and
+            # has no enrollment_id column — completions intentionally persist
+            # across re-enrollments (schema limitation documented in report).
             completion_map = {
                 completion.lesson_id: completion
                 for completion in LessonCompletion.query.filter(

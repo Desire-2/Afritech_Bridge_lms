@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 import logging
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from ..models.user_models import db, User, Role
@@ -93,6 +94,131 @@ def _enforce_enrollment_access(enrollment):
         "message": access_reason or "Payment required to continue",
         "error_code": "payment_required"
     }), 402
+
+
+# --- Video / progress validation constants -------------------------------
+# Mirrors frontend VIDEO_WATCH_COMPLETE_THRESHOLD and the
+# LessonCompletion.video_completed column comment (90%+ threshold).
+VIDEO_WATCH_COMPLETE_THRESHOLD = 90.0
+
+# Weights of the established client-side engagement formula
+# (useProgressTracking.updateReadingProgress, video-lesson branch).
+# The server cannot observe interactions/section navigation, so it derives a
+# conservative FLOOR from evidence it can validate: watched coverage, scroll
+# and time-spent. The client-reported value may still be higher (it includes
+# interactions); the stored value is the max of the two, never a decrease.
+_ENGAGEMENT_VIDEO_WEIGHT = 0.40
+_ENGAGEMENT_SCROLL_WEIGHT = 0.10
+_ENGAGEMENT_TIME_WEIGHT = 0.15       # min(time_spent/600, 1)
+_ENGAGEMENT_CONSISTENCY_WEIGHT = 0.05  # min(time_spent/300, 1)
+
+
+def _coerce_float(value, lo=None, hi=None):
+    """Return a finite float, or None when the value is unusable.
+
+    Rejects NaN/Infinity (JSON allows them via some serializers) and strings
+    that do not parse cleanly, so a malformed client payload can never write
+    garbage into the progress columns.
+    """
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result != result or result in (float('inf'), float('-inf')):
+        return None
+    if lo is not None and result < lo:
+        return lo
+    if hi is not None and result > hi:
+        return hi
+    return result
+
+
+def _engagement_floor_from_evidence(video_coverage, scroll_progress, time_spent):
+    """Conservative server-derived engagement lower bound (0-100).
+
+    Reuses the existing video-lesson engagement weights with only the factors
+    the backend can validate. Interactions and section navigation are unknown
+    server-side, so their weight contributes 0 — the floor is always <= what
+    a fully-engaged client session would report.
+    """
+    video_part = max(0.0, min(100.0, video_coverage or 0.0)) / 100.0
+    scroll_part = max(0.0, min(100.0, scroll_progress or 0.0)) / 100.0
+    time_part = min(max(time_spent or 0, 0) / 600.0, 1.0)
+    consistency_part = min(max(time_spent or 0, 0) / 300.0, 1.0)
+    score = (
+        video_part * _ENGAGEMENT_VIDEO_WEIGHT
+        + scroll_part * _ENGAGEMENT_SCROLL_WEIGHT
+        + time_part * _ENGAGEMENT_TIME_WEIGHT
+        + consistency_part * _ENGAGEMENT_CONSISTENCY_WEIGHT
+    ) * 100.0
+    return max(0.0, min(100.0, score))
+
+
+def _sanitize_mixed_video_progress(raw):
+    """Validate a client mixed_video_progress payload.
+
+    Accepts {index: coverage} or {index: {progress, currentTime, completed}}.
+    Returns {str(index): float coverage 0-100} (plus the full dict for
+    structured values), or None when the payload is unusable. Non-finite,
+    negative and >100 values are clamped/rejected so garbage cannot persist.
+    """
+    if not isinstance(raw, dict):
+        return None
+    cleaned = {}
+    for key, value in raw.items():
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            continue
+        if idx < 0:
+            continue
+        if isinstance(value, dict):
+            coverage = _coerce_float(value.get('progress'), lo=0.0, hi=100.0)
+            if coverage is None:
+                continue
+            entry = {k: v for k, v in value.items() if k in ('progress', 'currentTime', 'completed')}
+            entry['progress'] = coverage
+            current_time = _coerce_float(value.get('currentTime'), lo=0.0)
+            if current_time is not None:
+                entry['currentTime'] = current_time
+            entry['completed'] = bool(value.get('completed')) or coverage >= VIDEO_WATCH_COMPLETE_THRESHOLD
+            cleaned[str(idx)] = entry
+        else:
+            coverage = _coerce_float(value, lo=0.0, hi=100.0)
+            if coverage is None:
+                continue
+            cleaned[str(idx)] = coverage
+    return cleaned or None
+
+
+def _mixed_video_section_indices(content_data):
+    """Return the original section indices of video entries in mixed content.
+
+    None when the lesson is not mixed content or the payload cannot be
+    parsed as a list of sections.
+    """
+    try:
+        parsed = json.loads(content_data) if content_data else None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, list):
+        return None
+    indices = [
+        i for i, section in enumerate(parsed)
+        if isinstance(section, dict) and section.get('type') == 'video'
+    ]
+    return indices
+
+
+def _mixed_video_coverage_at(mixed_progress, index):
+    """Coverage (0-100) recorded for a mixed-content video section index."""
+    if not isinstance(mixed_progress, dict):
+        return 0.0
+    entry = mixed_progress.get(str(index), mixed_progress.get(index))
+    if isinstance(entry, dict):
+        return _coerce_float(entry.get('progress'), lo=0.0, hi=100.0) or 0.0
+    return _coerce_float(entry, lo=0.0, hi=100.0) or 0.0
+
 
 # --- Student Dashboard Routes ---
 
@@ -377,54 +503,153 @@ def update_lesson_progress(lesson_id):
     ).first()
     
     if not lesson_completion:
-        lesson_completion = LessonCompletion(
-            student_id=current_user_id,
-            lesson_id=lesson_id,
-            completed=False
-        )
-        db.session.add(lesson_completion)
+        # Race-safe create: concurrent first saves for the same (student,
+        # lesson) would collide on the unique constraint. Savepoint + re-query.
+        try:
+            with db.session.begin_nested():
+                lesson_completion = LessonCompletion(
+                    student_id=current_user_id,
+                    lesson_id=lesson_id,
+                    completed=False
+                )
+                db.session.add(lesson_completion)
+                db.session.flush()
+        except IntegrityError:
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=current_user_id,
+                lesson_id=lesson_id
+            ).first()
     
     # Update progress fields - NEVER allow regression (only increase, never decrease)
+    # All numeric inputs are validated/clamped before touching the model so a
+    # malformed or malicious payload cannot store NaN, negatives or >100.
     reading_or_engagement_updated = False
+    video_progress_changed = False
     if 'reading_progress' in data:
-        old_reading = lesson_completion.reading_progress or 0.0
-        new_reading = max(old_reading, float(data['reading_progress']))
-        if new_reading != old_reading:
-            lesson_completion.reading_progress = new_reading
-            reading_or_engagement_updated = True
-    if 'engagement_score' in data:
-        old_engagement = lesson_completion.engagement_score or 0.0
-        new_engagement = max(old_engagement, float(data['engagement_score']))
-        if new_engagement != old_engagement:
-            lesson_completion.engagement_score = new_engagement
-            reading_or_engagement_updated = True
+        new_reading = _coerce_float(data['reading_progress'], lo=0.0, hi=100.0)
+        if new_reading is not None:
+            old_reading = lesson_completion.reading_progress or 0.0
+            if new_reading > old_reading:
+                lesson_completion.reading_progress = new_reading
+                reading_or_engagement_updated = True
     if 'scroll_progress' in data:
-        old_scroll = lesson_completion.scroll_progress or 0.0
-        lesson_completion.scroll_progress = max(old_scroll, float(data['scroll_progress']))
+        new_scroll = _coerce_float(data['scroll_progress'], lo=0.0, hi=100.0)
+        if new_scroll is not None:
+            lesson_completion.scroll_progress = max(lesson_completion.scroll_progress or 0.0, new_scroll)
     if 'video_progress' in data:
-        old_video = lesson_completion.video_progress or 0.0
-        lesson_completion.video_progress = max(old_video, float(data['video_progress']))
+        # "video_progress" is UNIQUE WATCHED COVERAGE (union of observed
+        # intervals), not playback position. Monotonic via max(): an older or
+        # zero report can never overwrite a newer persisted value.
+        new_video = _coerce_float(data['video_progress'], lo=0.0, hi=100.0)
+        if new_video is not None:
+            old_video = lesson_completion.video_progress or 0.0
+            if new_video > old_video:
+                lesson_completion.video_progress = new_video
+                video_progress_changed = True
     if 'time_spent' in data:
-        old_time = lesson_completion.time_spent or 0
-        lesson_completion.time_spent = max(old_time, int(data['time_spent']))
-    
-    # Enhanced video tracking fields
+        try:
+            new_time = int(data['time_spent'])
+            if new_time >= 0:
+                lesson_completion.time_spent = max(lesson_completion.time_spent or 0, new_time)
+        except (TypeError, ValueError):
+            pass
+
+    # Enhanced video tracking fields (validated; resume position is never
+    # clobbered back to zero by a mount-time report).
     if 'video_current_time' in data:
-        lesson_completion.video_current_time = data['video_current_time']
+        new_pos = _coerce_float(data['video_current_time'], lo=0.0)
+        if new_pos is not None and new_pos > 0:
+            known_duration = lesson_completion.video_duration or _coerce_float(data.get('video_duration'), lo=0.0)
+            if known_duration and known_duration > 0:
+                new_pos = min(new_pos, known_duration)
+            lesson_completion.video_current_time = new_pos
     if 'video_duration' in data:
-        lesson_completion.video_duration = data['video_duration']
-    if 'video_completed' in data:
-        old_completed = lesson_completion.video_completed
-        lesson_completion.video_completed = data['video_completed']
-        # Increment watch count when video completes for the first time or rewatches
-        if data['video_completed'] and (not old_completed or lesson_completion.video_watch_count > 0):
-            lesson_completion.video_watch_count = (lesson_completion.video_watch_count or 0) + 1
-            lesson_completion.video_last_watched = now_local()
-    if 'playback_speed' in data:
-        lesson_completion.playback_speed = data['playback_speed']
+        new_duration = _coerce_float(data['video_duration'], lo=0.0)
+        if new_duration is not None and new_duration > 0:
+            lesson_completion.video_duration = new_duration
+
+    # Mixed-content per-index coverage: sanitize, then merge monotonically
+    # (per-key max) with whatever is already stored. Must run BEFORE the
+    # video_completed derivation below so completion can consider every video.
+    incoming_mixed = None
     if 'mixed_video_progress' in data:
-        # Store mixed video progress as JSON string
-        lesson_completion.mixed_video_progress = json.dumps(data['mixed_video_progress'])
+        incoming_mixed = _sanitize_mixed_video_progress(data['mixed_video_progress'])
+        if incoming_mixed is not None:
+            try:
+                existing_mixed = json.loads(lesson_completion.mixed_video_progress) \
+                    if lesson_completion.mixed_video_progress else {}
+            except (TypeError, ValueError):
+                existing_mixed = {}
+            if not isinstance(existing_mixed, dict):
+                existing_mixed = {}
+            for idx_key, value in incoming_mixed.items():
+                new_cov = value['progress'] if isinstance(value, dict) else value
+                old_entry = existing_mixed.get(idx_key)
+                old_cov = old_entry.get('progress') if isinstance(old_entry, dict) else old_entry
+                old_cov = _coerce_float(old_cov, lo=0.0, hi=100.0) or 0.0
+                if new_cov >= old_cov:
+                    existing_mixed[idx_key] = value
+                    video_progress_changed = True
+            lesson_completion.mixed_video_progress = json.dumps(existing_mixed)
+
+    if 'video_completed' in data or video_progress_changed:
+        # DERIVE completion from validated coverage instead of trusting the
+        # client flag: a student who seeks to the end does not get credit.
+        # Mixed lessons require EVERY video section to reach the threshold;
+        # single-video lessons use the overall coverage rule.
+        mixed_indices = _mixed_video_section_indices(lesson.content_data)
+        if mixed_indices:
+            try:
+                stored_mixed = json.loads(lesson_completion.mixed_video_progress) \
+                    if lesson_completion.mixed_video_progress else {}
+            except (TypeError, ValueError):
+                stored_mixed = {}
+            derived_completed = all(
+                _mixed_video_coverage_at(stored_mixed, idx) >= VIDEO_WATCH_COMPLETE_THRESHOLD
+                for idx in mixed_indices
+            )
+        else:
+            derived_completed = (lesson_completion.video_progress or 0.0) >= VIDEO_WATCH_COMPLETE_THRESHOLD
+        old_completed = bool(lesson_completion.video_completed)
+        if derived_completed != old_completed:
+            lesson_completion.video_completed = derived_completed
+            if derived_completed:
+                # Count completed watches on the false->true transition only.
+                # The previous condition incremented on EVERY save once the
+                # counter was non-zero, inflating watch counts unboundedly.
+                lesson_completion.video_watch_count = (lesson_completion.video_watch_count or 0) + 1
+                lesson_completion.video_last_watched = now_local()
+    if 'playback_speed' in data:
+        speed = _coerce_float(data['playback_speed'], lo=0.25, hi=4.0)
+        if speed is not None:
+            lesson_completion.playback_speed = speed
+
+    if 'engagement_score' in data:
+        client_engagement = _coerce_float(data['engagement_score'], lo=0.0, hi=100.0)
+        if client_engagement is not None:
+            floor = _engagement_floor_from_evidence(
+                lesson_completion.video_progress,
+                lesson_completion.scroll_progress,
+                lesson_completion.time_spent,
+            ) if (lesson_completion.video_progress or 0.0) > 0 else 0.0
+            old_engagement = lesson_completion.engagement_score or 0.0
+            new_engagement = max(old_engagement, client_engagement, floor)
+            if new_engagement > old_engagement:
+                lesson_completion.engagement_score = new_engagement
+                reading_or_engagement_updated = True
+    elif video_progress_changed:
+        # Client sent no engagement score but new video evidence arrived:
+        # still lift engagement to the validated floor so watching a video
+        # without scrolling cannot stall engagement at zero.
+        floor = _engagement_floor_from_evidence(
+            lesson_completion.video_progress,
+            lesson_completion.scroll_progress,
+            lesson_completion.time_spent,
+        )
+        old_engagement = lesson_completion.engagement_score or 0.0
+        if floor > old_engagement:
+            lesson_completion.engagement_score = floor
+            reading_or_engagement_updated = True
     
     # Update timestamps
     lesson_completion.updated_at = now_local()
@@ -649,6 +874,7 @@ def get_lesson_progress(lesson_id):
                 "video_current_time": lesson_completion.video_current_time or 0,
                 "video_duration": lesson_completion.video_duration or 0,
                 "video_completed": bool(lesson_completion.video_completed),
+                "mixed_video_progress": lesson_completion.mixed_video_progress or '{}',
                 "completed": lesson_completion.completed,
                 "last_updated": lesson_completion.updated_at.isoformat() if lesson_completion.updated_at else None,
                 "lesson_score": score_breakdown['total_score'],
@@ -721,20 +947,28 @@ def complete_lesson(lesson_id):
     ).first()
     
     if not existing_completion:
-        # Create new completion record
-        existing_completion = LessonCompletion(
-            student_id=current_user_id,
-            lesson_id=lesson_id,
-            completed=False,  # Don't mark as complete yet
-            reading_progress=data.get('reading_progress', 0.0),
-            engagement_score=data.get('engagement_score', 0.0),
-            scroll_progress=data.get('scroll_progress', 0.0),
-            time_spent=data.get('time_spent', 0),
-            completed_at=None,  # Will be set when actually completed
-            updated_at=now_local(),
-            last_accessed=now_local()
-        )
-        db.session.add(existing_completion)
+        # Create new completion record (race-safe: unique student+lesson)
+        try:
+            with db.session.begin_nested():
+                existing_completion = LessonCompletion(
+                    student_id=current_user_id,
+                    lesson_id=lesson_id,
+                    completed=False,  # Don't mark as complete yet
+                    reading_progress=data.get('reading_progress', 0.0),
+                    engagement_score=data.get('engagement_score', 0.0),
+                    scroll_progress=data.get('scroll_progress', 0.0),
+                    time_spent=data.get('time_spent', 0),
+                    completed_at=None,  # Will be set when actually completed
+                    updated_at=now_local(),
+                    last_accessed=now_local()
+                )
+                db.session.add(existing_completion)
+                db.session.flush()
+        except IntegrityError:
+            existing_completion = LessonCompletion.query.filter_by(
+                student_id=current_user_id,
+                lesson_id=lesson_id
+            ).first()
     else:
         # Update existing completion with better scores only
         updated = False

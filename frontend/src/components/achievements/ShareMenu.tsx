@@ -124,7 +124,7 @@ const ShareMenu: React.FC<ShareMenuProps> = ({
           {isSharing ? (
             <motion.div
               animate={{ rotate: 360 }}
-              transition={{ duration: 1, repeat: Infinity, ease: \"linear\" }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
             >
               <Share2 className="h-4 w-4" />
             </motion.div>
@@ -216,7 +216,7 @@ const ShareMenu: React.FC<ShareMenuProps> = ({
         )}
         
         {/* Native sharing if available */}
-        {navigator?.share && (
+        {typeof navigator !== 'undefined' && !!navigator.share && (
           <>
             <DropdownMenuSeparator className="bg-slate-700" />
             <DropdownMenuItem

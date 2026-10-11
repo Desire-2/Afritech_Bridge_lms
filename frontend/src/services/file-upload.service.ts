@@ -191,11 +191,20 @@ export class FileUploadService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' })) as { error?: string };
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const result = await response.json();
+      const result = await response.json() as {
+        success?: boolean;
+        error?: string;
+        url?: string;
+        size?: number;
+        uploadedAt?: string;
+        pathname?: string;
+        contentType?: string;
+        contentDisposition?: string;
+      };
       
       if (!result.success) {
         throw new Error(result.error || 'Upload failed');
@@ -212,10 +221,10 @@ export class FileUploadService {
       }
 
       return {
-        url: result.url,
+        url: result.url || '',
         size: result.size || file.size,
         uploadedAt: result.uploadedAt || new Date().toISOString(),
-        pathname: result.pathname,
+        pathname: result.pathname || file.name,
         contentType: result.contentType || file.type,
         contentDisposition: result.contentDisposition || `attachment; filename="${file.name}"`
       };
@@ -292,7 +301,7 @@ export class FileUploadService {
     try {
       // If we have a fileId, it's a Google Drive file
       if (fileId) {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
         const response = await fetch(`${apiUrl}/uploads/google-drive/files/${fileId}`, {
           method: 'DELETE',
           headers: {
@@ -302,11 +311,11 @@ export class FileUploadService {
         });
         
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ error: 'Delete failed' }));
+          const errorData = await response.json().catch(() => ({ error: 'Delete failed' })) as { error?: string };
           throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
         }
         
-        const result = await response.json();
+        const result = await response.json() as { success?: boolean; error?: string };
         if (!result.success) {
           throw new Error(result.error || 'Delete failed');
         }
@@ -493,7 +502,7 @@ export class FileUploadService {
     if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
     if (options.studentId) formData.append('studentId', options.studentId.toString());
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
     
     try {
       const response = await fetch(`${apiUrl}/uploads/file`, {
@@ -505,11 +514,23 @@ export class FileUploadService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' })) as { error?: string };
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const result = await response.json();
+      const result = await response.json() as {
+        success?: boolean;
+        error?: string;
+        url?: string;
+        size?: number;
+        uploadedAt?: string;
+        pathname?: string;
+        contentType?: string;
+        contentDisposition?: string;
+        download_url?: string;
+        file_id?: string;
+        storage?: string;
+      };
       
       if (!result.success) {
         throw new Error(result.error || 'Upload failed');
@@ -527,7 +548,7 @@ export class FileUploadService {
 
       // Handle Google Drive response format
       return {
-        url: result.url,
+        url: result.url || '',
         size: result.size || file.size,
         uploadedAt: result.uploadedAt || new Date().toISOString(),
         pathname: result.pathname || file.name,
@@ -536,7 +557,7 @@ export class FileUploadService {
         // Include Google Drive specific fields
         downloadUrl: result.download_url,
         fileId: result.file_id,
-        storage: result.storage || 'unknown'
+        storage: (result.storage as UploadedFile['storage']) || 'unknown'
       };
     } catch (error: any) {
       console.error('Backend upload error:', error);
@@ -772,7 +793,7 @@ export class FileUploadService {
       'getInvalidStagedFiles'
     ];
     
-    const missing = methods.filter(method => typeof FileUploadService[method] !== 'function');
+    const missing = methods.filter(method => typeof (FileUploadService as unknown as Record<string, unknown>)[method] !== 'function');
     
     if (missing.length > 0) {
       console.error('Missing FileUploadService methods:', missing);
@@ -792,7 +813,7 @@ export class FileUploadService {
     storageProvider?: string;
   }> {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
       const response = await fetch(`${apiUrl}/uploads/google-drive/test`, {
         method: 'GET',
         headers: {
@@ -801,10 +822,15 @@ export class FileUploadService {
         }
       });
       
-      const result = await response.json();
+      const result = await response.json() as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        storage_provider?: string;
+      };
       
       return {
-        success: result.success,
+        success: Boolean(result.success),
         message: result.message || result.error || 'Unknown response',
         storageProvider: result.storage_provider
       };

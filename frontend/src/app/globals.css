@@ -19,9 +19,11 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .catalog-page *,
-  .catalog-page *::before,
-  .catalog-page *::after {
+  /* Global: the learning player, catalog and all other surfaces honor the
+     OS-level reduced-motion preference (celebration bounces, pulses, spins). */
+  *,
+  *::before,
+  *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

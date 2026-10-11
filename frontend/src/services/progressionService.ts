@@ -477,4 +477,3 @@ export class ProgressionService {
 }
 
 export default ProgressionService;
-import { MODULE_PASSING_THRESHOLD } from '@/constants/learningRules';

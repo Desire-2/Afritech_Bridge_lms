@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ProgressBar } from '@/components/ui/progress';
+import { LESSON_PASSING_THRESHOLD } from '@/constants/learningRules';
 
 interface ModuleStatus {
   module_id?: number;
@@ -64,7 +65,7 @@ export const CertificateErrorDisplay: React.FC<CertificateErrorDisplayProps> = (
     );
   }
 
-  const passingScore = requirements.passing_score || 80;
+  const passingScore = requirements.passing_score || LESSON_PASSING_THRESHOLD;
   const overallScore = requirements.overall_score || 0;
   const completedModules = requirements.completed_modules || 0;
   const totalModules = requirements.total_modules || 0;

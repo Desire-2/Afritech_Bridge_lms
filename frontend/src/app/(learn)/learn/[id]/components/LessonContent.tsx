@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';import { motion } from 'framer-motion';
 import {
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
-  FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
+  FileText, Clipboard, Clock, Award, ExternalLink, Download,
   PenTool, Loader2, AlertCircle, Lock, Unlock, GraduationCap,
   Star, Flame, BookOpen, Maximize2, Minimize2, FolderOpen
 } from 'lucide-react';
@@ -31,13 +30,6 @@ import {
 } from '../utils/learningRules';
 
 // Helper function to format time in MM:SS format
-const formatTime = (seconds: number): string => {
-  if (!seconds || isNaN(seconds)) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-};
-
 interface LessonContentProps {
   currentLesson: any;
   lessonQuiz: ContentQuiz | null;
@@ -375,6 +367,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       onTrackInteraction('assignment_completed', {
                         assignmentId: assignment.id
                       });
+                      // Refresh lesson assignments so submission_status and
+                      // the derived lesson assignment score update immediately
+                      // instead of waiting for the 30s grade poll.
+                      onReloadContent?.();
                     }}
                   />
                 ))}
@@ -654,18 +650,17 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     </TabsTrigger>
                   )}
 
-                  {/* Assignments — only if this lesson has assignments */}
+                  {/* Assignments — only if this lesson has assignments.
+                      NOTE: the assignments view uses a dedicated full-screen
+                      layout (early return above), so this trigger only ever
+                      renders in the inactive state. */}
                   {hasAssignments && (
                     <TabsTrigger
                       value="assignments"
-                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      className="flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
                         data-[state=active]:shadow-sm
                         text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
-                        ${currentViewMode === 'assignments' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
-                      style={currentViewMode === 'assignments' ? {
-                        backgroundColor: `${lessonLevel.cssColor}18`,
-                        color: lessonLevel.cssColor,
-                      } : undefined}
+                        bg-transparent"
                     >
                       <Clipboard className="h-3.5 w-3.5" />
                       <span>Assignments</span>
@@ -759,38 +754,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 )}
                 </CollapsibleCard>
 
-                {/* Video Progress Card - Only show for video content */}
-                {currentLesson.content_type === 'video' && videoDuration > 0 && (
-                  <CollapsibleCard
-                    title="Video Progress"
-                    icon={<Play className="h-4 w-4 text-blue-400" />}
-                    defaultExpanded={false}
-                    badge={<span className="text-[10px] text-gray-400 font-mono">{Math.round(videoProgress)}%</span>}
-                  >
-                  <Card className="bg-gray-800/50 border-gray-700">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-2">
-                          <Play className="h-5 w-5 text-blue-400" />
-                          <span className="font-medium text-white">Video Progress</span>
-                        </div>
-                        <span className="text-sm text-gray-400">
-                          {Math.round(videoProgress)}% watched
-                        </span>
-                      </div>
-                      
-                      {/* Progress Bar */}
-                      <Progress value={videoProgress} className="h-2 mb-2" />
-                      
-                      {/* Time Display */}
-                      <div className="flex items-center justify-between text-sm text-gray-400">
-                        <span>{formatTime(videoCurrentTime)}</span>
-                        <span>{formatTime(videoDuration)}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  </CollapsibleCard>
-                )}
+                {/* NOTE: the standalone "Video Progress" card that used to live
+                    here duplicated the inline progress card rendered by
+                    VideoPlayer itself (title "Video Progress", % watched,
+                    bar + timecodes). Removed — one authoritative display. */}
 
                 {/* Progress Status */}
                 <CollapsibleCard

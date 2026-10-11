@@ -106,8 +106,10 @@ export class AuthService {
     }
   }
 
-  // New method for password change (compatible with backend endpoint)
-  static async changePassword(data: { current_password: string; new_password: string }): Promise<{ message: string; must_change_password: boolean }> {
+  // Backend-compatible variant (POST /auth/change-password). Kept separate
+  // from the PUT /users/me/password overload above — TypeScript forbids
+  // duplicate method names, and no current caller uses this signature.
+  static async changePasswordViaAuth(data: { current_password: string; new_password: string }): Promise<{ message: string; must_change_password: boolean }> {
     try {
       const response = await apiClient.post(`${this.BASE_PATH}/change-password`, data);
       return response.data;

@@ -28,6 +28,7 @@ import type { ContentQuiz, QuizQuestion } from '@/services/contentAssignmentApi'
 import ContentAssignmentService from '@/services/contentAssignmentApi';
 import { toast } from 'sonner';
 import { useSidebarSafe } from '@/contexts/SidebarContext';
+import { DEFAULT_QUIZ_PASSING_THRESHOLD } from '@/constants/learningRules';
 
 interface ExtendedQuiz extends ContentQuiz {
   time_limit?: number;
@@ -694,7 +695,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         ...prev,
         status: 'completed',
         score: scoreRounded,
-        feedback: result.feedback || `Quiz submitted. Score: ${scoreRounded}%`
+        feedback: result.message || `Quiz submitted. Score: ${scoreRounded}%`
       }));
 
       toast.success('Quiz Submitted', {
@@ -768,7 +769,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         score: result.score,
         feedback: result.passed 
           ? `Congratulations! You passed with a score of ${scoreRounded}%` 
-          : `You scored ${scoreRounded}%. Passing score is ${quiz.passing_score || 70}%`
+          : `You scored ${scoreRounded}%. Passing score is ${quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%`
       }));
 
       // Call parent callbacks
@@ -785,7 +786,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         });
       } else {
         toast.error('Quiz Not Passed', {
-          description: `Score: ${scoreRounded}% (Need ${quiz.passing_score || 70}%) - ${result.remaining_attempts >= 0 ? `${result.remaining_attempts} attempts left` : 'Try again'}`,
+          description: `Score: ${scoreRounded}% (Need ${quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%) - ${result.remaining_attempts >= 0 ? `${result.remaining_attempts} attempts left` : 'Try again'}`,
           duration: 6000
         });
       }
@@ -818,7 +819,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   
   // Count answered questions (including text-based answers)
   const answeredCount = Object.keys(quizState.answers).filter(key => {
-    const answer = quizState.answers[key];
+    const answer = quizState.answers[Number(key)];
     return answer && (typeof answer === 'string' ? answer.trim().length > 0 : true);
   }).length;
   
@@ -949,7 +950,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     <Trophy className="h-5 w-5 text-purple-600 dark:text-purple-400" />
                   </div>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || 70}%</div>
+                <div className="text-2xl sm:text-3xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%</div>
                 <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Passing Score</div>
               </div>
               
@@ -1013,7 +1014,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 )}
                 <li className="flex items-start gap-2">
                   <Trophy className="h-5 w-5 text-purple-500 flex-shrink-0 mt-0.5" />
-                  <span>You need <strong>{quiz.passing_score || 70}%</strong> to pass this quiz</span>
+                  <span>You need <strong>{quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%</strong> to pass this quiz</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
@@ -1107,27 +1108,27 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               {/* Score Display */}
               <div className="text-center">
                 <div className={`inline-flex h-24 w-24 items-center justify-center rounded-full mb-4 ${
-                  quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                  quiz.best_score && quiz.best_score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD)
                     ? 'bg-green-100 dark:bg-green-900'
                     : 'bg-yellow-100 dark:bg-yellow-900'
                 }`}>
-                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || 70) ? (
+                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) ? (
                     <Trophy className="h-12 w-12 text-green-600 dark:text-green-400" />
                   ) : (
                     <AlertCircle className="h-12 w-12 text-yellow-600 dark:text-yellow-400" />
                   )}
                 </div>
                 <div className={`text-5xl font-bold mb-2 ${
-                  quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                  quiz.best_score && quiz.best_score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD)
                     ? 'text-green-600 dark:text-green-400'
                     : 'text-yellow-600 dark:text-yellow-400'
                 }`}>
                   {quiz.best_score !== undefined ? Math.round(quiz.best_score) : 0}%
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD)
                     ? 'Passed! Great job!'
-                    : `Need ${quiz.passing_score || 70}% to pass`
+                    : `Need ${quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}% to pass`
                   }
                 </p>
               </div>
@@ -1139,18 +1140,18 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   <div className="text-xs text-gray-600 dark:text-gray-400">Total Attempts</div>
                 </div>
                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || 70}%</div>
+                  <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%</div>
                   <div className="text-xs text-gray-600 dark:text-gray-400">Passing Score</div>
                 </div>
               </div>
 
               {/* Status Message */}
-              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && (
+              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) && (
                 <>
                   <Alert className="border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30">
                     <AlertCircle className="h-4 w-4 text-yellow-600" />
                     <AlertDescription className="text-yellow-800 dark:text-yellow-300">
-                      You scored below the passing threshold of {quiz.passing_score || 70}%.
+                      You scored below the passing threshold of {quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%.
                       {canAttempt && ' You still have attempts remaining to retake this quiz!'}
                       {!canAttempt && isBlockedByViolation && ' Your remaining attempts have been blocked due to a security violation.'}
                       {!canAttempt && !isBlockedByViolation && ' Unfortunately, you\'ve used all available attempts.'}
@@ -1199,7 +1200,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 </>
               )}
 
-              {quiz.best_score !== undefined && quiz.best_score >= (quiz.passing_score || 70) && (
+              {quiz.best_score !== undefined && quiz.best_score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) && (
                 <Alert className="border-green-300 bg-green-50 dark:bg-green-950/30">
                   <CheckCircle className="h-4 w-4 text-green-600" />
                   <AlertDescription className="text-green-800 dark:text-green-300">
@@ -1211,7 +1212,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
             <DialogFooter className="flex-col sm:flex-row gap-2">
               {/* Show Retake button if score is below passing and has remaining attempts */}
-              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && canAttempt && (
+              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) && canAttempt && (
                 <Button
                   onClick={() => {
                     setShowScoreModal(false);
@@ -1240,7 +1241,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               <Button
                 onClick={() => setShowScoreModal(false)}
                 variant="outline"
-                className={`${quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && canAttempt ? 'flex-1' : 'w-full'}`}
+                className={`${quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) && canAttempt ? 'flex-1' : 'w-full'}`}
               >
                 Close
               </Button>
@@ -1594,7 +1595,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // Completed State
   if (quizState.status === 'completed') {
-    const passed = quizState.score && quizState.score >= (quiz.passing_score || 80);
+    const passed = quizState.score && quizState.score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD);
     const hasRemainingAttempts = submissionResult && !securityViolation && !isBlockedByViolation && (submissionResult.remaining_attempts === -1 || submissionResult.remaining_attempts > 0);
     
     return (
@@ -1783,7 +1784,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // Viewing Feedback State
   if (quizState.status === 'viewing-feedback') {
-    const passed = quizState.score && quizState.score >= (quiz.passing_score || 70);
+    const passed = quizState.score && quizState.score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD);
     const totalPoints = questions.reduce((sum, q) => sum + (q.points || 10), 0);
     
     return (
@@ -1856,13 +1857,17 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             let isCorrect = false;
             if (isTextBased) {
               // Text-based answers are considered submitted (manual grading needed)
-              isCorrect = userAnswer && String(userAnswer).trim().length > 0;
+              isCorrect = Boolean(userAnswer && String(userAnswer).trim().length > 0);
             } else if (isTrueFalse) {
-              isCorrect = correctAnswers?.some(ans => 
-                String(userAnswer).toLowerCase() === ans.text.toLowerCase() ||
-                (String(userAnswer).toLowerCase() === 'true' && ans.text.toLowerCase() in ['true', 't', 'yes', '1']) ||
-                (String(userAnswer).toLowerCase() === 'false' && ans.text.toLowerCase() in ['false', 'f', 'no', '0'])
-              ) || false;
+              const truthy = ['true', 't', 'yes', '1'];
+              const falsy = ['false', 'f', 'no', '0'];
+              const normalized = String(userAnswer).toLowerCase();
+              isCorrect = correctAnswers?.some((ans: { text: string }) => {
+                const correctText = ans.text.toLowerCase();
+                return normalized === correctText ||
+                  (normalized === 'true' && truthy.includes(correctText)) ||
+                  (normalized === 'false' && falsy.includes(correctText));
+              }) || false;
             } else {
               isCorrect = userAnswerObj?.is_correct || false;
             }

@@ -170,7 +170,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       )}
 
       {/* Collapsible lesson header */}
-      <CollapsibleCard defaultOpen={true} title="Lesson details">
+      <CollapsibleCard defaultExpanded={true} title="Lesson details">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <Badge className={`${cfg.color} text-white`}>

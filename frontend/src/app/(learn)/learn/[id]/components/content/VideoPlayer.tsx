@@ -5,6 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Video, CheckCircle, Lock, Loader2, Maximize2, Minimize2, AlertCircle } from "lucide-react";
+import { VIDEO_WATCH_COMPLETE_THRESHOLD } from "@/constants/learningRules";
+import { VideoCoverageTracker } from "../../utils/videoCoverage";
 
 type YouTubeApi = {
   Player: new (element: HTMLElement, options: Record<string, unknown>) => any;
@@ -110,6 +112,56 @@ const loadYouTubeApi = (): Promise<YouTubeApi> => {
   });
   return youtubeApiPromise;
 };
+
+// Distinguishes "only the optional JS API is blocked" (an ad-blocker — the
+// embed iframe still plays) from "YouTube is blocked entirely" (nothing will
+// load). A no-cors fetch returns an opaque response when the host is reachable
+// and rejects when the network cannot reach it at all.
+let youtubeReachablePromise: Promise<boolean> | null = null;
+const probeYouTubeReachable = (): Promise<boolean> => {
+  if (youtubeReachablePromise) return youtubeReachablePromise;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  youtubeReachablePromise = fetch("https://www.youtube.com/robots.txt", {
+    mode: "no-cors",
+    cache: "no-store",
+    signal: controller.signal,
+  })
+    .then(() => true)
+    .catch(() => false)
+    .finally(() => clearTimeout(timer))
+    .then((reachable) => {
+      // Cache success so every player in a mixed lesson does not re-probe,
+      // but allow a failure to be retried on the next attempt.
+      if (!reachable) youtubeReachablePromise = null;
+      return reachable;
+    });
+  return youtubeReachablePromise;
+};
+
+// Vimeo SDK script management: a failed load must be retryable, so the script
+// element (and its cached failure) is removed on error instead of lingering.
+let vimeoScriptPromise: Promise<void> | null = null;
+const loadVimeoSdk = (): Promise<void> => {
+  if ((window as any).Vimeo?.Player) return Promise.resolve();
+  if (vimeoScriptPromise) return vimeoScriptPromise;
+  vimeoScriptPromise = new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src="https://player.vimeo.com/api/player.js"]',
+    );
+    const s = existing ?? document.createElement("script");
+    s.src = "https://player.vimeo.com/api/player.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      vimeoScriptPromise = null;
+      s.remove();
+      reject(new Error("Vimeo player failed to load"));
+    };
+    if (!existing) document.body.appendChild(s);
+  });
+  return vimeoScriptPromise;
+};
 // ── Duration formatting ────────────────────────────────────────────
 const fmt = (s: number): string => {
   if (!s || !isFinite(s)) return "0:00";
@@ -213,6 +265,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [videoError, setVideoError] = useState<string | null>(null);
   // Non-fatal: the optional YouTube JS API failed, but the embed still plays.
   const [apiWarning, setApiWarning] = useState<string | null>(null);
+  // Fatal for this network: YouTube itself is unreachable, so nothing loads.
+  const [youtubeUnreachable, setYoutubeUnreachable] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -226,6 +280,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const resumeDisplayKeyRef = useRef<string | null>(null);
   const resumeSeekAppliedRef = useRef(false);
+  // Unique-coverage tracker: playback POSITION is not engagement credit.
+  const trackerRef = useRef<VideoCoverageTracker>(
+    new VideoCoverageTracker({ baseCoveragePct: initialProgress || 0 }),
+  );
+  // Monotonic guard for parent reports: a mount-time zero report must never
+  // clobber a newer persisted snapshot (progress only rises; the resume
+  // position never jumps back to zero after real playback telemetry).
+  const lastReportedRef = useRef({ progress: 0, time: 0 });
 
   const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtube-nocookie.com") || videoUrl.includes("youtu.be");
   const isVimeo = videoUrl.includes("vimeo.com");
@@ -246,6 +308,33 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [mixedContentIndex, onMixedContentVideoProgress, onProgress]);
 
+  /**
+   * Push the latest coverage snapshot to the parent with monotonic guards.
+   * - Never reports a lower coverage than previously reported (coverage is
+   *   already monotonic; this defends against tracker swaps mid-restore).
+   * - Never reports a zero resume position after real telemetry was seen —
+   *   a remount must not wipe the persisted resume point.
+   * - Skips the meaningless all-zero report emitted before any player is
+   *   ready, which used to overwrite saved backend progress with zeros.
+   */
+  const flushProgressToParent = useCallback(() => {
+    const tracker = trackerRef.current;
+    const progress = tracker.coveragePct;
+    const time = tracker.positionSec;
+    const duration = tracker.getDuration();
+    if (progress === 0 && time === 0 && duration === 0) return; // nothing real yet
+    const last = lastReportedRef.current;
+    const safeProgress = Math.max(last.progress, progress);
+    const safeTime = time > 0 ? time : last.time;
+    lastReportedRef.current = { progress: safeProgress, time: safeTime };
+    setVideoProgress(safeProgress);
+    if (time > 0 || duration > 0) {
+      setCurrentTime(safeTime);
+      if (duration > 0) setVideoDuration(duration);
+    }
+    reportProgress(safeProgress, safeTime, duration);
+  }, [reportProgress]);
+
   const markWatched = useCallback(() => {
     if (!videoWatchedRef.current) {
       videoWatchedRef.current = true;
@@ -256,6 +345,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     }
   }, [mixedContentIndex, onComplete, onMixedContentVideoComplete]);
+
+  // Feed a playback observation into the coverage tracker and sync state.
+  const observePlayback = useCallback((timeSec: number, durationSec?: number) => {
+    const tracker = trackerRef.current;
+    if (durationSec && durationSec > 0) tracker.setDuration(durationSec);
+    tracker.observe(timeSec);
+    const coverage = tracker.coveragePct;
+    // Monotonic display: a session-union value can never visually regress
+    // below a restored persisted snapshot (tracker.raiseBase keeps the floor
+    // in sync; this guards tracker swaps mid-restore).
+    setVideoProgress(prev => Math.max(prev, coverage));
+    setCurrentTime(tracker.positionSec);
+    if (coverage >= VIDEO_WATCH_COMPLETE_THRESHOLD) markWatched();
+  }, [markWatched]);
 
   // Fullscreen toggle
   const handleFullscreenToggle = useCallback(async (el: HTMLElement | null) => {
@@ -285,12 +388,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Sync progress to parent and mixed-content tracking.
+  // Sync progress to parent and mixed-content tracking whenever local state
+  // advances. flushProgressToParent applies the monotonic guards.
   useEffect(() => {
-    reportProgress(videoProgress, currentTime, videoDuration);
-  }, [videoProgress, currentTime, videoDuration, reportProgress]);
+    flushProgressToParent();
+  }, [videoProgress, currentTime, videoDuration, flushProgressToParent]);
+
+  // Flush on pause and tab-hide so a student leaving mid-video never loses
+  // the interval since the last throttled report.
+  useEffect(() => {
+    const flush = () => flushProgressToParent();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushProgressToParent();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+      // Final flush on unmount/URL change so the last observed second is kept.
+      flushProgressToParent();
+    };
+  }, [flushProgressToParent]);
 
   useEffect(() => {
+    // Snapshot the outgoing lesson's coverage before resetting local state.
+    flushProgressToParent();
     setVideoProgress(0);
     videoWatchedRef.current = false;
     setVideoWatched(false);
@@ -298,6 +421,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setCurrentTime(0);
     setVideoError(null);
     setApiWarning(null);
+    setYoutubeUnreachable(false);
     setVideoLoading(false);
     youtubePlayerRef.current?.destroy?.();
     vimeoPlayerRef.current?.destroy?.();
@@ -305,8 +429,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     vimeoPlayerRef.current = null;
     resumeDisplayKeyRef.current = null;
     resumeSeekAppliedRef.current = false;
+    // Fresh tracker per URL, seeded with the persisted coverage floor so a
+    // lesson switch (and back) can never regress previously saved progress.
+    trackerRef.current = new VideoCoverageTracker({
+      baseCoveragePct: initialProgress || 0,
+    });
+    lastReportedRef.current = { progress: 0, time: 0 };
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-  }, [videoUrl]);
+  }, [videoUrl]); // eslint-disable-line react-hooks/exhaustive-deps -- flush intentionally once per URL change
 
   // Restore saved progress once the underlying player exposes its duration.
   // The seek is applied once per URL so live progress updates cannot move the
@@ -319,14 +449,27 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     const displayKey = `${videoUrl}:${savedProgress}:${savedTime}:${initialCompleted}`;
     if (resumeDisplayKeyRef.current !== displayKey) {
-      setVideoProgress(savedProgress);
-      setCurrentTime(savedTime);
-      videoWatchedRef.current = initialCompleted;
-      setVideoWatched(initialCompleted);
+      // Raise the tracker floor so live session coverage can never visually
+      // regress below the persisted snapshot (the tracker is created at
+      // mount, often BEFORE the backend snapshot resolves).
+      trackerRef.current.raiseBase(savedProgress);
+      setVideoProgress(prev => Math.max(prev, savedProgress));
+      setCurrentTime(prev => (prev > 0 ? prev : savedTime));
+      if (initialCompleted) {
+        videoWatchedRef.current = true;
+        setVideoWatched(true);
+      }
+      if (savedProgress > lastReportedRef.current.progress || savedTime > lastReportedRef.current.time) {
+        lastReportedRef.current = {
+          progress: Math.max(lastReportedRef.current.progress, savedProgress),
+          time: Math.max(lastReportedRef.current.time, savedTime),
+        };
+      }
       resumeDisplayKeyRef.current = displayKey;
     }
 
     const duration = videoDuration || (videoRef.current?.duration ?? 0);
+    if (duration > 0) trackerRef.current.setDuration(duration);
     if (!duration || resumeSeekAppliedRef.current) return;
 
     if (isDirect && videoRef.current) {
@@ -374,14 +517,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             setApiWarning(null);
             const duration = event.target.getDuration();
             setVideoDuration(duration);
+            trackerRef.current.setDuration(duration);
             progressIntervalRef.current = setInterval(() => {
               const current = event.target.getCurrentTime();
               const total = event.target.getDuration();
               if (total > 0) {
-                const progress = (current / total) * 100;
-                setVideoProgress(progress);
-                setCurrentTime(current);
-                if (progress >= 90) markWatched();
+                observePlayback(current, total);
               }
             }, 2000);
           },
@@ -398,14 +539,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }, 12000);
     };
 
-    initializePlayer().catch((error) => {
+    initializePlayer().catch(async (error) => {
       if (cancelled) return;
       console.error("Failed to initialize YouTube player:", error);
       if (error instanceof FatalPlayerError) {
         setVideoError("This lesson's video link is not a valid YouTube URL.");
+        return;
+      }
+      // The JS API failed. Find out whether it was only the optional API
+      // (ad-blocker — the embed still plays) or all of YouTube (blocked
+      // network — nothing will load) so we show an accurate message.
+      const reachable = await probeYouTubeReachable();
+      if (cancelled) return;
+      if (reachable) {
+        setApiWarning("Progress tracking is unavailable here, but the video plays with the built-in controls.");
       } else {
-        // Non-fatal: the embed iframe is already rendered and can still play.
-        setApiWarning("Interactive playback couldn't start. The video below may still play using the built-in controls.");
+        setYoutubeUnreachable(true);
       }
     });
 
@@ -416,47 +565,48 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       youtubePlayerRef.current?.destroy?.();
       youtubePlayerRef.current = null;
     };
-  }, [isYouTube, videoUrl, markWatched, retryToken]);
+  }, [isYouTube, videoUrl, observePlayback, retryToken]);
 
   // Vimeo: load SDK + init
   useEffect(() => {
     if (!isVimeo || !iframeRef.current) return;
     let cancelled = false;
     const loadVimeo = async () => {
-      if (!(window as any).Vimeo) {
-        const s = document.createElement("script");
-        s.src = "https://player.vimeo.com/api/player.js";
-        s.async = true;
-        await new Promise<void>((resolve, reject) => {
-          s.onload = () => resolve();
-          s.onerror = () => reject(new Error('Vimeo player failed to load'));
-          document.body.appendChild(s);
-        });
-      }
+      await loadVimeoSdk();
       if (cancelled) return;
       const Player = (window as any).Vimeo.Player;
       if (!Player) throw new Error('Vimeo player is unavailable');
+      vimeoPlayerRef.current?.destroy?.();
       vimeoPlayerRef.current = new Player(iframeRef.current);
-      vimeoPlayerRef.current.getDuration().then((d: number) => setVideoDuration(d));
+      const duration = await vimeoPlayerRef.current.getDuration().catch(() => 0);
+      if (cancelled) return;
+      if (duration > 0) {
+        setVideoDuration(duration);
+        trackerRef.current.setDuration(duration);
+      }
       vimeoPlayerRef.current.on("timeupdate", (data: any) => {
-        const pct = (data.seconds / data.duration) * 100;
-        setVideoProgress(pct);
-        setCurrentTime(data.seconds);
-        if (pct >= 90) markWatched();
+        if (data.duration > 0) observePlayback(data.seconds, data.duration);
       });
       vimeoPlayerRef.current.on("play", () => setIsPlaying(true));
-      vimeoPlayerRef.current.on("pause", () => setIsPlaying(false));
+      vimeoPlayerRef.current.on("pause", () => {
+        setIsPlaying(false);
+        flushProgressToParent();
+      });
     };
-    loadVimeo().catch(() => setVideoError('Vimeo could not be loaded. Open the lesson again or try another browser.'));
+    loadVimeo().catch(() => {
+      if (!cancelled) setVideoError('Vimeo could not be loaded. Open the lesson again or try another browser.');
+    });
     return () => {
       cancelled = true;
       if (vimeoPlayerRef.current) {
         vimeoPlayerRef.current.off("timeupdate");
         vimeoPlayerRef.current.off("play");
         vimeoPlayerRef.current.off("pause");
+        vimeoPlayerRef.current.destroy?.();
+        vimeoPlayerRef.current = null;
       }
     };
-  }, [isVimeo, videoUrl, markWatched, reportProgress]);
+  }, [isVimeo, videoUrl, observePlayback, flushProgressToParent, retryToken]);
 
   // Direct video: track progress
   useEffect(() => {
@@ -464,16 +614,32 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!video || !isDirect) return;
     const onTime = () => {
       if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-      const pct = (video.currentTime / video.duration) * 100;
-      setVideoProgress(pct);
-      setCurrentTime(video.currentTime);
-      if (pct >= 90) markWatched();
+      observePlayback(video.currentTime, video.duration);
     };
-    const onMeta = () => { setVideoDuration(video.duration); video.playbackRate = playbackSpeed; };
+    const onMeta = () => {
+      setVideoDuration(video.duration);
+      trackerRef.current.setDuration(video.duration);
+      video.playbackRate = playbackSpeed;
+    };
+    const onPause = () => flushProgressToParent();
+    const onSeeked = () => {
+      // Re-anchor the coverage tracker after a manual seek so the skipped
+      // gap is not later credited as continuous watching.
+      if (Number.isFinite(video.currentTime)) {
+        trackerRef.current.observe(video.currentTime);
+      }
+    };
     video.addEventListener("timeupdate", onTime);
     video.addEventListener("loadedmetadata", onMeta);
-    return () => { video.removeEventListener("timeupdate", onTime); video.removeEventListener("loadedmetadata", onMeta); };
-  }, [isDirect, markWatched, playbackSpeed, reportProgress]);
+    video.addEventListener("pause", onPause);
+    video.addEventListener("seeked", onSeeked);
+    return () => {
+      video.removeEventListener("timeupdate", onTime);
+      video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("pause", onPause);
+      video.removeEventListener("seeked", onSeeked);
+    };
+  }, [isDirect, observePlayback, flushProgressToParent, playbackSpeed]);
 
   // Keyboard shortcuts for direct video
   useEffect(() => {
@@ -526,6 +692,44 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         <AlertDescription className="text-red-200">
           <p className="font-semibold">Invalid video link</p>
           <p>This lesson's video link is not a recognized YouTube URL.</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  // YouTube is blocked on this network, so the embed cannot load here. Show an
+  // honest message plus an escape hatch instead of a silent black box.
+  if (isYouTube && youtubeUnreachable) {
+    return (
+      <Alert className="bg-amber-900/20 border-amber-700">
+        <AlertCircle className="h-5 w-5 text-amber-400" />
+        <AlertDescription className="space-y-2 text-amber-200">
+          <p className="font-semibold">YouTube is unreachable on this network</p>
+          <p>
+            This network is blocking YouTube, so the video cannot load here. If you
+            can open YouTube in your own browser tab, use the button below. Otherwise,
+            ask your instructor for an offline copy of this lesson.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <a
+              href={videoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-md bg-amber-600/80 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600"
+            >
+              Open video in a new tab
+            </a>
+            <button
+              onClick={() => {
+                youtubeReachablePromise = null;
+                setYoutubeUnreachable(false);
+                setRetryToken((t) => t + 1);
+              }}
+              className="inline-flex items-center rounded-md border border-amber-600/60 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40"
+            >
+              Try again
+            </button>
+          </div>
         </AlertDescription>
       </Alert>
     );

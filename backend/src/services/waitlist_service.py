@@ -406,7 +406,8 @@ class WaitlistService:
 
     # ─────────────────────────────────────────────────────────
     # ACCESS CONTROL
-    # ─────────────────────────────────────────────────────────    @staticmethod
+    # ─────────────────────────────────────────────────────────
+    @staticmethod
     def is_enrollment_access_allowed(enrollment: Enrollment) -> Tuple[bool, str]:
         """
         Check if a student should be allowed to access course content

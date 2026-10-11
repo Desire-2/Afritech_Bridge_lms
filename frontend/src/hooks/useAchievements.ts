@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { AchievementApiService } from '@/services/enhancedAchievementApi';
+import type { ApiError } from '@/services/ApiErrorHandler';
 import type { 
   Achievement, 
   UserAchievement, 
@@ -10,8 +11,7 @@ import type {
   LearningStreak, 
   StudentPoints,
   Quest,
-  PaginatedResponse,
-  ApiError 
+  PaginatedResponse
 } from '@/services/enhancedAchievementApi';
 
 interface AchievementState {
@@ -95,4 +95,393 @@ const initialState: AchievementState = {
     points: null,
     quests: null,
   },
-};\n\nexport const useAchievements = () => {\n  const [state, setState] = useState<AchievementState>(initialState);\n\n  // Helper function to update loading state\n  const setLoading = (key: keyof AchievementState['loading'], loading: boolean) => {\n    setState(prev => ({\n      ...prev,\n      loading: { ...prev.loading, [key]: loading }\n    }));\n  };\n\n  // Helper function to set error\n  const setError = (key: keyof AchievementState['errors'], error: ApiError | null) => {\n    setState(prev => ({\n      ...prev,\n      errors: { ...prev.errors, [key]: error }\n    }));\n  };\n\n  // Helper function to update last updated timestamp\n  const setLastUpdated = (key: keyof AchievementState['lastUpdated']) => {\n    setState(prev => ({\n      ...prev,\n      lastUpdated: { ...prev.lastUpdated, [key]: Date.now() }\n    }));\n  };\n\n  /**\n   * Load all achievements with pagination\n   */\n  const loadAchievements = useCallback(async (options?: {\n    page?: number;\n    per_page?: number;\n    category?: string;\n    forceRefresh?: boolean;\n  }) => {\n    const { forceRefresh = false, ...apiOptions } = options || {};\n    \n    // Check if we need to refresh\n    const lastUpdate = state.lastUpdated.achievements;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 5 * 60 * 1000; // 5 minutes\n    \n    if (!shouldRefresh && state.achievements.length > 0) {\n      return;\n    }\n\n    setLoading('achievements', true);\n    setError('achievements', null);\n\n    try {\n      const response = await AchievementApiService.getAchievements(apiOptions);\n      \n      setState(prev => ({\n        ...prev,\n        achievements: response.data || [],\n        achievementsPagination: response.pagination\n      }));\n      \n      setLastUpdated('achievements');\n    } catch (error) {\n      setError('achievements', error as ApiError);\n    } finally {\n      setLoading('achievements', false);\n    }\n  }, [state.lastUpdated.achievements, state.achievements.length]);\n\n  /**\n   * Load earned achievements with pagination\n   */\n  const loadEarnedAchievements = useCallback(async (options?: {\n    page?: number;\n    per_page?: number;\n    forceRefresh?: boolean;\n  }) => {\n    const { forceRefresh = false, ...apiOptions } = options || {};\n    \n    const lastUpdate = state.lastUpdated.earnedAchievements;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 2 * 60 * 1000; // 2 minutes\n    \n    if (!shouldRefresh && state.earnedAchievements.length > 0) {\n      return;\n    }\n\n    setLoading('earnedAchievements', true);\n    setError('earnedAchievements', null);\n\n    try {\n      const response = await AchievementApiService.getEarnedAchievements(apiOptions);\n      \n      setState(prev => ({\n        ...prev,\n        earnedAchievements: response.data || [],\n        earnedPagination: response.pagination\n      }));\n      \n      setLastUpdated('earnedAchievements');\n    } catch (error) {\n      setError('earnedAchievements', error as ApiError);\n    } finally {\n      setLoading('earnedAchievements', false);\n    }\n  }, [state.lastUpdated.earnedAchievements, state.earnedAchievements.length]);\n\n  /**\n   * Load achievement summary\n   */\n  const loadSummary = useCallback(async (forceRefresh: boolean = false) => {\n    const lastUpdate = state.lastUpdated.summary;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 1 * 60 * 1000; // 1 minute\n    \n    if (!shouldRefresh && state.summary) {\n      return;\n    }\n\n    setLoading('summary', true);\n    setError('summary', null);\n\n    try {\n      const response = await AchievementApiService.getAchievementSummary();\n      \n      setState(prev => ({\n        ...prev,\n        summary: response.data\n      }));\n      \n      setLastUpdated('summary');\n    } catch (error) {\n      setError('summary', error as ApiError);\n    } finally {\n      setLoading('summary', false);\n    }\n  }, [state.lastUpdated.summary, state.summary]);\n\n  /**\n   * Load learning streak\n   */\n  const loadStreak = useCallback(async (forceRefresh: boolean = false) => {\n    const lastUpdate = state.lastUpdated.streak;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 30 * 1000; // 30 seconds\n    \n    if (!shouldRefresh && state.streak) {\n      return;\n    }\n\n    setLoading('streak', true);\n    setError('streak', null);\n\n    try {\n      const response = await AchievementApiService.getStreak();\n      \n      setState(prev => ({\n        ...prev,\n        streak: response.streak\n      }));\n      \n      setLastUpdated('streak');\n    } catch (error) {\n      setError('streak', error as ApiError);\n    } finally {\n      setLoading('streak', false);\n    }\n  }, [state.lastUpdated.streak, state.streak]);\n\n  /**\n   * Load student points\n   */\n  const loadPoints = useCallback(async (forceRefresh: boolean = false) => {\n    const lastUpdate = state.lastUpdated.points;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 30 * 1000; // 30 seconds\n    \n    if (!shouldRefresh && state.points) {\n      return;\n    }\n\n    setLoading('points', true);\n    setError('points', null);\n\n    try {\n      const response = await AchievementApiService.getPoints();\n      \n      setState(prev => ({\n        ...prev,\n        points: response.points\n      }));\n      \n      setLastUpdated('points');\n    } catch (error) {\n      setError('points', error as ApiError);\n    } finally {\n      setLoading('points', false);\n    }\n  }, [state.lastUpdated.points, state.points]);\n\n  /**\n   * Load available quests\n   */\n  const loadQuests = useCallback(async (forceRefresh: boolean = false) => {\n    const lastUpdate = state.lastUpdated.quests;\n    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;\n    const shouldRefresh = forceRefresh || cacheAge > 2 * 60 * 1000; // 2 minutes\n    \n    if (!shouldRefresh && state.quests.length > 0) {\n      return;\n    }\n\n    setLoading('quests', true);\n    setError('quests', null);\n\n    try {\n      const response = await AchievementApiService.getQuests();\n      \n      setState(prev => ({\n        ...prev,\n        quests: response.quests\n      }));\n      \n      setLastUpdated('quests');\n    } catch (error) {\n      setError('quests', error as ApiError);\n    } finally {\n      setLoading('quests', false);\n    }\n  }, [state.lastUpdated.quests, state.quests.length]);\n\n  /**\n   * Update streak and refresh related data\n   */\n  const updateStreak = useCallback(async () => {\n    setLoading('actions', true);\n    setError('actions', null);\n\n    try {\n      const response = await AchievementApiService.updateStreak();\n      \n      // Refresh streak and other related data\n      await Promise.all([\n        loadStreak(true),\n        loadPoints(true),\n        loadSummary(true)\n      ]);\n      \n      return response;\n    } catch (error) {\n      setError('actions', error as ApiError);\n      throw error;\n    } finally {\n      setLoading('actions', false);\n    }\n  }, [loadStreak, loadPoints, loadSummary]);\n\n  /**\n   * Showcase an achievement\n   */\n  const showcaseAchievement = useCallback(async (achievementId: number, showcase: boolean = true) => {\n    setLoading('actions', true);\n    setError('actions', null);\n\n    try {\n      const response = await AchievementApiService.showcaseAchievement(achievementId, showcase);\n      \n      // Update the local state\n      setState(prev => ({\n        ...prev,\n        earnedAchievements: prev.earnedAchievements.map(ua => \n          ua.achievement.id === achievementId \n            ? { ...ua, is_showcased: showcase }\n            : ua\n        )\n      }));\n      \n      // Refresh summary to update showcased achievements\n      await loadSummary(true);\n      \n      return response;\n    } catch (error) {\n      setError('actions', error as ApiError);\n      throw error;\n    } finally {\n      setLoading('actions', false);\n    }\n  }, [loadSummary]);\n\n  /**\n   * Start a quest\n   */\n  const startQuest = useCallback(async (questId: number) => {\n    setLoading('actions', true);\n    setError('actions', null);\n\n    try {\n      const response = await AchievementApiService.startQuest(questId);\n      \n      // Refresh quests to update user progress\n      await loadQuests(true);\n      \n      return response;\n    } catch (error) {\n      setError('actions', error as ApiError);\n      throw error;\n    } finally {\n      setLoading('actions', false);\n    }\n  }, [loadQuests]);\n\n  /**\n   * Clear specific error\n   */\n  const clearError = useCallback((key: keyof AchievementState['errors']) => {\n    setError(key, null);\n  }, []);\n\n  /**\n   * Clear all errors\n   */\n  const clearAllErrors = useCallback(() => {\n    setState(prev => ({\n      ...prev,\n      errors: {\n        achievements: null,\n        earnedAchievements: null,\n        summary: null,\n        streak: null,\n        points: null,\n        quests: null,\n        actions: null,\n      }\n    }));\n  }, []);\n\n  /**\n   * Refresh all data\n   */\n  const refreshAll = useCallback(async () => {\n    await Promise.all([\n      loadAchievements({ forceRefresh: true }),\n      loadEarnedAchievements({ forceRefresh: true }),\n      loadSummary(true),\n      loadStreak(true),\n      loadPoints(true),\n      loadQuests(true)\n    ]);\n  }, [loadAchievements, loadEarnedAchievements, loadSummary, loadStreak, loadPoints, loadQuests]);\n\n  // Initialize data on mount\n  useEffect(() => {\n    loadSummary();\n    loadStreak();\n    loadPoints();\n  }, []);\n\n  // Computed values\n  const isLoading = Object.values(state.loading).some(loading => loading);\n  const hasErrors = Object.values(state.errors).some(error => error !== null);\n  \n  return {\n    // Data\n    ...state,\n    \n    // Computed\n    isLoading,\n    hasErrors,\n    \n    // Actions\n    loadAchievements,\n    loadEarnedAchievements,\n    loadSummary,\n    loadStreak,\n    loadPoints,\n    loadQuests,\n    updateStreak,\n    showcaseAchievement,\n    startQuest,\n    \n    // Error management\n    clearError,\n    clearAllErrors,\n    \n    // Utilities\n    refreshAll,\n  };\n};\n\nexport default useAchievements;
+};
+
+export const useAchievements = () => {
+  const [state, setState] = useState<AchievementState>(initialState);
+
+  // Helper function to update loading state
+  const setLoading = (key: keyof AchievementState['loading'], loading: boolean) => {
+    setState(prev => ({
+      ...prev,
+      loading: { ...prev.loading, [key]: loading }
+    }));
+  };
+
+  // Helper function to set error
+  const setError = (key: keyof AchievementState['errors'], error: ApiError | null) => {
+    setState(prev => ({
+      ...prev,
+      errors: { ...prev.errors, [key]: error }
+    }));
+  };
+
+  // Helper function to update last updated timestamp
+  const setLastUpdated = (key: keyof AchievementState['lastUpdated']) => {
+    setState(prev => ({
+      ...prev,
+      lastUpdated: { ...prev.lastUpdated, [key]: Date.now() }
+    }));
+  };
+
+  /**
+   * Load all achievements with pagination
+   */
+  const loadAchievements = useCallback(async (options?: {
+    page?: number;
+    per_page?: number;
+    category?: string;
+    forceRefresh?: boolean;
+  }) => {
+    const { forceRefresh = false, ...apiOptions } = options || {};
+    
+    // Check if we need to refresh
+    const lastUpdate = state.lastUpdated.achievements;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 5 * 60 * 1000; // 5 minutes
+    
+    if (!shouldRefresh && state.achievements.length > 0) {
+      return;
+    }
+
+    setLoading('achievements', true);
+    setError('achievements', null);
+
+    try {
+      const response = await AchievementApiService.getAchievements(apiOptions);
+      
+      setState(prev => ({
+        ...prev,
+        achievements: response.data || [],
+        achievementsPagination: response.pagination
+      }));
+      
+      setLastUpdated('achievements');
+    } catch (error) {
+      setError('achievements', error as ApiError);
+    } finally {
+      setLoading('achievements', false);
+    }
+  }, [state.lastUpdated.achievements, state.achievements.length]);
+
+  /**
+   * Load earned achievements with pagination
+   */
+  const loadEarnedAchievements = useCallback(async (options?: {
+    page?: number;
+    per_page?: number;
+    forceRefresh?: boolean;
+  }) => {
+    const { forceRefresh = false, ...apiOptions } = options || {};
+    
+    const lastUpdate = state.lastUpdated.earnedAchievements;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 2 * 60 * 1000; // 2 minutes
+    
+    if (!shouldRefresh && state.earnedAchievements.length > 0) {
+      return;
+    }
+
+    setLoading('earnedAchievements', true);
+    setError('earnedAchievements', null);
+
+    try {
+      const response = await AchievementApiService.getEarnedAchievements(apiOptions);
+      
+      setState(prev => ({
+        ...prev,
+        earnedAchievements: response.data || [],
+        earnedPagination: response.pagination
+      }));
+      
+      setLastUpdated('earnedAchievements');
+    } catch (error) {
+      setError('earnedAchievements', error as ApiError);
+    } finally {
+      setLoading('earnedAchievements', false);
+    }
+  }, [state.lastUpdated.earnedAchievements, state.earnedAchievements.length]);
+
+  /**
+   * Load achievement summary
+   */
+  const loadSummary = useCallback(async (forceRefresh: boolean = false) => {
+    const lastUpdate = state.lastUpdated.summary;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 1 * 60 * 1000; // 1 minute
+    
+    if (!shouldRefresh && state.summary) {
+      return;
+    }
+
+    setLoading('summary', true);
+    setError('summary', null);
+
+    try {
+      const response = await AchievementApiService.getAchievementSummary();
+      
+      setState(prev => ({
+        ...prev,
+        summary: response.data
+      }));
+      
+      setLastUpdated('summary');
+    } catch (error) {
+      setError('summary', error as ApiError);
+    } finally {
+      setLoading('summary', false);
+    }
+  }, [state.lastUpdated.summary, state.summary]);
+
+  /**
+   * Load learning streak
+   */
+  const loadStreak = useCallback(async (forceRefresh: boolean = false) => {
+    const lastUpdate = state.lastUpdated.streak;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 30 * 1000; // 30 seconds
+    
+    if (!shouldRefresh && state.streak) {
+      return;
+    }
+
+    setLoading('streak', true);
+    setError('streak', null);
+
+    try {
+      const response = await AchievementApiService.getStreak();
+      
+      setState(prev => ({
+        ...prev,
+        streak: response.streak
+      }));
+      
+      setLastUpdated('streak');
+    } catch (error) {
+      setError('streak', error as ApiError);
+    } finally {
+      setLoading('streak', false);
+    }
+  }, [state.lastUpdated.streak, state.streak]);
+
+  /**
+   * Load student points
+   */
+  const loadPoints = useCallback(async (forceRefresh: boolean = false) => {
+    const lastUpdate = state.lastUpdated.points;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 30 * 1000; // 30 seconds
+    
+    if (!shouldRefresh && state.points) {
+      return;
+    }
+
+    setLoading('points', true);
+    setError('points', null);
+
+    try {
+      const response = await AchievementApiService.getPoints();
+      
+      setState(prev => ({
+        ...prev,
+        points: response.points
+      }));
+      
+      setLastUpdated('points');
+    } catch (error) {
+      setError('points', error as ApiError);
+    } finally {
+      setLoading('points', false);
+    }
+  }, [state.lastUpdated.points, state.points]);
+
+  /**
+   * Load available quests
+   */
+  const loadQuests = useCallback(async (forceRefresh: boolean = false) => {
+    const lastUpdate = state.lastUpdated.quests;
+    const cacheAge = lastUpdate ? Date.now() - lastUpdate : Infinity;
+    const shouldRefresh = forceRefresh || cacheAge > 2 * 60 * 1000; // 2 minutes
+    
+    if (!shouldRefresh && state.quests.length > 0) {
+      return;
+    }
+
+    setLoading('quests', true);
+    setError('quests', null);
+
+    try {
+      const response = await AchievementApiService.getQuests();
+      
+      setState(prev => ({
+        ...prev,
+        quests: response.quests
+      }));
+      
+      setLastUpdated('quests');
+    } catch (error) {
+      setError('quests', error as ApiError);
+    } finally {
+      setLoading('quests', false);
+    }
+  }, [state.lastUpdated.quests, state.quests.length]);
+
+  /**
+   * Update streak and refresh related data
+   */
+  const updateStreak = useCallback(async () => {
+    setLoading('actions', true);
+    setError('actions', null);
+
+    try {
+      const response = await AchievementApiService.updateStreak();
+      
+      // Refresh streak and other related data
+      await Promise.all([
+        loadStreak(true),
+        loadPoints(true),
+        loadSummary(true)
+      ]);
+      
+      return response;
+    } catch (error) {
+      setError('actions', error as ApiError);
+      throw error;
+    } finally {
+      setLoading('actions', false);
+    }
+  }, [loadStreak, loadPoints, loadSummary]);
+
+  /**
+   * Showcase an achievement
+   */
+  const showcaseAchievement = useCallback(async (achievementId: number, showcase: boolean = true) => {
+    setLoading('actions', true);
+    setError('actions', null);
+
+    try {
+      const response = await AchievementApiService.showcaseAchievement(achievementId, showcase);
+      
+      // Update the local state
+      setState(prev => ({
+        ...prev,
+        earnedAchievements: prev.earnedAchievements.map(ua => 
+          ua.achievement.id === achievementId 
+            ? { ...ua, is_showcased: showcase }
+            : ua
+        )
+      }));
+      
+      // Refresh summary to update showcased achievements
+      await loadSummary(true);
+      
+      return response;
+    } catch (error) {
+      setError('actions', error as ApiError);
+      throw error;
+    } finally {
+      setLoading('actions', false);
+    }
+  }, [loadSummary]);
+
+  /**
+   * Start a quest
+   */
+  const startQuest = useCallback(async (questId: number) => {
+    setLoading('actions', true);
+    setError('actions', null);
+
+    try {
+      const response = await AchievementApiService.startQuest(questId);
+      
+      // Refresh quests to update user progress
+      await loadQuests(true);
+      
+      return response;
+    } catch (error) {
+      setError('actions', error as ApiError);
+      throw error;
+    } finally {
+      setLoading('actions', false);
+    }
+  }, [loadQuests]);
+
+  /**
+   * Clear specific error
+   */
+  const clearError = useCallback((key: keyof AchievementState['errors']) => {
+    setError(key, null);
+  }, []);
+
+  /**
+   * Clear all errors
+   */
+  const clearAllErrors = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      errors: {
+        achievements: null,
+        earnedAchievements: null,
+        summary: null,
+        streak: null,
+        points: null,
+        quests: null,
+        actions: null,
+      }
+    }));
+  }, []);
+
+  /**
+   * Refresh all data
+   */
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      loadAchievements({ forceRefresh: true }),
+      loadEarnedAchievements({ forceRefresh: true }),
+      loadSummary(true),
+      loadStreak(true),
+      loadPoints(true),
+      loadQuests(true)
+    ]);
+  }, [loadAchievements, loadEarnedAchievements, loadSummary, loadStreak, loadPoints, loadQuests]);
+
+  // Initialize data on mount
+  useEffect(() => {
+    loadSummary();
+    loadStreak();
+    loadPoints();
+  }, []);
+
+  // Computed values
+  const isLoading = Object.values(state.loading).some(loading => loading);
+  const hasErrors = Object.values(state.errors).some(error => error !== null);
+  
+  return {
+    // Data
+    ...state,
+    
+    // Computed
+    isLoading,
+    hasErrors,
+    
+    // Actions
+    loadAchievements,
+    loadEarnedAchievements,
+    loadSummary,
+    loadStreak,
+    loadPoints,
+    loadQuests,
+    updateStreak,
+    showcaseAchievement,
+    startQuest,
+    
+    // Error management
+    clearError,
+    clearAllErrors,
+    
+    // Utilities
+    refreshAll,
+  };
+};
+
+export default useAchievements;

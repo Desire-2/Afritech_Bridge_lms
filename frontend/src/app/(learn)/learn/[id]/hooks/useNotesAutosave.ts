@@ -50,7 +50,7 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
     }
     setNotesSaveStatus("saving");
 
-    let savePromise: Promise<void>;
+    let savePromise!: Promise<void>;
     savePromise = (async () => {
       try {
         const saved = noteId

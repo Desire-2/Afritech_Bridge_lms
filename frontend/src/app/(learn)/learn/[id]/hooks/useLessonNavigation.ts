@@ -82,7 +82,7 @@ export function useLessonNavigation(
             m.lessons?.some((l: any) => l.id === savedProgress.lessonId)
         );
         if (moduleWithLesson) {
-          const lesson = moduleWithLesson.lessons.find(
+          const lesson = moduleWithLesson.lessons?.find(
             (l: any) => l.id === savedProgress.lessonId
           );
           if (lesson) {
@@ -201,7 +201,7 @@ function findFirstUncompletedLesson(
   if (!courseData.modules || !Array.isArray(courseData.modules)) return null;
 
   for (const moduleData of courseData.modules) {
-    const lessonsCompleted = moduleData.lessons_completed || [];
+    const lessonsCompleted = (moduleData as any).lessons_completed || [];
     const moduleInfo = (moduleData as any).module;
     const uncompleted = lessonsCompleted.find(
       (lesson: any) => !lesson.completed

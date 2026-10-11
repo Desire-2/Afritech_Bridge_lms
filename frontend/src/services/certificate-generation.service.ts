@@ -102,7 +102,7 @@ export class CertificateGenerationService {
           eligible: true,
           message: response.message || 'Certificate generated successfully!',
           certificate: response.certificate || response.data,
-          requirements: response.requirements
+          requirements: response.requirements as CertificateRequirementStatus | undefined
         };
       }
 
@@ -114,7 +114,7 @@ export class CertificateGenerationService {
           error_code: response.error_code || 'REQUIREMENTS_NOT_MET',
           message: response.message || 'Requirements not met',
           summary: response.summary,
-          requirements: response.requirements,
+          requirements: response.requirements as CertificateRequirementStatus | undefined,
           failure_reasons: this._parseFailureReasons(response),
           next_steps: response.next_steps || this._extractNextSteps(response)
         };

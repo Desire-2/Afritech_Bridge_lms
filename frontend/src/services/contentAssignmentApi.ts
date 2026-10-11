@@ -22,6 +22,7 @@ export interface ContentQuiz {
   passing_score?: number;
   current_score?: number;
   best_score?: number;
+  attempts_used?: number;
   last_attempted?: string;
   time_limit?: number;
   max_attempts?: number;
@@ -250,6 +251,7 @@ class ContentAssignmentService extends BaseApiService {
     score: number;
     passed: boolean;
     attempt_number: number;
+    total_attempts?: number;
     remaining_attempts: number;
     blocked_due_to_violation?: boolean;
   }> {
@@ -333,7 +335,7 @@ class ContentAssignmentService extends BaseApiService {
    */
   async getAssignmentDetails(assignmentId: number): Promise<ContentAssignment> {
     try {
-      const response = await this.get(`/student/assignments/${assignmentId}/details`);
+      const response = await this.get<ContentAssignment>(`/student/assignments/${assignmentId}/details`);
       // Transform backend response to match frontend interface
       return {
         ...response,
@@ -344,11 +346,11 @@ class ContentAssignmentService extends BaseApiService {
         submission_status: response.submission_status || {
           submitted: false,
           status: 'not_submitted',
-          grade: null,
-          feedback: null,
-          submitted_at: null,
-          graded_at: null,
-          grader_name: null
+          grade: undefined,
+          feedback: undefined,
+          submitted_at: undefined,
+          graded_at: undefined,
+          grader_name: undefined
         }
       };
     } catch (error) {
@@ -392,7 +394,7 @@ class ContentAssignmentService extends BaseApiService {
     assignment?: ContentAssignment;
   }> {
     try {
-      const result = await this.post(`/student/assignments/${assignmentId}/resubmit`, data);
+      const result = await this.post<{ message: string; submission: any }>(`/student/assignments/${assignmentId}/resubmit`, data);
       
       // Refresh assignment data after resubmission to get updated status
       try {
@@ -417,7 +419,7 @@ class ContentAssignmentService extends BaseApiService {
   async refreshAssignmentData(assignmentId: number): Promise<ContentAssignment> {
     // Add cache-busting parameter to ensure fresh data
     const timestamp = new Date().getTime();
-    const response = await this.get(`/student/assignments/${assignmentId}/details?_t=${timestamp}`);
+    const response = await this.get<ContentAssignment>(`/student/assignments/${assignmentId}/details?_t=${timestamp}`);
     return {
       ...response,
       modification_requested: Boolean(response.modification_requested),

@@ -10,6 +10,7 @@ import { parseImageDimensions } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { stripDangerousHtml } from "@/utils/sanitizeHtml";
 import "../markdown-styles.css";
 
 interface FontSizeClasses {
@@ -52,15 +53,27 @@ const FONT_SIZES: Record<string, FontSizeClasses> = {
 
 function sanitizeMarkdown(content: string): string {
   if (!content) return "";
-  return content
-    .replace(/```([^`\n]{1,50})```/g, "`$1`")
-    .replace(/```\s*```/g, "")
-    .replace(/```[\w]*\s*\n\s*```/g, "")
-    .replace(/```\n```/g, "```\n\n```")
-    .replace(/(\n|^)(#{1,6}\s)/g, "\n\n$2")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/([^\n])\n([A-Z])/g, "$1\n\n$2")
-    .trim();
+  return (
+    content
+      .replace(/```([^`\n]{1,50})```/g, "`$1`")
+      .replace(/```\s*```/g, "")
+      .replace(/```[\w]*\s*\n\s*```/g, "")
+      .replace(/```\n```/g, "```\n\n```")
+      .replace(/(\n|^)(#{1,6}\s)/g, "\n\n$2")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/([^\n])\n([A-Z])/g, "$1\n\n$2")
+      .trim()
+  );
+}
+
+/**
+ * Strip dangerous raw HTML before the react-markdown + rehype-raw pipeline
+ * renders it. rehype-raw passes author HTML through verbatim, so scripts,
+ * event handlers and javascript: URLs in lesson content would otherwise
+ * execute in the learner's browser.
+ */
+function prepareLessonMarkdown(content: string): string {
+  return stripDangerousHtml(sanitizeMarkdown(content));
 }
 
 export interface TextContentRendererProps {
@@ -90,7 +103,7 @@ export const TextContentRenderer: React.FC<TextContentRendererProps> = ({
   }, [fontSizeLevel]);
 
   const fs = FONT_SIZES[String(fontSizeLevel)] || FONT_SIZES["0"];
-  const cleanContent = useMemo(() => sanitizeMarkdown(content), [content]);
+  const cleanContent = useMemo(() => prepareLessonMarkdown(content), [content]);
 
   return (
     <div>
@@ -129,7 +142,14 @@ export const TextContentRenderer: React.FC<TextContentRendererProps> = ({
             ul: (p) => <ul className="list-disc list-outside space-y-2 mb-4 text-gray-200 ml-6 pl-2" {...p} />,
             ol: (p) => <ol className="list-decimal list-outside space-y-2 mb-4 text-gray-200 ml-6 pl-2" {...p} />,
             li: (p) => <li className={fs.li} {...p} />,
-            code: CodeBlock,
+            code: ({ className, children, ...rest }) => (
+              <CodeBlock
+                className={className}
+                inline={(rest as { inline?: boolean }).inline}
+              >
+                {children}
+              </CodeBlock>
+            ),
             blockquote: (p) => <blockquote className="border-l-4 border-blue-500 bg-blue-900/20 pl-4 py-2 my-4 italic text-gray-300" {...p} />,
             a: (p) => <a className="text-blue-400 hover:text-blue-300 underline" target="_blank" rel="noopener noreferrer" {...p} />,
             table: (p) => <div className="overflow-x-auto my-4"><table className="min-w-full border border-gray-700 rounded-lg overflow-hidden" {...p} /></div>,
@@ -139,7 +159,7 @@ export const TextContentRenderer: React.FC<TextContentRendererProps> = ({
             th: (p) => <th className="px-4 py-3 text-left text-sm font-semibold text-gray-200 border-b border-gray-700" {...p} />,
             td: (p) => <td className="px-4 py-3 text-sm text-gray-300" {...p} />,
             img: ({ src, alt, ...p }) => {
-              const parsed = parseImageDimensions(src || "");
+              const parsed = parseImageDimensions(typeof src === "string" ? src : "");
               return <img className="rounded-lg my-4 shadow-lg" src={parsed.src} alt={alt || ""} width={parsed.width} height={parsed.height}
                 style={parsed.width ? { maxWidth: `${parsed.width}px`, height: "auto" } : { maxWidth: "100%", height: "auto" }} {...p} />;
             },

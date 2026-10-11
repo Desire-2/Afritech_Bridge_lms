@@ -5,3 +5,9 @@ export const LESSON_ENGAGEMENT_THRESHOLD = 60;
 export const MODULE_PASSING_THRESHOLD = 70;
 export const DEFAULT_QUIZ_PASSING_THRESHOLD = 70;
 export const ASSIGNMENT_PASSING_THRESHOLD = 60;
+/**
+ * Fraction of a video that must actually be watched (unique coverage, not
+ * playback position) before the video counts as complete. Mirrors the
+ * backend `LessonCompletion.video_completed` rule (90%+ threshold).
+ */
+export const VIDEO_WATCH_COMPLETE_THRESHOLD = 90;

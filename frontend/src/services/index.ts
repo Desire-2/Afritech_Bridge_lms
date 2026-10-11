@@ -2,7 +2,6 @@
 export { AuthService } from './auth.service';
 export { CourseService, ModuleService, LessonService, QuizService, QuestionService, AnnouncementService } from './course.service';
 export { OpportunityService } from './opportunity.service';
-export { QuizProgressService } from './quiz-progress.service';
 export { AdminService } from './admin.service';
 export { StudentService } from './student.service';
 

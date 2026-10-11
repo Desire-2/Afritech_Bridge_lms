@@ -24,6 +24,8 @@ interface UseProgressTrackingProps {
   videoCurrentTime?: number; // Current playback position in seconds
   videoDuration?: number; // Total video duration in seconds
   videoCompleted?: boolean; // Whether video reached 90% threshold
+  // Per-index coverage for mixed-content lessons ({sectionIndex: coveragePct})
+  mixedVideoProgress?: Record<number, number>;
   // Section-based tracking (from InteractiveStepThroughViewer)
   viewedSections?: number; // Number of sections viewed so far
   totalSections?: number; // Total number of sections in the lesson
@@ -43,6 +45,7 @@ export const useProgressTracking = ({
   videoCurrentTime = 0,
   videoDuration = 0,
   videoCompleted = false,
+  mixedVideoProgress,
   viewedSections = 0,
   totalSections = 0
 }: UseProgressTrackingProps) => {
@@ -55,6 +58,8 @@ export const useProgressTracking = ({
   const [savedVideoCurrentTime, setSavedVideoCurrentTime] = useState(0);
   const [savedVideoDuration, setSavedVideoDuration] = useState(0);
   const [savedVideoCompleted, setSavedVideoCompleted] = useState(false);
+  // Per-index mixed-content coverage loaded from the backend (JSON string or object)
+  const [savedMixedVideoProgress, setSavedMixedVideoProgress] = useState<Record<number, number>>({});
   const [isLessonCompleted, setIsLessonCompleted] = useState<boolean>(false);
   const [completionInProgress, setCompletionInProgress] = useState<boolean>(false);
   const [nextLessonInfo, setNextLessonInfo] = useState<any>(null);
@@ -97,6 +102,23 @@ export const useProgressTracking = ({
         setSavedVideoCurrentTime(existingProgress.video_current_time || 0);
         setSavedVideoDuration(existingProgress.video_duration || 0);
         setSavedVideoCompleted(existingProgress.video_completed || false);
+        // Parse per-index mixed coverage (stored server-side as a JSON string)
+        try {
+          const rawMixed = existingProgress.mixed_video_progress;
+          const parsedMixed = typeof rawMixed === 'string' ? JSON.parse(rawMixed || '{}') : (rawMixed || {});
+          const coverageByIndex: Record<number, number> = {};
+          if (parsedMixed && typeof parsedMixed === 'object') {
+            Object.entries(parsedMixed).forEach(([key, value]) => {
+              const idx = Number(key);
+              if (!Number.isFinite(idx)) return;
+              const cov = typeof value === 'number' ? value : Number((value as any)?.progress);
+              if (Number.isFinite(cov)) coverageByIndex[idx] = Math.max(0, Math.min(100, cov));
+            });
+          }
+          setSavedMixedVideoProgress(coverageByIndex);
+        } catch {
+          setSavedMixedVideoProgress({});
+        }
         
         // Initialize max progress refs with loaded values
         maxScrollProgressRef.current = existingProgress.scroll_progress || 0;
@@ -350,6 +372,10 @@ export const useProgressTracking = ({
         video_current_time: videoCurrentTime,  // Current playback position
         video_duration: videoDuration,  // Total video duration
         video_completed: videoCompleted,  // Whether 90% threshold reached
+        // Per-index coverage for mixed-content lessons (empty object omitted)
+        ...(mixedVideoProgress && Object.keys(mixedVideoProgress).length > 0
+          ? { mixed_video_progress: mixedVideoProgress }
+          : {}),
         auto_saved: !forceSave
       } as any);
       
@@ -401,7 +427,7 @@ export const useProgressTracking = ({
     } finally {
       if (saveInFlightRef.current === savePromise) saveInFlightRef.current = null;
     }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, isLessonCompleted, lessonScore, progressLoaded]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, mixedVideoProgress, isLessonCompleted, lessonScore, progressLoaded]);
 
   // Force save progress regardless of score threshold
   // Used when user manually triggers actions like unlocking next module
@@ -453,6 +479,9 @@ export const useProgressTracking = ({
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
         video_progress: videoProgress,
+        ...(mixedVideoProgress && Object.keys(mixedVideoProgress).length > 0
+          ? { mixed_video_progress: mixedVideoProgress }
+          : {}),
         completion_method: 'automatic'
       });
 
@@ -560,7 +589,7 @@ export const useProgressTracking = ({
     } finally {
       setCompletionInProgress(false);
     }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, completionInProgress, isLessonCompleted]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, mixedVideoProgress, completionInProgress, isLessonCompleted]);
 
   // Reset progress and load existing data when lesson changes
   useEffect(() => {
@@ -678,7 +707,7 @@ export const useProgressTracking = ({
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [currentLesson?.id, progressLoaded, videoProgress, videoCurrentTime, videoDuration, videoCompleted]);
+  }, [currentLesson?.id, progressLoaded, videoProgress, videoCurrentTime, videoDuration, videoCompleted, mixedVideoProgress]);
 
   return {
     readingProgress,
@@ -693,6 +722,7 @@ export const useProgressTracking = ({
     savedVideoCurrentTime,
     savedVideoDuration,
     savedVideoCompleted,
+    savedMixedVideoProgress,
     nextLessonInfo,
     completionThreshold: COMPLETION_THRESHOLD,
     updateReadingProgress,

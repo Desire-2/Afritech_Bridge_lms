@@ -64,6 +64,8 @@ export interface CourseData {
     module_release_count?: number;
     module_release_interval?: string;
     module_release_interval_days?: number;
+    // Payment settings (from Course.to_dict)
+    payment_methods?: string[];
   };
   current_lesson?: LessonData;
   title?: string;

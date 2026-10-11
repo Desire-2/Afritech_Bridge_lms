@@ -29,7 +29,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectWithStatus | null>(null);
-  const [submission, setSubmission] = useState<SubmissionDetail['submission']>(null);
+  const [submission, setSubmission] = useState<SubmissionDetail['submission'] | null>(null);
   const [mode, setMode] = useState<PanelMode>('view');
 
   const [textContent, setTextContent] = useState('');

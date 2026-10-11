@@ -377,7 +377,11 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
         })
       });
       
-      const result = await response.json();
+      const result = (await response.json()) as {
+        error?: string;
+        message?: string;
+        [key: string]: unknown;
+      };
       
       if (!response.ok) {
         // Clean up uploaded files on submission failure

@@ -3,6 +3,7 @@ from ..utils.time_utils import now_local
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 
 from ..models.user_models import db, User
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz
@@ -680,17 +681,26 @@ class ProgressionService:
             initial_status = 'unlocked' if all_previous_completed else 'locked'
             is_unlocked = all_previous_completed
         
-        progress = ModuleProgress(
-            student_id=student_id,
-            module_id=module_id,
-            enrollment_id=enrollment_id,
-            status=initial_status,
-            unlocked_at=now_local() if is_unlocked else None,
-            prerequisites_met=is_unlocked
-        )
-        
-        db.session.add(progress)
-        return progress
+        try:
+            with db.session.begin_nested():
+                progress = ModuleProgress(
+                    student_id=student_id,
+                    module_id=module_id,
+                    enrollment_id=enrollment_id,
+                    status=initial_status,
+                    unlocked_at=now_local() if is_unlocked else None,
+                    prerequisites_met=is_unlocked
+                )
+                db.session.add(progress)
+                db.session.flush()
+            return progress
+        except IntegrityError:
+            # Concurrent request already created this row — return it.
+            return ModuleProgress.query.filter_by(
+                student_id=student_id,
+                module_id=module_id,
+                enrollment_id=enrollment_id
+            ).first()
     
     @staticmethod
     def _can_unlock_next_module(student_id: int, course_id: int, enrollment_id: int) -> bool:
@@ -749,17 +759,39 @@ class ProgressionService:
             ).first()
             
             if not next_progress:
-                # Create the progress record if it doesn't exist
+                # Create the progress record if it doesn't exist.
+                # Race-safe: two concurrent lesson completions can both reach
+                # this branch; the unique (student, module, enrollment)
+                # constraint makes the second INSERT fail. Use a SAVEPOINT so
+                # the outer transaction survives, then re-query and apply the
+                # same locked→unlocked transition.
                 current_app.logger.info(f"Creating new ModuleProgress for module {next_module.id}")
-                next_progress = ModuleProgress(
-                    student_id=student_id,
-                    module_id=next_module.id,
-                    enrollment_id=enrollment_id,
-                    status='unlocked',
-                    unlocked_at=now_local(),
-                    prerequisites_met=True
-                )
-                db.session.add(next_progress)
+                try:
+                    with db.session.begin_nested():
+                        next_progress = ModuleProgress(
+                            student_id=student_id,
+                            module_id=next_module.id,
+                            enrollment_id=enrollment_id,
+                            status='unlocked',
+                            unlocked_at=now_local(),
+                            prerequisites_met=True
+                        )
+                        db.session.add(next_progress)
+                        db.session.flush()
+                except IntegrityError:
+                    # Lost the race — the other request created the row.
+                    next_progress = ModuleProgress.query.filter_by(
+                        student_id=student_id,
+                        module_id=next_module.id,
+                        enrollment_id=enrollment_id
+                    ).first()
+                    if (
+                        next_progress
+                        and next_progress.status in ('locked', 'not_started', None)
+                    ):
+                        next_progress.status = 'unlocked'
+                        next_progress.unlocked_at = now_local()
+                        next_progress.prerequisites_met = True
             elif next_progress.status in ('locked', 'not_started', None):
                 # Unlock if currently locked or not started
                 current_app.logger.info(f"Unlocking existing ModuleProgress for module {next_module.id} (was: {next_progress.status})")

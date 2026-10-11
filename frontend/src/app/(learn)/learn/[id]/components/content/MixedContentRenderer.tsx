@@ -226,13 +226,16 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       const originalSection = meta?.originalSection;
 
       if (originalSection?.type === "video") {
+        const meta = section.metadata as { originalIndex?: number } | undefined;
         return (
           <div className="video-section-wrapper" data-active={isActive}>
             <VideoPlayer
               videoUrl={section.url || section.content || ""}
               lessonTitle={lesson.title}
               isMainVideo={false}
-              mixedContentIndex={index}
+              // Key by the ORIGINAL mixed-content index (not the step index)
+              // so the server can map coverage back to video sections.
+              mixedContentIndex={meta?.originalIndex ?? index}
               onMixedContentVideoProgress={onMixedContentVideoProgress}
               onMixedContentVideoComplete={onMixedContentVideoComplete}
             />

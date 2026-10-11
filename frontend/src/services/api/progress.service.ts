@@ -36,6 +36,11 @@ class ProgressApiService extends BaseApiService {
 
   /**
    * Get detailed module score breakdown with recommendations
+   *
+   * NOTE: BaseApiService's response interceptor already unwraps the
+   * `{ success: true, data: ... }` envelope, so this must return the
+   * response body directly (NOT another `.data` access — that was the
+   * C1 double-unwrap bug that made every call return undefined).
    */
   async getModuleScoreBreakdown(moduleId: number): Promise<{
     cumulative_score: number;
@@ -58,6 +63,13 @@ class ProgressApiService extends BaseApiService {
         available?: boolean;
       };
       assignments: {
+        score: number;
+        weight: number;
+        weighted_score: number;
+        description: string;
+        available?: boolean;
+      };
+      projects: {
         score: number;
         weight: number;
         weighted_score: number;
@@ -88,13 +100,14 @@ class ProgressApiService extends BaseApiService {
     assessment_info?: {
       has_quizzes: boolean;
       has_assignments: boolean;
+      has_projects: boolean;
       has_final_assessment: boolean;
       is_reading_only: boolean;
     };
   }> {
-    const response = await this.get<{ success: boolean; data: any }>(`/student/progress/module/${moduleId}/score-breakdown`);
-    // Extract data from API wrapper { success: true, data: { ... } }
-    return response.data;
+    // The interceptor already unwrapped the success envelope, so the
+    // response body IS the payload described above.
+    return this.get(`/student/progress/module/${moduleId}/score-breakdown`);
   }
 
   /**

@@ -252,6 +252,20 @@ const LearningPage = () => {
   // Mixed content video progress tracking (map of videoIndex -> progress)
   const [mixedContentVideoProgress, setMixedContentVideoProgress] = useState<Record<number, number>>({});
   const [mixedContentVideosCompleted, setMixedContentVideosCompleted] = useState<Set<number>>(new Set());
+
+  // Total number of video sections in a mixed lesson (original array indices).
+  // Used so "video completed" only fires when EVERY video has been watched.
+  const mixedTotalVideoCount = useMemo(() => {
+    if (currentLesson?.content_type !== 'mixed') return 0;
+    try {
+      const parsed = JSON.parse(currentLesson?.content_data || '[]');
+      if (!Array.isArray(parsed)) return 0;
+      return parsed.filter((s: any) => s && s.type === 'video').length;
+    } catch {
+      return 0;
+    }
+  }, [currentLesson?.content_type, currentLesson?.content_data]);
+
   // Section-based progress tracking
   const [viewedSections, setViewedSections] = useState(0);
   const [totalSections, setTotalSections] = useState(0);
@@ -451,6 +465,7 @@ const LearningPage = () => {
     savedVideoCurrentTime,
     savedVideoDuration,
     savedVideoCompleted,
+    savedMixedVideoProgress,
     nextLessonInfo,
     completionThreshold,
     updateReadingProgress,
@@ -473,6 +488,7 @@ const LearningPage = () => {
     videoCurrentTime,  // Pass current playback time
     videoDuration,  // Pass total video duration
     videoCompleted,  // Pass completion status
+    mixedVideoProgress: mixedContentVideoProgress,  // Per-index coverage for mixed lessons
     viewedSections,  // Section-based tracking
     totalSections
   });
@@ -503,11 +519,23 @@ const LearningPage = () => {
 
   useEffect(() => {
     if (!progressLoaded || !currentLesson) return;
-    setVideoProgress(savedVideoProgress);
-    setVideoCurrentTime(savedVideoCurrentTime);
-    setVideoDuration(savedVideoDuration);
-    setVideoCompleted(savedVideoCompleted);
-  }, [currentLesson?.id, progressLoaded, savedVideoProgress, savedVideoCurrentTime, savedVideoDuration, savedVideoCompleted]);
+    // Merge (never regress): live watching that outpaces the loaded snapshot
+    // must not be overwritten by an older persisted value.
+    setVideoProgress(prev => Math.max(prev, savedVideoProgress));
+    setVideoCurrentTime(prev => (savedVideoCurrentTime > 0 ? Math.max(prev, savedVideoCurrentTime) : prev));
+    if (savedVideoDuration > 0) setVideoDuration(prev => Math.max(prev, savedVideoDuration));
+    if (savedVideoCompleted) setVideoCompleted(true);
+    if (savedMixedVideoProgress && Object.keys(savedMixedVideoProgress).length > 0) {
+      setMixedContentVideoProgress(prev => {
+        const merged = { ...prev };
+        Object.entries(savedMixedVideoProgress).forEach(([key, cov]) => {
+          const idx = Number(key);
+          if (Number.isFinite(idx)) merged[idx] = Math.max(merged[idx] || 0, cov);
+        });
+        return merged;
+      });
+    }
+  }, [currentLesson?.id, progressLoaded, savedVideoProgress, savedVideoCurrentTime, savedVideoDuration, savedVideoCompleted, savedMixedVideoProgress]);
 
   // Auto-complete lesson when score threshold is met
   useEffect(() => {
@@ -914,9 +942,13 @@ const LearningPage = () => {
   const handleVideoProgress = useCallback((progress: number, currentTime?: number, duration?: number) => {
     // Only update for main video lessons, not mixed content
     if (currentLesson?.content_type === 'video') {
-      setVideoProgress(progress);
-      if (currentTime !== undefined) setVideoCurrentTime(currentTime);
-      if (duration !== undefined) setVideoDuration(duration);
+      // Coverage is monotonic: a mount-time zero report (or an older async
+      // report) must never regress a newer persisted value.
+      setVideoProgress(prev => Math.max(prev, Number.isFinite(progress) ? progress : 0));
+      // Resume position: only accept real telemetry so a zero report cannot
+      // wipe the saved position used for "continue watching".
+      if (currentTime !== undefined && currentTime > 0) setVideoCurrentTime(currentTime);
+      if (duration !== undefined && duration > 0) setVideoDuration(duration);
     }
   }, [currentLesson?.content_type, currentLesson?.id]);
 
@@ -930,7 +962,7 @@ const LearningPage = () => {
   // Mixed content video progress handlers
   const handleMixedContentVideoProgress = useCallback((videoIndex: number, progress: number) => {
     setMixedContentVideoProgress(prev => {
-      const updated = { ...prev, [videoIndex]: progress };
+      const updated = { ...prev, [videoIndex]: Math.max(prev[videoIndex] || 0, progress) };
       return updated;
     });
     // Propagate max video progress to the shared videoProgress state so the
@@ -940,17 +972,22 @@ const LearningPage = () => {
       // prev is current max; update if current video is higher
       return Math.max(prev, progress);
     });
-    
+
   }, []);
 
   const handleMixedContentVideoComplete = useCallback((videoIndex: number) => {
-    setMixedContentVideosCompleted(prev => new Set([...prev, videoIndex]));
-    // Mark video as completed in the shared state so the progress-tracking hook
-    // can trigger auto-completion for mixed content lessons with videos
-    setVideoCompleted(true);
-    setVideoProgress(100);
-    
-  }, []);
+    setMixedContentVideosCompleted(prev => {
+      const next = new Set([...prev, videoIndex]);
+      // videoCompleted only flips when EVERY video section has been watched.
+      // The backend independently derives this from mixed_video_progress.
+      if (mixedTotalVideoCount === 0 || next.size >= mixedTotalVideoCount) {
+        setVideoCompleted(true);
+      }
+      return next;
+    });
+    // NOTE: the shared videoProgress stays the MAX of per-video coverage —
+    // completing one video must not fabricate 100% credit for the lesson.
+  }, [mixedTotalVideoCount]);
 
   // Helper function to check if lesson can be manually completed
   const canManuallyComplete = useCallback(() => {
@@ -1365,7 +1402,10 @@ const LearningPage = () => {
   }, []);
 
   // Load quiz attempt scores from database for sidebar display
-  // This ensures lesson assessment scores are real data from the DB, not just defaults
+  // This ensures lesson assessment scores are real data from the DB, not just defaults.
+  // The lesson-quiz endpoint already enriches each quiz with the student's
+  // best_score / attempts_used / blocked_due_to_violation, so no extra
+  // /assessments/* round-trip is needed (those endpoints do not exist).
   useEffect(() => {
     const loadQuizAttempts = async () => {
       if (!courseData?.course?.modules) return;
@@ -1378,35 +1418,22 @@ const LearningPage = () => {
         await Promise.all(
           allLessons.map(async (lesson: any) => {
             try {
-              // Get lesson quiz (if exists)
+              // Get lesson quiz (if exists) — already includes best_score/attempts_used
               const quizData = await ContentAssignmentService.getLessonQuiz(lesson.id).catch(() => ({ quiz: null }));
               
               if (quizData.quiz) {
                 const quiz = quizData.quiz;
-                // Get attempts for this quiz to get the best score
-                try {
-                  const attempts = await AssessmentApiService.getQuizAttempts(quiz.id).catch(() => ({ attempts: [] }));
-                  
-                  if (attempts.attempts && attempts.attempts.length > 0) {
-                    // Sort by score descending to get best score
-                    const bestAttempt = attempts.attempts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0))[0];
-                    const passingScore = quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
-                    
-                    quizStatusMap[quiz.id] = {
-                      completed: true,
-                      score: bestAttempt.score || 0,
-                      passed: (bestAttempt.score || 0) >= passingScore
-                    };
-                    
-                    console.log(`📊 Loaded quiz ${quiz.id} from DB:`, {
-                      bestScore: bestAttempt.score,
-                      isPassed: (bestAttempt.score || 0) >= passingScore,
-                      attemptCount: attempts.attempts.length
-                    });
-                  }
-                } catch (error) {
-                  console.warn(`Failed to fetch attempts for quiz ${quiz.id}:`, error);
-                  // Set empty score if no attempts found
+                const passingScore = quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
+                const bestScore = quiz.best_score ?? null;
+
+                if (bestScore !== null) {
+                  quizStatusMap[quiz.id] = {
+                    completed: true,
+                    score: bestScore,
+                    passed: bestScore >= passingScore
+                  };
+                } else {
+                  // No attempts yet — record an explicit not-completed state
                   quizStatusMap[quiz.id] = {
                     completed: false,
                     score: 0,
@@ -2515,6 +2542,32 @@ const LearningPage = () => {
     
     // Scroll after navigation (handleLessonSelect already handles this)
   };
+
+  // Keyboard navigation: Alt+ArrowLeft / ArrowRight move between lessons.
+  // Skipped while typing (inputs, textareas, contenteditable) so quiz answers
+  // and notes are never stolen. Wrapped in a ref so the listener is not
+  // re-registered on every render.
+  const navigateToLessonRef = useRef(navigateToLesson);
+  navigateToLessonRef.current = navigateToLesson;
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void navigateToLessonRef.current(event.key === 'ArrowLeft' ? 'prev' : 'next');
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // State for unlock button loading
   const [isUnlockingModule, setIsUnlockingModule] = useState(false);

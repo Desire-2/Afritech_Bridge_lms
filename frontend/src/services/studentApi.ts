@@ -698,7 +698,25 @@ export class StudentApiService {
   }
 
   // Generate certificate for completed course
-  static async generateCertificate(courseId: number): Promise<{ success: boolean; certificate?: any }> {
+  static async generateCertificate(courseId: number): Promise<{
+    success: boolean;
+    message?: string;
+    certificate?: any;
+    data?: any;
+    error_code?: string;
+    summary?: string;
+    next_steps?: string[];
+    failure_reasons?: any;
+    requirements?: {
+      lessons_completed?: string;
+      overall_score?: string;
+      all_modules_completed?: boolean;
+      modules_completed?: string;
+      module_scores?: string[];
+      eligible?: boolean;
+      [key: string]: unknown;
+    };
+  }> {
     const response = await api.post('/student/certificates/generate', { course_id: courseId });
     return response.data;
   }
