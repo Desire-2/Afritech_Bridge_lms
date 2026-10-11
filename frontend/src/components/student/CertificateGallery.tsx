@@ -30,12 +30,9 @@ import {
   Database,
   Globe,
   Shield,
-  FileText,
   Target,
   Lock,
-  Loader2,
-  RefreshCw,
-  AlertCircle
+  Loader2
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -43,8 +40,9 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { StudentApiService, Certificate, SkillBadge, TranscriptData } from '@/services/studentApi';
+import { StudentApiService, Certificate, SkillBadge } from '@/services/studentApi';
 import { CertificateGenerationService } from '@/services/certificate-generation.service';
+import TranscriptPanel from '@/components/student/TranscriptPanel';
 import Link from 'next/link';
 import Image from 'next/image';
 
@@ -1203,9 +1201,6 @@ const CertificateGallery: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState('certificates');
   const [newCertificateAlert, setNewCertificateAlert] = useState(false);
   const [downloadingCertId, setDownloadingCertId] = useState<number | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptData | null>(null);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -1270,46 +1265,6 @@ const CertificateGallery: React.FC = () => {
   const handleShareCertificate = (certificate: Certificate) => {
     setSelectedCertificate(certificate);
     setShowShareDialog(true);
-  };
-
-  const loadTranscript = async () => {
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    try {
-      const data = await StudentApiService.getTranscript();
-      setTranscript(data);
-    } catch (error: any) {
-      console.error('Failed to load transcript:', error);
-      setTranscriptError(
-        error?.response?.data?.error || error?.message || 'Failed to load transcript'
-      );
-    } finally {
-      setTranscriptLoading(false);
-    }
-  };
-
-  const handleTabChange = (value: string) => {
-    setSelectedTab(value);
-    if (value === 'transcript' && !transcript && !transcriptLoading) {
-      loadTranscript();
-    }
-  };
-
-  const handleDownloadTranscript = () => {
-    if (!transcript) return;
-    const blob = new Blob([JSON.stringify(transcript, null, 2)], {
-      type: 'application/json',
-    });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `transcript_${(transcript.student_info?.name || 'student')
-      .replace(/[^a-zA-Z0-9\s]/g, '')
-      .replace(/\s+/g, '_')}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
   };
 
   const earnedBadges = (badges || []).filter(badge => badge.earned_date);
@@ -1407,7 +1362,7 @@ const CertificateGallery: React.FC = () => {
 
       {/* Main Content */}
       <motion.div variants={itemVariants}>
-        <Tabs value={selectedTab} onValueChange={handleTabChange}>
+        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="certificates">Certificates</TabsTrigger>
             <TabsTrigger value="badges">Skill Badges</TabsTrigger>
@@ -1501,205 +1456,7 @@ const CertificateGallery: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="transcript" className="mt-8">
-            {transcriptLoading ? (
-              <Card>
-                <CardContent className="py-16 text-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
-                  <p className="text-muted-foreground">Generating your transcript…</p>
-                </CardContent>
-              </Card>
-            ) : transcriptError ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Transcript unavailable</h3>
-                  <p className="text-muted-foreground mb-4">{transcriptError}</p>
-                  <Button onClick={loadTranscript} variant="outline">
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Try Again
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : transcript ? (
-              <div className="space-y-6">
-                {/* Header */}
-                <Card>
-                  <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                    <div>
-                      <CardTitle className="flex items-center">
-                        <FileText className="h-5 w-5 mr-2" />
-                        Academic Transcript
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {transcript.student_info?.name}
-                        {transcript.student_info?.email ? ` · ${transcript.student_info.email}` : ''}
-                        {transcript.generated_at
-                          ? ` · Generated ${new Date(transcript.generated_at).toLocaleString()}`
-                          : ''}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={loadTranscript}>
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Refresh
-                      </Button>
-                      <Button size="sm" onClick={handleDownloadTranscript}>
-                        <Download className="h-4 w-4 mr-2" />
-                        Download JSON
-                      </Button>
-                    </div>
-                  </CardHeader>
-                </Card>
-
-                {/* Summary stats */}
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                  {[
-                    { label: 'Courses Enrolled', value: transcript.summary?.total_courses_enrolled ?? 0 },
-                    { label: 'Courses Completed', value: transcript.summary?.total_courses_completed ?? 0 },
-                    { label: 'Certificates', value: transcript.summary?.total_certificates ?? 0 },
-                    { label: 'Badges', value: transcript.summary?.total_badges ?? 0 },
-                    { label: 'Average Score', value: `${Number(transcript.summary?.overall_gpa ?? 0).toFixed(2)} / 4.0` },
-                    {
-                      label: 'Learning Hours',
-                      value: Math.round((transcript.summary?.total_learning_hours ?? 0) / 60),
-                    },
-                  ].map(stat => (
-                    <Card key={stat.label}>
-                      <CardContent className="p-4 text-center">
-                        <p className="text-2xl font-bold">{stat.value}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                {/* Course history */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center text-lg">
-                      <BookOpen className="h-5 w-5 mr-2" />
-                      Course History ({transcript.course_history?.length ?? 0})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {(transcript.course_history?.length ?? 0) === 0 ? (
-                      <p className="text-muted-foreground text-center py-4">
-                        No enrollments yet. Complete a course to build your transcript.
-                      </p>
-                    ) : (
-                      transcript.course_history.map((entry, index) => (
-                        <div
-                          key={(entry.course?.id as number) ?? index}
-                          className="rounded-lg border p-4 space-y-2"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h4 className="font-semibold">
-                                {(entry.course?.title as string) || 'Untitled course'}
-                              </h4>
-                              <p className="text-sm text-muted-foreground">
-                                Enrolled:{' '}
-                                {(entry.enrollment?.enrolled_at as string)
-                                  ? new Date(entry.enrollment.enrolled_at as string).toLocaleDateString()
-                                  : '—'}
-                                {entry.enrollment?.status
-                                  ? ` · Status: ${String(entry.enrollment.status)}`
-                                  : ''}
-                              </p>
-                            </div>
-                            <Badge variant={entry.enrollment?.status === 'completed' ? 'default' : 'secondary'}>
-                              {entry.enrollment?.status === 'completed' ? 'Completed' : 'In Progress'}
-                            </Badge>
-                          </div>
-                          {(entry.modules?.length ?? 0) > 0 && (
-                            <div className="text-sm text-muted-foreground">
-                              Modules completed: {entry.modules.filter((m: any) => m.is_completed).length} /{' '}
-                              {entry.modules.length}
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Certificates earned */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center text-lg">
-                      <Award className="h-5 w-5 mr-2" />
-                      Certificates ({transcript.certificates?.length ?? 0})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {(transcript.certificates?.length ?? 0) === 0 ? (
-                      <p className="text-muted-foreground text-center py-4">
-                        No certificates yet.
-                      </p>
-                    ) : (
-                      transcript.certificates.map((cert, index) => (
-                        <div
-                          key={cert.id ?? cert.certificate_number ?? index}
-                          className="flex items-center justify-between rounded-lg border p-3"
-                        >
-                          <div>
-                            <p className="font-medium">
-                              {safeCourseTitle(cert)}
-                            </p>
-                            <p className="text-xs text-muted-foreground font-mono">
-                              {cert.certificate_number}
-                            </p>
-                          </div>
-                          <div className="text-right text-sm">
-                            {cert.overall_score != null && (
-                              <p className="font-semibold">{Number(cert.overall_score).toFixed(1)}%</p>
-                            )}
-                            {cert.issued_at && (
-                              <p className="text-xs text-muted-foreground">
-                                {new Date(cert.issued_at).toLocaleDateString()}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Skills acquired */}
-                {(transcript.summary?.skills_acquired?.length ?? 0) > 0 && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center text-lg">
-                        <Star className="h-5 w-5 mr-2" />
-                        Skills Acquired
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
-                      {transcript.summary!.skills_acquired!.map((skill, index) => (
-                        <Badge key={index} variant="secondary">
-                          {skill}
-                        </Badge>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            ) : (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-lg font-medium mb-2">Transcript Generation</h3>
-                  <p className="text-muted-foreground mb-4">
-                    Generate a comprehensive transcript of all your completed courses and achievements
-                  </p>
-                  <Button onClick={loadTranscript}>
-                    <FileText className="h-4 w-4 mr-2" />
-                    Generate Transcript
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
+            <TranscriptPanel />
           </TabsContent>
         </Tabs>
       </motion.div>
