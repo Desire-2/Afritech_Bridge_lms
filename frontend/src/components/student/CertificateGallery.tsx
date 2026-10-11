@@ -33,7 +33,9 @@ import {
   FileText,
   Target,
   Lock,
-  Loader2
+  Loader2,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,107 +43,58 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { StudentApiService, Certificate, SkillBadge } from '@/services/studentApi';
+import { StudentApiService, Certificate, SkillBadge, TranscriptData } from '@/services/studentApi';
+import { CertificateGenerationService } from '@/services/certificate-generation.service';
 import Link from 'next/link';
 import Image from 'next/image';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 
-// Suppress jsPDF filesystem warnings globally (benign browser compatibility messages)
-if (typeof window !== 'undefined') {
-  const originalConsoleError = console.error;
-  console.error = (...args: any[]) => {
-    // Filter out jsPDF filesystem warnings
-    if (typeof args[0] === 'string' && (
-      args[0].includes('filesystem') || 
-      args[0].includes('illegal path')
-    )) {
-      return; // Suppress these specific warnings
-    }
-    originalConsoleError.apply(console, args);
-  };
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
-// QR Code Component using canvas-based pattern generation
-const QRCodeComponent: React.FC<{ value: string; size: number }> = ({ value, size }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+/** Safe course title for filenames/cards — orphaned courses must not crash. */
+const safeCourseTitle = (certificate: Partial<Certificate> | null | undefined): string =>
+  CertificateGenerationService.displayCourseTitle(certificate);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+/**
+ * Genuine QR code rendered by the backend qrcode library (same encoder as
+ * the downloadable PDF). Falls back to a visible Verify link if the image
+ * cannot load.
+ */
+const QRCodeImage: React.FC<{ certificateNumber: string; size: number }> = ({
+  certificateNumber,
+  size,
+}) => {
+  const [failed, setFailed] = useState(false);
+  const verificationUrl = CertificateGenerationService.verificationUrl(certificateNumber);
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const qrSize = 25;
-    const moduleSize = Math.floor(size / qrSize);
-    const margin = 1;
-    
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#0f172a';
-    
-    const textHash = value.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    
-    for (let row = margin; row < qrSize - margin; row++) {
-      for (let col = margin; col < qrSize - margin; col++) {
-        let shouldFill = false;
-        
-        const isTopLeft = row < 7 + margin && col < 7 + margin;
-        const isTopRight = row < 7 + margin && col >= qrSize - 7 - margin;
-        const isBottomLeft = row >= qrSize - 7 - margin && col < 7 + margin;
-        
-        if (isTopLeft || isTopRight || isBottomLeft) {
-          const localRow = isTopLeft ? row - margin : (isTopRight ? row - margin : row - (qrSize - 7 - margin));
-          const localCol = isTopLeft ? col - margin : (isTopRight ? col - (qrSize - 7 - margin) : col - margin);
-          
-          shouldFill = 
-            (localRow === 0 || localRow === 6 || localCol === 0 || localCol === 6) ||
-            (localRow >= 2 && localRow <= 4 && localCol >= 2 && localCol <= 4);
-        } else {
-          if (row === 6 || col === 6) {
-            shouldFill = (row + col) % 2 === 0;
-          } else {
-            const seed = textHash + row * 31 + col * 17;
-            shouldFill = (seed % 3 !== 0) && ((seed % 7) > 2);
-          }
-        }
-        
-        if (shouldFill) {
-          ctx.fillRect(
-            col * moduleSize,
-            row * moduleSize,
-            moduleSize - 0.5,
-            moduleSize - 0.5
-          );
-        }
-      }
-    }
-    
-    const centerRow = Math.floor(qrSize / 2);
-    const centerCol = Math.floor(qrSize / 2);
-    for (let r = -2; r <= 2; r++) {
-      for (let c = -2; c <= 2; c++) {
-        if (Math.abs(r) === 2 || Math.abs(c) === 2 || (r === 0 && c === 0)) {
-          ctx.fillRect(
-            (centerCol + c) * moduleSize,
-            (centerRow + r) * moduleSize,
-            moduleSize - 0.5,
-            moduleSize - 0.5
-          );
-        }
-      }
-    }
-  }, [value, size]);
+  if (failed) {
+    return (
+      <a
+        href={verificationUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center bg-white rounded border border-[#14b8a6] text-[#0f172a] text-[7px] font-bold p-1 text-center leading-tight"
+        style={{ width: size, height: size }}
+      >
+        Verify
+        <br />
+        Online
+      </a>
+    );
+  }
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={size}
-      height={size}
-      className="absolute inset-[0.2mm] w-[calc(100%-0.4mm)] h-[calc(100%-0.4mm)] rounded"
-      style={{ margin: '0.2mm' }}
-    />
+    <a href={verificationUrl} target="_blank" rel="noopener noreferrer">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`${API_BASE_URL}/student/certificate/verify-qr/${encodeURIComponent(certificateNumber)}`}
+        alt={`Verify certificate ${certificateNumber}`}
+        width={size}
+        height={size}
+        onError={() => setFailed(true)}
+        className="rounded"
+        style={{ width: size, height: size }}
+      />
+    </a>
   );
 };
 
@@ -502,7 +455,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.png`;
+      link.download = `${safeCourseTitle(certificate).replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -528,7 +481,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
+      link.download = `${safeCourseTitle(certificate).replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -986,14 +939,23 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     <div className="absolute bottom-0 left-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
                     <div className="absolute bottom-0 right-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
                     
-                    {/* Real QR Code */}
-                    <QRCodeComponent 
-                      value={`https://study.afritechbridge.online/verify/${certificate.certificate_number}`}
-                      size={80}
-                    />
+                    {/* Real QR Code (backend-generated, scannable) */}
+                    <div className="absolute inset-[3mm]">
+                      <QRCodeImage
+                        certificateNumber={certificate.certificate_number}
+                        size={80}
+                      />
+                    </div>
                   </div>
                   <p className="text-[#14b8a6] text-[7.5px] font-bold mt-1.5 uppercase tracking-wider">SCAN TO VERIFY</p>
-                  <p className="text-[#94a3b8] text-[6.5px]">study.afritechbridge.online/verify</p>
+                  <a
+                    href={CertificateGenerationService.verificationUrl(certificate.certificate_number)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#94a3b8] text-[6.5px] hover:text-[#14b8a6] underline"
+                  >
+                    Verify Certificate
+                  </a>
                 </div>
               </div>
               
@@ -1103,11 +1065,20 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
           <div className="bg-gradient-to-r from-cyan-500/10 to-orange-500/10 p-4 rounded-lg text-center border border-cyan-400/30 backdrop-blur-sm">
             <div className="flex items-center justify-center gap-2 mb-2">
               <Shield className="w-5 h-5 text-green-400" />
-              <span className="text-green-400 text-sm font-medium">Blockchain Verified Certificate</span>
+              <span className="text-green-400 text-sm font-medium">Verified Certificate</span>
             </div>
             <p className="text-sm text-cyan-200/70">
-              Verification Hash: <span className="font-mono text-white">{certificate.verification_hash || certificate.certificate_number}</span>
+              Certificate Number: <span className="font-mono text-white">{certificate.certificate_number}</span>
             </p>
+            <a
+              href={verificationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-100 underline mt-1"
+            >
+              <ExternalLink className="w-3 h-3" />
+              Verify Certificate Online
+            </a>
           </div>
         </div>
       </DialogContent>
@@ -1232,73 +1203,28 @@ const CertificateGallery: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState('certificates');
   const [newCertificateAlert, setNewCertificateAlert] = useState(false);
   const [downloadingCertId, setDownloadingCertId] = useState<number | null>(null);
-  const [availableCourses, setAvailableCourses] = useState<any[]>([]);
-  const [generatingCertId, setGeneratingCertId] = useState<number | null>(null);
-  const [eligibilityCache, setEligibilityCache] = useState<Record<number, any>>({});
+  const [transcript, setTranscript] = useState<TranscriptData | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
-      console.log('📥 Fetching certificates, badges, and learning data...');
-      const [certsData, badgesData, learningData] = await Promise.all([
+      const [certsData, badgesData] = await Promise.all([
         StudentApiService.getCertificates(),
         StudentApiService.getBadges(),
-        StudentApiService.getLearningData()
       ]);
-      
-      console.log('📦 Certificates Data:', certsData);
-      console.log('📦 Badges Data:', badgesData);
-      console.log('� Learning Data:', learningData);
-      
-      const activeCoursesRaw = Array.isArray(learningData?.active_courses)
-        ? learningData.active_courses
-        : [];
-      const completedCoursesRaw = Array.isArray(learningData?.completed_courses)
-        ? learningData.completed_courses
-        : [];
-      const allCoursesRaw = [...activeCoursesRaw, ...completedCoursesRaw];
-      
-      const candidateCourses = allCoursesRaw
-        .map((item: any) => {
-          const course = item?.course ?? item;
-          const progress = item?.progress?.completion_percentage ?? 0;
-          const enrollment = item?.enrollment ?? {};
-          return {
-            course,
-            progress,
-            enrollment
-          };
-        })
-        .filter((item: any) => item.course?.id);
-      console.log('✅ Parsed Learning Courses:', candidateCourses);
-      
-      // Check for new certificates
+
       const newCerts = Array.isArray(certsData) ? certsData : [];
-      console.log(`✅ Setting ${newCerts.length} certificates to state`);
-      
+
       if (newCerts.length > certificates.length && certificates.length > 0) {
         setNewCertificateAlert(true);
         setTimeout(() => setNewCertificateAlert(false), 5000);
       }
-      
+
       setCertificates(newCerts);
       setBadges(Array.isArray(badgesData) ? badgesData : []);
-      
-      // Filter eligible courses without certificates yet
-      const coursesWithoutCerts = candidateCourses
-        .filter((item: any) => {
-          const hasCertificate = newCerts.some(cert => cert.course_id === item.course.id);
-          return !hasCertificate;
-        })
-        .map((item: any) => ({
-          ...item.course,
-          completion_percentage: item.progress,
-          enrollment_status: item.enrollment?.status
-        }));
-      console.log('📋 Courses Available for Certificate Generation:', coursesWithoutCerts);
-      setAvailableCourses(coursesWithoutCerts);
     } catch (error) {
-      console.error('❌ Failed to fetch certificate data:', error);
-      setAvailableCourses([]);
+      console.error('Failed to fetch certificate data:', error);
     } finally {
       setLoading(false);
     }
@@ -1306,12 +1232,9 @@ const CertificateGallery: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    
-    // Poll for new certificates every 30 seconds
-    const interval = setInterval(fetchData, 30000);
-    
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    // Fetch on mount only — refresh happens after generation from the
+    // learning player or a manual page reload. No polling interval.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQuickDownload = async (certificate: Certificate) => {
     try {
@@ -1324,7 +1247,7 @@ const CertificateGallery: React.FC = () => {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
+      link.download = `${safeCourseTitle(certificate).replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -1349,52 +1272,44 @@ const CertificateGallery: React.FC = () => {
     setShowShareDialog(true);
   };
 
-  const handleCheckEligibility = async (courseId: number) => {
+  const loadTranscript = async () => {
+    setTranscriptLoading(true);
+    setTranscriptError(null);
     try {
-      if (eligibilityCache[courseId]) {
-        return eligibilityCache[courseId];
-      }
-      const eligibility = await StudentApiService.checkCertificateEligibility(courseId);
-      setEligibilityCache(prev => ({ ...prev, [courseId]: eligibility }));
-      return eligibility;
-    } catch (error) {
-      console.error('❌ Error checking eligibility:', error);
-      return { eligible: false, message: 'Failed to check eligibility' };
+      const data = await StudentApiService.getTranscript();
+      setTranscript(data);
+    } catch (error: any) {
+      console.error('Failed to load transcript:', error);
+      setTranscriptError(
+        error?.response?.data?.error || error?.message || 'Failed to load transcript'
+      );
+    } finally {
+      setTranscriptLoading(false);
     }
   };
 
-  const handleGenerateCertificate = async (courseId: number) => {
-    try {
-      setGeneratingCertId(courseId);
-      
-      // Check eligibility first
-      const eligibility = await handleCheckEligibility(courseId);
-      
-      if (!eligibility.eligible) {
-        alert(`Certificate not available: ${eligibility.message || 'Requirements not met'}`);
-        setGeneratingCertId(null);
-        return;
-      }
-      
-      // Generate certificate
-      console.log('🎓 Generating certificate for course:', courseId);
-      const result = await StudentApiService.generateCertificate(courseId);
-      
-      if (result.success) {
-        console.log('✅ Certificate generated successfully');
-        setNewCertificateAlert(true);
-        setTimeout(() => setNewCertificateAlert(false), 5000);
-        // Refresh certificates data
-        await fetchData();
-      } else {
-        alert('Failed to generate certificate. Please try again.');
-      }
-    } catch (error: any) {
-      console.error('❌ Error generating certificate:', error);
-      alert(error.response?.data?.message || 'Error generating certificate. Please try again.');
-    } finally {
-      setGeneratingCertId(null);
+  const handleTabChange = (value: string) => {
+    setSelectedTab(value);
+    if (value === 'transcript' && !transcript && !transcriptLoading) {
+      loadTranscript();
     }
+  };
+
+  const handleDownloadTranscript = () => {
+    if (!transcript) return;
+    const blob = new Blob([JSON.stringify(transcript, null, 2)], {
+      type: 'application/json',
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `transcript_${(transcript.student_info?.name || 'student')
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .replace(/\s+/g, '_')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   };
 
   const earnedBadges = (badges || []).filter(badge => badge.earned_date);
@@ -1492,7 +1407,7 @@ const CertificateGallery: React.FC = () => {
 
       {/* Main Content */}
       <motion.div variants={itemVariants}>
-        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
+        <Tabs value={selectedTab} onValueChange={handleTabChange}>
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="certificates">Certificates</TabsTrigger>
             <TabsTrigger value="badges">Skill Badges</TabsTrigger>
@@ -1523,82 +1438,16 @@ const CertificateGallery: React.FC = () => {
                   <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-medium mb-2">No certificates yet</h3>
                   <p className="text-muted-foreground mb-4">
-                    {availableCourses && availableCourses.length > 0 
-                      ? 'You have completed courses that are eligible for certificates!' 
-                      : 'Complete courses to earn your first certificate'
-                    }
+                    Complete a course to earn your first certificate. Certificates are
+                    issued automatically when you finish, or from the course player.
                   </p>
+                  <Button asChild variant="outline">
+                    <Link href="/student/learning">
+                      <BookOpen className="h-4 w-4 mr-2" />
+                      Browse My Courses
+                    </Link>
+                  </Button>
                 </div>
-
-                {/* Available Courses for Certificate Generation */}
-                {availableCourses && availableCourses.length > 0 ? (
-                  <div>
-                    <h3 className="text-2xl font-bold mb-6 flex items-center">
-                      <GraduationCap className="h-6 w-6 mr-2 text-blue-500" />
-                      Generate Certificates ({availableCourses.length})
-                    </h3>
-                    <motion.div
-                      variants={containerVariants}
-                      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-                    >
-                      {availableCourses.map((course) => (
-                        <motion.div key={course.id} variants={itemVariants}>
-                          <Card className="hover:shadow-lg transition-all duration-300 h-full flex flex-col border-l-4 border-blue-500">
-                            <CardContent className="p-6 flex-1 flex flex-col">
-                              <div className="mb-4">
-                                <h4 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
-                                  {course.title}
-                                </h4>
-                                <p className="text-sm text-muted-foreground line-clamp-2">
-                                  {course.description}
-                                </p>
-                              </div>
-
-                              <div className="mt-auto space-y-3">
-                                <Badge className="bg-green-100 text-green-800 border-green-200 w-fit">
-                                  <Check className="h-3 w-3 mr-1" />
-                                  {course.completion_percentage >= 100 ? 'Course Completed' : 'In Progress'}
-                                </Badge>
-
-                                <p className="text-sm text-muted-foreground">
-                                  {course.completion_percentage >= 100
-                                    ? 'Ready to generate your certificate'
-                                    : `Progress: ${Math.round(course.completion_percentage || 0)}%`
-                                  }
-                                </p>
-
-                                <Button
-                                  onClick={() => handleGenerateCertificate(course.id)}
-                                  disabled={generatingCertId === course.id}
-                                  className="w-full bg-blue-600 hover:bg-blue-700"
-                                >
-                                  {generatingCertId === course.id ? (
-                                    <>
-                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                      Checking...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Trophy className="h-4 w-4 mr-2" />
-                                      Check Eligibility
-                                    </>
-                                  )}
-                                </Button>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </motion.div>
-                      ))}
-                    </motion.div>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <BookOpen className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-                    <p className="text-muted-foreground">
-                      Enroll in courses and complete them to generate certificates.
-                    </p>
-                  </div>
-                )}
               </div>
             )}
           </TabsContent>
@@ -1652,24 +1501,205 @@ const CertificateGallery: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="transcript" className="mt-8">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <BookOpen className="h-5 w-5 mr-2" />
-                  Academic Transcript
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-12">
+            {transcriptLoading ? (
+              <Card>
+                <CardContent className="py-16 text-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
+                  <p className="text-muted-foreground">Generating your transcript…</p>
+                </CardContent>
+              </Card>
+            ) : transcriptError ? (
+              <Card>
+                <CardContent className="py-12 text-center">
+                  <AlertCircle className="h-10 w-10 text-destructive mx-auto mb-4" />
+                  <h3 className="text-lg font-medium mb-2">Transcript unavailable</h3>
+                  <p className="text-muted-foreground mb-4">{transcriptError}</p>
+                  <Button onClick={loadTranscript} variant="outline">
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Try Again
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : transcript ? (
+              <div className="space-y-6">
+                {/* Header */}
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                    <div>
+                      <CardTitle className="flex items-center">
+                        <FileText className="h-5 w-5 mr-2" />
+                        Academic Transcript
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {transcript.student_info?.name}
+                        {transcript.student_info?.email ? ` · ${transcript.student_info.email}` : ''}
+                        {transcript.generated_at
+                          ? ` · Generated ${new Date(transcript.generated_at).toLocaleString()}`
+                          : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={loadTranscript}>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Refresh
+                      </Button>
+                      <Button size="sm" onClick={handleDownloadTranscript}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Download JSON
+                      </Button>
+                    </div>
+                  </CardHeader>
+                </Card>
+
+                {/* Summary stats */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                  {[
+                    { label: 'Courses Enrolled', value: transcript.summary?.total_courses_enrolled ?? 0 },
+                    { label: 'Courses Completed', value: transcript.summary?.total_courses_completed ?? 0 },
+                    { label: 'Certificates', value: transcript.summary?.total_certificates ?? 0 },
+                    { label: 'Badges', value: transcript.summary?.total_badges ?? 0 },
+                    { label: 'Average Score', value: `${Number(transcript.summary?.overall_gpa ?? 0).toFixed(2)} / 4.0` },
+                    {
+                      label: 'Learning Hours',
+                      value: Math.round((transcript.summary?.total_learning_hours ?? 0) / 60),
+                    },
+                  ].map(stat => (
+                    <Card key={stat.label}>
+                      <CardContent className="p-4 text-center">
+                        <p className="text-2xl font-bold">{stat.value}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                {/* Course history */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center text-lg">
+                      <BookOpen className="h-5 w-5 mr-2" />
+                      Course History ({transcript.course_history?.length ?? 0})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {(transcript.course_history?.length ?? 0) === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">
+                        No enrollments yet. Complete a course to build your transcript.
+                      </p>
+                    ) : (
+                      transcript.course_history.map((entry, index) => (
+                        <div
+                          key={(entry.course?.id as number) ?? index}
+                          className="rounded-lg border p-4 space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="font-semibold">
+                                {(entry.course?.title as string) || 'Untitled course'}
+                              </h4>
+                              <p className="text-sm text-muted-foreground">
+                                Enrolled:{' '}
+                                {(entry.enrollment?.enrolled_at as string)
+                                  ? new Date(entry.enrollment.enrolled_at as string).toLocaleDateString()
+                                  : '—'}
+                                {entry.enrollment?.status
+                                  ? ` · Status: ${String(entry.enrollment.status)}`
+                                  : ''}
+                              </p>
+                            </div>
+                            <Badge variant={entry.enrollment?.status === 'completed' ? 'default' : 'secondary'}>
+                              {entry.enrollment?.status === 'completed' ? 'Completed' : 'In Progress'}
+                            </Badge>
+                          </div>
+                          {(entry.modules?.length ?? 0) > 0 && (
+                            <div className="text-sm text-muted-foreground">
+                              Modules completed: {entry.modules.filter((m: any) => m.is_completed).length} /{' '}
+                              {entry.modules.length}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Certificates earned */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center text-lg">
+                      <Award className="h-5 w-5 mr-2" />
+                      Certificates ({transcript.certificates?.length ?? 0})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {(transcript.certificates?.length ?? 0) === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">
+                        No certificates yet.
+                      </p>
+                    ) : (
+                      transcript.certificates.map((cert, index) => (
+                        <div
+                          key={cert.id ?? cert.certificate_number ?? index}
+                          className="flex items-center justify-between rounded-lg border p-3"
+                        >
+                          <div>
+                            <p className="font-medium">
+                              {safeCourseTitle(cert)}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-mono">
+                              {cert.certificate_number}
+                            </p>
+                          </div>
+                          <div className="text-right text-sm">
+                            {cert.overall_score != null && (
+                              <p className="font-semibold">{Number(cert.overall_score).toFixed(1)}%</p>
+                            )}
+                            {cert.issued_at && (
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(cert.issued_at).toLocaleDateString()}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Skills acquired */}
+                {(transcript.summary?.skills_acquired?.length ?? 0) > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center text-lg">
+                        <Star className="h-5 w-5 mr-2" />
+                        Skills Acquired
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-2">
+                      {transcript.summary!.skills_acquired!.map((skill, index) => (
+                        <Badge key={index} variant="secondary">
+                          {skill}
+                        </Badge>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="py-12 text-center">
                   <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-medium mb-2">Transcript Generation</h3>
                   <p className="text-muted-foreground mb-4">
                     Generate a comprehensive transcript of all your completed courses and achievements
                   </p>
-                  <Button>Generate Transcript</Button>
-                </div>
-              </CardContent>
-            </Card>
+                  <Button onClick={loadTranscript}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Generate Transcript
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </motion.div>

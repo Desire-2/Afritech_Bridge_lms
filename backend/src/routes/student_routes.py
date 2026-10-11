@@ -2048,127 +2048,68 @@ def check_earned_badges():
 @student_bp.route("/certificates/generate", methods=["POST"])
 @student_required
 def generate_certificate():
-    """Generate certificate for completed course"""
+    """Generate certificate for completed course.
+
+    Thin compatibility wrapper around the canonical
+    ``CertificateService.generate_certificate`` so every issuance path
+    (student page, learning completion, admin) shares one eligibility rule
+    (all published modules completed + overall score >= 70%) and one
+    transactional create path.
+    """
     current_user_id = int(get_jwt_identity())
-    data = request.get_json()
+    data = request.get_json() or {}
     course_id = data.get('course_id')
-    
+
+    if not course_id:
+        return jsonify({
+            "success": False,
+            "message": "course_id is required",
+            "error_code": "BAD_REQUEST"
+        }), 400
+
     try:
-        # Check if course is completed and eligible for certificate
-        enrollment = Enrollment.query.filter_by(
-            student_id=current_user_id,
-            course_id=course_id
-        ).first()
-        
-        if not enrollment:
-            return jsonify({"message": "Enrollment not found"}), 404
-        
-        course = enrollment.course
-        if not course:
-            return jsonify({"message": "Course not found"}), 404
-        
-        # Check completion criteria against the FULL published course.
-        from ..services.enrollment_progress_service import EnrollmentProgressService
-        counts = EnrollmentProgressService.get_progress_counts(
-            current_user_id, course_id, enrollment
+        from ..services.certificate_service import CertificateService
+
+        success, message, payload = CertificateService.generate_certificate(
+            current_user_id, course_id
         )
-        total_lessons = counts["total_lessons"]
-        completed_lessons = counts["completed_lessons"]
-        published_modules = EnrollmentProgressService.get_published_modules(course)
-        
-        # Eligibility = every published module is COMPLETED (that status is
-        # only set by the progression gate: all lesson requirements met and
-        # cumulative score >= the 70% passing threshold). Requiring an extra
-        # 80% here made certificates unreachable for legitimate graduates.
-        from ..models.student_models import ModuleProgress as _MP
-        completed_module_ids = {
-            row[0]
-            for row in db.session.query(_MP.module_id)
-            .filter(
-                _MP.student_id == current_user_id,
-                _MP.enrollment_id == enrollment.id,
-                _MP.module_id.in_([m.id for m in published_modules]),
-                _MP.status == "completed",
-            )
-            .all()
-        } if published_modules else set()
-        
-        # Get module scores using the authoritative weighted calculation
-        module_scores = []
-        for module in published_modules:
-            module_progress = ModuleProgress.query.filter_by(
-                student_id=current_user_id,
-                module_id=module.id,
-                enrollment_id=enrollment.id
-            ).first()
-            module_scores.append(
-                (module_progress.cumulative_score or 0) if module_progress else 0
-            )
-        
-        overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
-        
-        all_modules_completed = (
-            len(published_modules) > 0
-            and len(completed_module_ids) == len(published_modules)
-        )
-        all_content_done = counts["is_complete"]
-        
-        if not (all_modules_completed and all_content_done):
-            return jsonify({
-                "success": False,
-                "message": "Course completion requirements not met",
-                "requirements": {
-                    "lessons_completed": f"{completed_lessons}/{total_lessons}",
-                    "overall_score": f"{overall_score:.1f}%",
-                    "all_modules_completed": all_modules_completed,
-                    "modules_completed": f"{counts['completed_modules']}/{counts['total_modules']}",
-                    "module_scores": [f"{score:.1f}%" for score in module_scores],
-                    "eligible": False
-                }
-            }), 400
-        
-        # Check if certificate already exists
-        existing_certificate = Certificate.query.filter_by(
-            student_id=current_user_id,
-            course_id=course_id
-        ).first()
-        
-        if existing_certificate:
+
+        if success:
             return jsonify({
                 "success": True,
-                "message": "Certificate already exists",
-                "certificate": existing_certificate.to_dict()
+                "message": message,
+                "created": payload.get("created", False),
+                "certificate": payload
             }), 200
-        
-        # Generate new certificate
-        certificate = Certificate(
-            student_id=current_user_id,
-            course_id=course_id,
-            enrollment_id=enrollment.id,
-            overall_score=overall_score,
-            grade="A" if overall_score >= 90 else "B" if overall_score >= 80 else "C",
-            skills_acquired=json.dumps([course.title, "Problem Solving", "Critical Thinking"]),
-            portfolio_items=json.dumps([])
-        )
-        certificate.generate_certificate_number()
-        
-        db.session.add(certificate)
-        
-        # Update enrollment completion through the authoritative service
-        # (progress is derived, never hard-coded to 1.0)
-        EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
-        
-        db.session.commit()
-        
-        return jsonify({
-            "success": True,
-            "message": "Certificate generated successfully",
-            "certificate": certificate.to_dict()
-        }), 200
-        
+
+        response = {
+            "success": False,
+            "message": message,
+        }
+        if isinstance(payload, dict):
+            if payload.get('error_code'):
+                response["error_code"] = payload['error_code']
+            if 'eligible' in payload:
+                # Canonical flat eligibility payload for error UIs.
+                requirements = dict(payload)
+                requirements.pop('enrollment', None)
+                requirements.pop('reason', None)
+                response["requirements"] = requirements
+                response["summary"] = payload.get('summary')
+                response["next_steps"] = payload.get('next_steps')
+            elif payload.get('error_code') == 'NOT_ENROLLED':
+                return jsonify(response), 404
+
+        return jsonify(response), 400
+
     except Exception as e:
         db.session.rollback()
-        return jsonify({"message": "Error generating certificate", "error": str(e)}), 500
+        logger.error(f"Error generating certificate for course {course_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "message": "Error generating certificate",
+            "error_code": "SERVER_ERROR"
+        }), 500
 
 @student_bp.route("/courses/<int:course_id>/detailed-progress", methods=["GET"])
 @student_required

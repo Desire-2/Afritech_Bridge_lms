@@ -198,22 +198,60 @@ export interface AssessmentAttempt {
 export interface Certificate {
   id: number;
   course_id?: number;
-  course_title: string;
-  student_name: string;
+  course_title: string | null;
+  student_name: string | null;
   issued_date?: string;
   issued_at?: string;
+  expires_at?: string | null;
   certificate_number: string;
   verification_url?: string;
-  verification_hash?: string;
   skills_demonstrated?: string[];
   skills_acquired?: string[];
   overall_score?: number;
-  grade?: string;
   is_active?: boolean;
   completion_status?: string;
   completion_percentage?: number;
   is_locked?: boolean;
   course_completed?: boolean;
+  /** True when this response represents a newly issued certificate. */
+  created?: boolean;
+}
+
+/** Canonical flat eligibility payload returned by the certificate API. */
+export interface CertificateModuleBreakdownEntry {
+  module_id: number;
+  module_name: string;
+  status: string;
+  score: number;
+  attempts: number;
+  is_passing: boolean;
+}
+
+export interface CertificateEligibilityRequirements {
+  eligible: boolean;
+  current_score: number;
+  overall_score: number;
+  required_score: number;
+  passing_score: number;
+  all_modules_completed: boolean;
+  completed_modules: number;
+  total_modules: number;
+  failed_modules: number;
+  module_breakdown: CertificateModuleBreakdownEntry[];
+  missing_requirements: string[];
+  failure_reasons: string[];
+  error_code: string | null;
+  summary: string;
+  next_steps: string[];
+}
+
+export interface CertificateEligibilityResult {
+  eligible: boolean;
+  reason: string;
+  error_code: string | null;
+  summary: string;
+  next_steps: string[];
+  requirements: CertificateEligibilityRequirements;
 }
 
 export interface SkillBadge {
@@ -223,6 +261,40 @@ export interface SkillBadge {
   icon_url: string;
   earned_date?: string;
   verification_code?: string;
+}
+
+export interface TranscriptStudentInfo {
+  id: number;
+  name: string;
+  email: string;
+  join_date: string | null;
+}
+
+export interface TranscriptSummary {
+  total_courses_enrolled: number;
+  total_courses_completed: number;
+  total_certificates: number;
+  total_badges: number;
+  overall_gpa: number;
+  total_learning_hours: number;
+  skills_acquired?: string[];
+  competency_levels?: Record<string, unknown>;
+  last_updated?: string | null;
+}
+
+export interface TranscriptCourseEntry {
+  course: Record<string, unknown> & { id?: number; title?: string };
+  enrollment: Record<string, unknown>;
+  modules: Array<Record<string, unknown> & { module_info?: Record<string, unknown> & { title?: string } }>;
+}
+
+export interface TranscriptData {
+  student_info: TranscriptStudentInfo;
+  summary: TranscriptSummary;
+  course_history: TranscriptCourseEntry[];
+  certificates: Certificate[];
+  badges: Array<Record<string, unknown>>;
+  generated_at: string | null;
 }
 
 export interface ProgressAnalytics {
@@ -615,14 +687,10 @@ export class StudentApiService {
   // Certificate APIs
   static async getCertificates(): Promise<Certificate[]> {
     try {
-      // Updated endpoint to get certificates with completion status
+      // Canonical envelope: { success, data: { certificates, total_count } }
       const response = await api.get('/student/certificate/my-certificates');
-      console.log('📜 Certificates API Response:', response.data);
-      
-      // Handle both response formats (certificates array directly or nested in data)
-      const certificates = response.data.certificates || response.data.data?.certificates || [];
-      console.log(`✅ Found ${certificates.length} certificates`);
-      
+      const certificates =
+        response.data?.data?.certificates || response.data?.certificates || [];
       return certificates;
     } catch (error: any) {
       console.error('❌ Error fetching certificates:', error.response?.data || error.message);
@@ -697,44 +765,22 @@ export class StudentApiService {
     return response.data.newBadges || [];
   }
 
-  // Generate certificate for completed course
+  // Generate certificate for completed course (canonical service on the backend)
   static async generateCertificate(courseId: number): Promise<{
     success: boolean;
     message?: string;
-    certificate?: any;
-    data?: any;
+    created?: boolean;
+    certificate?: Certificate;
     error_code?: string;
     summary?: string;
     next_steps?: string[];
-    failure_reasons?: any;
-    requirements?: {
-      lessons_completed?: string;
-      overall_score?: string;
-      all_modules_completed?: boolean;
-      modules_completed?: string;
-      module_scores?: string[];
-      eligible?: boolean;
-      [key: string]: unknown;
-    };
+    requirements?: CertificateEligibilityRequirements;
   }> {
     const response = await api.post('/student/certificates/generate', { course_id: courseId });
     return response.data;
   }
 
   // Get course progress including quizzes and assignments
-  static async getCourseProgress(courseId: number): Promise<{
-    lessons_completed: number;
-    total_lessons: number;
-    completed_quizzes: number;
-    total_quizzes: number;
-    completed_assignments: number;
-    total_assignments: number;
-    overall_score: number;
-  }> {
-    const response = await api.get(`/student/courses/${courseId}/detailed-progress`);
-    return response.data;
-  }
-
   // Get module progress with scores
   static async getModuleProgress(moduleId: number): Promise<ModuleProgress> {
     const response = await api.get(`/student/progress/module/${moduleId}`);
@@ -763,14 +809,47 @@ export class StudentApiService {
     return response.data.data;
   }
 
-  static async checkCertificateEligibility(courseId: number): Promise<any> {
+  /**
+   * Canonical eligibility check. Unwraps the API envelope at this single
+   * boundary so callers always receive a flat, well-defined result.
+   */
+  static async checkCertificateEligibility(courseId: number): Promise<CertificateEligibilityResult> {
     const response = await api.get(`/student/certificate/eligibility/${courseId}`);
-    return response.data;
+    const payload = response.data?.data ?? response.data ?? {};
+    return {
+      eligible: Boolean(payload.eligible),
+      reason: payload.reason || '',
+      error_code: payload.error_code ?? null,
+      summary: payload.summary || payload.reason || '',
+      next_steps: Array.isArray(payload.next_steps) ? payload.next_steps : [],
+      requirements: (payload.requirements || {
+        eligible: Boolean(payload.eligible),
+        current_score: 0,
+        overall_score: 0,
+        required_score: 70,
+        passing_score: 70,
+        all_modules_completed: false,
+        completed_modules: 0,
+        total_modules: 0,
+        failed_modules: 0,
+        module_breakdown: [],
+        missing_requirements: [],
+        failure_reasons: [],
+        error_code: payload.error_code ?? null,
+        summary: payload.summary || '',
+        next_steps: [],
+      }) as CertificateEligibilityRequirements,
+    };
   }
 
-  static async getTranscript(): Promise<any> {
+  static async getTranscript(): Promise<TranscriptData> {
+    // Envelope: { success, data: TranscriptData }
     const response = await api.get('/student/certificate/transcript');
-    return response.data;
+    const payload = response.data?.data ?? response.data;
+    if (!payload || typeof payload !== 'object' || !payload.student_info) {
+      throw new Error('Transcript data missing from response');
+    }
+    return payload as TranscriptData;
   }
 
   // ── Notes APIs ─────────────────────────────────────────────────────────

@@ -32,6 +32,7 @@ import * as NavUtils from './utils/navigationUtils';
 import {
   LESSON_PASSING_THRESHOLD,
   MODULE_PASSING_THRESHOLD,
+  CERTIFICATE_PASSING_THRESHOLD,
   DEFAULT_QUIZ_PASSING_THRESHOLD,
   ASSIGNMENT_PASSING_THRESHOLD,
   calculateLessonScore,
@@ -1276,7 +1277,9 @@ const LearningPage = () => {
         totalAssignments: 0,
         completedAssignments: 0,
         overallScore: state.overall_score,
-        passingThreshold: LESSON_PASSING_THRESHOLD
+        // Course-level overall score uses the canonical 70% threshold
+        // (CERTIFICATE_PASSING_THRESHOLD) — lesson completion is 80%.
+        passingThreshold: CERTIFICATE_PASSING_THRESHOLD
       };
       setCourseCompletion(completion);
 
@@ -1288,11 +1291,12 @@ const LearningPage = () => {
             setShowCertificateNotification(true);
             setTimeout(() => setShowCertificateNotification(false), 5000);
           } else {
-            // Allow a later retry if generation was rejected
-            certificateIssuedRef.current = false;
+            // Do NOT flip the ref back — that re-fires generation on every
+            // completion-state refresh. Only transient network errors retry
+            // (via a full page reload / new session).
+            console.error('Certificate generation rejected:', certificateResponse.message);
           }
         } catch (error: any) {
-          certificateIssuedRef.current = false;
           // 409/duplicate responses mean the certificate already exists —
           // treat as success without re-issuing
           if (error?.response?.status === 409) {

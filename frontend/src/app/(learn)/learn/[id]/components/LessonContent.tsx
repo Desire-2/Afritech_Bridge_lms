@@ -178,34 +178,40 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
   const handleGenerateCertificate = async () => {
     if (!courseId) return;
-    
+
     setIsGeneratingCertificate(true);
     setCertificateError(null);
-    
+
     try {
       const response = await StudentApiService.generateCertificate(courseId);
       if (response.success) {
         setCertificateGenerated(true);
       } else {
-        // Handle specific error messages
-        const errorMsg = response.message || 'Failed to generate certificate';
-        const requirements = response.requirements;
-        if (requirements) {
-          const details = [];
-          if (requirements.overall_score) details.push(`Score: ${requirements.overall_score}`);
-          if (!requirements.all_modules_passing) details.push('Not all modules have passing scores');
-          setCertificateError(`${errorMsg}${details.length ? ' - ' + details.join(', ') : ''}`);
-        } else {
-          setCertificateError(errorMsg);
+        const req = response.requirements;
+        const details: string[] = [];
+        if (req) {
+          if (typeof req.current_score === 'number') {
+            details.push(`Score: ${req.current_score}% (need ${req.required_score || 70}%)`);
+          }
+          if (req.failure_reasons?.length) {
+            details.push(...req.failure_reasons);
+          } else if (req.all_modules_completed === false) {
+            details.push('Not all modules are complete with passing scores');
+          }
         }
+        const base = response.summary || response.message || 'Failed to generate certificate';
+        setCertificateError(details.length ? `${base} — ${details.join('; ')}` : base);
       }
     } catch (error: any) {
       console.error('Error generating certificate:', error);
-      // Try to extract error message from response
       const errorResponse = error.response?.data;
       if (errorResponse?.requirements) {
         const req = errorResponse.requirements;
-        setCertificateError(`${errorResponse.message || 'Requirements not met'} - Score: ${req.overall_score}`);
+        const scorePart =
+          typeof req.current_score === 'number'
+            ? ` — Score: ${req.current_score}% (need ${req.required_score || 70}%)`
+            : '';
+        setCertificateError(`${errorResponse.message || 'Requirements not met'}${scorePart}`);
       } else {
         setCertificateError(errorResponse?.message || error.message || 'Failed to generate certificate');
       }

@@ -6,7 +6,8 @@ from typing import Dict, List
 class CertificateValidator:
     """Comprehensive certificate requirement validation utility"""
     
-    PASSING_SCORE = 80.0
+    # Canonical certificate threshold (matches CertificateService).
+    PASSING_SCORE = 70.0
     
     @staticmethod
     def validate_certificate_requirements(

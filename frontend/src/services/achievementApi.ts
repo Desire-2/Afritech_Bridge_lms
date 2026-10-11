@@ -4,7 +4,7 @@
 import axios from 'axios';
 
 // Fix API URL to match backend port
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api/v1';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 export interface Achievement {
   id: number;
@@ -205,8 +205,10 @@ class AchievementApiService {
   }
 
   async getAchievementsSummary(): Promise<{ success: boolean; data: any }> {
+    // Canonical backend route (certificate blueprint) — the old
+    // /achievements/summary path 404'd.
     const response = await axios.get(
-      `${API_BASE_URL}/achievements/summary`,
+      `${API_BASE_URL}/student/certificate/achievements-summary`,
       this.getAuthHeaders()
     );
     return response.data;

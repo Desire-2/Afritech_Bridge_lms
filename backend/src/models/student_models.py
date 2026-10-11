@@ -1453,58 +1453,120 @@ class Certificate(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     enrollment_id = db.Column(db.Integer, db.ForeignKey('enrollments.id'), nullable=False)
-    
+
     certificate_number = db.Column(db.String(100), unique=True, nullable=False)
     overall_score = db.Column(db.Float, nullable=False)
     grade = db.Column(db.String(10), nullable=True)  # Deprecated - kept for backward compatibility
-    
+
     skills_acquired = db.Column(db.Text, nullable=True)  # JSON list of skills
     portfolio_items = db.Column(db.Text, nullable=True)  # JSON list of portfolio work
-    
+
     issued_at = db.Column(db.DateTime, default=now_local)
     expires_at = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
-    
+
     # Digital signature/verification
     verification_hash = db.Column(db.String(256), nullable=False)
-    
+
+    # One certificate per student per course — enforced at the database level
+    # so concurrent issuance cannot create duplicates.
+    __table_args__ = (
+        db.UniqueConstraint('student_id', 'course_id', name='uq_certificates_student_course'),
+    )
+
     student = db.relationship('User', backref=db.backref('certificates', lazy='dynamic'))
     course = db.relationship('Course', backref=db.backref('certificates', lazy='dynamic'))
     enrollment = db.relationship('Enrollment', backref=db.backref('certificate', uselist=False))
-    
-    def generate_certificate_number(self):
-        """Generate unique certificate number"""
-        from datetime import datetime
+
+    def recompute_verification_hash(self):
+        """Derive the verification hash from the certificate's identity fields.
+
+        Must be called whenever certificate_number or issued_at changes so the
+        stored hash never refers to a previous issue date.
+        """
         import hashlib
+
+        issued = self.issued_at.isoformat() if self.issued_at else ''
+        hash_string = f"{self.student_id}:{self.course_id}:{self.certificate_number}:{issued}"
+        self.verification_hash = hashlib.sha256(hash_string.encode()).hexdigest()
+        return self.verification_hash
+
+    def generate_certificate_number(self):
+        """Generate unique certificate number and matching verification hash."""
+        from datetime import datetime
         import random
-        
+
+        # issued_at must exist before the hash is derived (column default only
+        # fires at INSERT time).
+        if not self.issued_at:
+            self.issued_at = now_local()
+
         # Format: ABC-YYYY-NNNNNN
         year = datetime.now().year
         random_num = random.randint(100000, 999999)
         self.certificate_number = f"ABC-{year}-{random_num}"
-        
-        # Generate verification hash
-        hash_string = f"{self.student_id}{self.course_id}{self.certificate_number}{self.issued_at}"
-        self.verification_hash = hashlib.sha256(hash_string.encode()).hexdigest()
-    
-    def to_dict(self):
+        self.recompute_verification_hash()
+
+    def _student_display_name(self):
+        if not self.student:
+            return None
+        name = f"{self.student.first_name} {self.student.last_name}".strip()
+        return name or self.student.username
+
+    def to_public_dict(self):
+        """Serializer for unauthenticated certificate verification.
+
+        Exposes only fields needed to establish authenticity — never internal
+        ids or the verification hash.
+        """
+        from ..utils.time_utils import now_local as _now_local
+
+        if not self.is_active:
+            status = 'revoked'
+        elif self.expires_at and self.expires_at < _now_local():
+            status = 'expired'
+        else:
+            status = 'valid'
+
+        return {
+            'certificate_number': self.certificate_number,
+            'status': status,
+            'issued_at': self.issued_at.isoformat() if self.issued_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'student_name': self._student_display_name(),
+            'course_title': self.course.title if self.course else None,
+            'overall_score': self.overall_score,
+            'skills_acquired': json.loads(self.skills_acquired) if self.skills_acquired else [],
+        }
+
+    def to_student_dict(self):
+        """Serializer for the certificate owner (and admin views).
+
+        Keeps resource ids the UI needs but never leaks verification_hash.
+        """
         return {
             'id': self.id,
-            'student_id': self.student_id,
             'course_id': self.course_id,
-            'enrollment_id': self.enrollment_id,
             'certificate_number': self.certificate_number,
             'overall_score': self.overall_score,
-            'grade': self.grade,
             'skills_acquired': json.loads(self.skills_acquired) if self.skills_acquired else [],
             'portfolio_items': json.loads(self.portfolio_items) if self.portfolio_items else [],
-            'issued_at': self.issued_at.isoformat(),
+            'issued_at': self.issued_at.isoformat() if self.issued_at else None,
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
             'is_active': self.is_active,
-            'verification_hash': self.verification_hash,
-            'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,
-            'course_title': self.course.title if self.course else None
+            'student_name': self._student_display_name(),
+            'course_title': self.course.title if self.course else None,
         }
+
+    def to_dict(self):
+        """Full serializer for internal/admin service use."""
+        data = self.to_student_dict()
+        data.update({
+            'student_id': self.student_id,
+            'enrollment_id': self.enrollment_id,
+            'grade': self.grade,
+        })
+        return data
 
 class SkillBadge(db.Model):
     """Skill-based micro-certifications"""

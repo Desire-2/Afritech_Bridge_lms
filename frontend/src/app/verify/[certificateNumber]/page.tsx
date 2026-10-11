@@ -15,8 +15,7 @@ import {
   AlertTriangle,
   GraduationCap,
   Trophy,
-  Star,
-  Medal
+  Star
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -26,17 +25,14 @@ import Image from 'next/image';
 import axios from 'axios';
 
 interface CertificateData {
-  id: number;
   certificate_number: string;
   student_name: string;
-  course_title: string;
-  grade: string;
-  overall_score: number;
+  course_title: string | null;
+  overall_score: number | null;
   skills_acquired: string[];
-  issued_at: string;
-  expires_at?: string;
-  verification_status: string;
-  verified_at: string;
+  issued_at: string | null;
+  expires_at?: string | null;
+  status: 'valid' | 'revoked' | 'expired';
 }
 
 export default function VerifyCertificatePage() {
@@ -58,9 +54,10 @@ export default function VerifyCertificatePage() {
 
       try {
         setLoading(true);
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
         const response = await axios.get(
-          `${apiUrl}/student/certificate/verify/${certificateNumber}`
+          `${apiUrl}/student/certificate/verify/${certificateNumber}`,
+          { timeout: 10000 }
         );
 
         if (response.data.success) {
@@ -86,22 +83,6 @@ export default function VerifyCertificatePage() {
 
     verifyCertificate();
   }, [certificateNumber]);
-
-  const getGradeColor = (grade: string) => {
-    switch (grade?.toUpperCase()) {
-      case 'A+':
-      case 'A':
-        return 'from-yellow-400 to-amber-500';
-      case 'A-':
-      case 'B+':
-        return 'from-blue-400 to-blue-600';
-      case 'B':
-      case 'B-':
-        return 'from-green-400 to-green-600';
-      default:
-        return 'from-gray-400 to-gray-600';
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
@@ -179,19 +160,35 @@ export default function VerifyCertificatePage() {
             className="space-y-8"
           >
             {/* Verification Banner */}
-            <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-6 text-center">
+            <div className={`border rounded-2xl p-6 text-center ${
+              certificate.status === 'valid'
+                ? 'bg-green-500/10 border-green-500/30'
+                : 'bg-yellow-500/10 border-yellow-500/30'
+            }`}>
               <div className="flex items-center justify-center gap-3 mb-3">
-                <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-green-400" />
+                <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                  certificate.status === 'valid' ? 'bg-green-500/20' : 'bg-yellow-500/20'
+                }`}>
+                  {certificate.status === 'valid' ? (
+                    <CheckCircle2 className="w-8 h-8 text-green-400" />
+                  ) : (
+                    <AlertTriangle className="w-8 h-8 text-yellow-400" />
+                  )}
                 </div>
                 <div className="text-left">
-                  <h2 className="text-xl font-bold text-green-400">Certificate Verified</h2>
-                  <p className="text-green-300/70 text-sm">This certificate is authentic and valid</p>
+                  <h2 className={`text-xl font-bold ${
+                    certificate.status === 'valid' ? 'text-green-400' : 'text-yellow-400'
+                  }`}>
+                    {certificate.status === 'valid' && 'Certificate Verified'}
+                    {certificate.status === 'expired' && 'Certificate Expired'}
+                    {certificate.status === 'revoked' && 'Certificate Revoked'}
+                  </h2>
+                  <p className="text-gray-300/70 text-sm">
+                    {certificate.status === 'valid' && 'This certificate is authentic and valid'}
+                    {certificate.status === 'expired' && 'This certificate is authentic but has expired'}
+                    {certificate.status === 'revoked' && 'This certificate has been revoked by the issuer'}
+                  </p>
                 </div>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-sm text-gray-400">
-                <Shield className="w-4 h-4" />
-                <span>Verified at {new Date(certificate.verified_at).toLocaleString()}</span>
               </div>
             </div>
 
@@ -228,30 +225,20 @@ export default function VerifyCertificatePage() {
                     </div>
                     <div>
                       <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Course Completed</p>
-                      <p className="text-xl font-semibold text-white">{certificate.course_title}</p>
+                      <p className="text-xl font-semibold text-white">{certificate.course_title || 'Course'}</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Grade and Score */}
-                <div className="flex flex-wrap items-center justify-center gap-6 py-4">
-                  {certificate.grade && (
-                    <div className="text-center">
-                      <div className={`inline-flex items-center gap-2 bg-gradient-to-r ${getGradeColor(certificate.grade)} px-6 py-2 rounded-full`}>
-                        <Medal className="w-5 h-5 text-white" />
-                        <span className="text-white font-bold text-lg">Grade: {certificate.grade}</span>
-                      </div>
+                {/* Score */}
+                {certificate.overall_score != null && (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="inline-flex items-center gap-2 bg-gray-700 px-6 py-2 rounded-full">
+                      <Trophy className="w-5 h-5 text-yellow-400" />
+                      <span className="text-white font-semibold">Score: {Number(certificate.overall_score).toFixed(1)}%</span>
                     </div>
-                  )}
-                  {certificate.overall_score && (
-                    <div className="text-center">
-                      <div className="inline-flex items-center gap-2 bg-gray-700 px-6 py-2 rounded-full">
-                        <Trophy className="w-5 h-5 text-yellow-400" />
-                        <span className="text-white font-semibold">Score: {certificate.overall_score.toFixed(1)}%</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Skills */}
                 {certificate.skills_acquired && certificate.skills_acquired.length > 0 && (
@@ -281,11 +268,13 @@ export default function VerifyCertificatePage() {
                     <div>
                       <p className="text-xs text-gray-400">Date Issued</p>
                       <p className="text-white">
-                        {new Date(certificate.issued_at).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric'
-                        })}
+                        {certificate.issued_at
+                          ? new Date(certificate.issued_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })
+                          : '—'}
                       </p>
                     </div>
                   </div>

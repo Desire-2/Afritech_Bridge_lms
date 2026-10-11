@@ -224,7 +224,7 @@ class EnhancedAchievementApiService {
    */
   async getAchievementSummary(): Promise<{ success: boolean; data: AchievementSummary }> {
     try {
-      const response = await this.apiClient.get('/achievements/summary');
+      const response = await this.apiClient.get('/student/certificate/achievements-summary');
       return response.data;
     } catch (error) {
       throw new Error(`Failed to fetch achievement summary: ${error}`);

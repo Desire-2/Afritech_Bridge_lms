@@ -1645,53 +1645,59 @@ def get_student_all_certificates_eligibility(student_id):
                     student_id, course.id
                 )
                 
-                # Normalize requirements structure for consistent frontend handling
-                if isinstance(requirements_raw, dict):
-                    # When eligible: requirements_raw is requirements_status dict
-                    # When ineligible: requirements_raw is ineligibility_info dict with nested 'details'
-                    if eligible:
-                        # Eligible case
-                        requirements = {
-                            "completed_modules": requirements_raw.get("completed_modules", 0),
-                            "total_modules": requirements_raw.get("total_modules", 0),
-                            "failed_modules": requirements_raw.get("failed_modules", 0),
-                            "overall_score": requirements_raw.get("overall_score", 0),
-                            "passing_score": requirements_raw.get("passing_score", 80),
-                            "module_details": requirements_raw.get("module_details", []),
-                            "portfolio_items": requirements_raw.get("portfolio_items", 0),
-                        }
-                    else:
-                        # Ineligible case - has nested 'details' structure
-                        details = requirements_raw.get("details", {})
-                        module_breakdown = details.get("module_breakdown", [])
-                        
-                        # Normalize module_breakdown to match expected format
-                        module_details = []
-                        for mod in module_breakdown:
-                            module_details.append({
+                # Canonical eligibility payload is flat (no nested details).
+                if isinstance(requirements_raw, dict) and 'eligible' in requirements_raw:
+                    requirements = {
+                        "completed_modules": requirements_raw.get("completed_modules", 0),
+                        "total_modules": requirements_raw.get("total_modules", 0),
+                        "failed_modules": requirements_raw.get("failed_modules", 0),
+                        "overall_score": requirements_raw.get("overall_score", 0),
+                        "passing_score": requirements_raw.get("required_score", 70),
+                        "module_details": [
+                            {
                                 "module_id": mod.get("module_id"),
                                 "module": mod.get("module_name", "Unknown"),
                                 "status": mod.get("status", "unknown"),
                                 "score": mod.get("score", 0),
                                 "attempts": mod.get("attempts", 0),
-                            })
-                        
-                        # Fallback to enrollment's course_score if available and score is 0
-                        overall_score = requirements_raw.get("overall_score", 0)
-                        if overall_score == 0 and hasattr(enrollment, 'course_score') and enrollment.course_score:
-                            overall_score = float(enrollment.course_score)
-                        
-                        requirements = {
-                            "completed_modules": requirements_raw.get("completed_modules", 0),
-                            "total_modules": requirements_raw.get("total_modules", 0),
-                            "failed_modules": details.get("failed_modules", {}).get("count", 0) if isinstance(details.get("failed_modules"), dict) else 0,
-                            "overall_score": overall_score,
-                            "passing_score": requirements_raw.get("required_score", 80),
-                            "module_details": module_details,
-                            "portfolio_items": 0,
-                            "failure_reasons": requirements_raw.get("failure_reasons", []),
-                            "summary_details": requirements_raw.get("details", {}),
-                        }
+                                "is_passing": mod.get("is_passing", False),
+                            }
+                            for mod in requirements_raw.get("module_breakdown", [])
+                        ],
+                        "portfolio_items": 0,
+                        "failure_reasons": requirements_raw.get("failure_reasons", []),
+                        "summary": requirements_raw.get("summary", reason),
+                        "next_steps": requirements_raw.get("next_steps", []),
+                        "error_code": requirements_raw.get("error_code"),
+                    }
+                elif isinstance(requirements_raw, dict):
+                    # Legacy fallback shape
+                    details = requirements_raw.get("details", {})
+                    module_breakdown = details.get("module_breakdown", [])
+                    module_details = []
+                    for mod in module_breakdown:
+                        module_details.append({
+                            "module_id": mod.get("module_id"),
+                            "module": mod.get("module_name", "Unknown"),
+                            "status": mod.get("status", "unknown"),
+                            "score": mod.get("score", 0),
+                            "attempts": mod.get("attempts", 0),
+                        })
+                    overall_score = requirements_raw.get("overall_score", 0)
+                    if overall_score == 0 and hasattr(enrollment, 'course_score') and enrollment.course_score:
+                        overall_score = float(enrollment.course_score)
+                    failed_raw = details.get("failed_modules", {})
+                    requirements = {
+                        "completed_modules": requirements_raw.get("completed_modules", 0),
+                        "total_modules": requirements_raw.get("total_modules", 0),
+                        "failed_modules": failed_raw.get("count", 0) if isinstance(failed_raw, dict) else 0,
+                        "overall_score": overall_score,
+                        "passing_score": requirements_raw.get("required_score", 70),
+                        "module_details": module_details,
+                        "portfolio_items": 0,
+                        "failure_reasons": requirements_raw.get("failure_reasons", []),
+                        "summary_details": details,
+                    }
                 else:
                     requirements = {}
                 

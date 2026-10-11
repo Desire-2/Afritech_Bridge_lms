@@ -5,7 +5,10 @@ from typing import Dict, List, Optional, Tuple
 from flask import current_app
 import json
 import hashlib
+import os
 import random
+
+from sqlalchemy.exc import IntegrityError
 
 from ..models.user_models import db, User
 from ..models.course_models import Course, Enrollment, Module
@@ -14,355 +17,496 @@ from ..models.student_models import (
     ModuleProgress, AssessmentAttempt
 )
 
+# Canonical certificate threshold: the overall course score required for
+# certificate issuance. This is deliberately distinct from the lesson (80),
+# quiz (70 default) and assignment (60) thresholds.
+CERTIFICATE_PASSING_THRESHOLD = 70.0
+
+# Bounded retries when the random certificate number collides with an
+# already-issued number.
+_CERTIFICATE_NUMBER_RETRIES = 5
+
 
 class CertificateService:
     """Service class for handling certificates, badges, and transcripts"""
-    
+
     @staticmethod
-    def check_certificate_eligibility(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
+    def get_verify_base_url() -> str:
+        """Public origin used for verification URLs (QR codes, PDFs).
+
+        Configured per environment via CERTIFICATE_VERIFY_BASE_URL; falls
+        back to the production study domain so existing certificates keep
+        working without source edits.
         """
-        Check if student is eligible for course completion certificate
-        
-        Args:
-            student_id: ID of the student
-            course_id: ID of the course
-            
-        Returns:
-            Tuple of (eligible, reason, requirements_status)
+        return (
+            os.environ.get('CERTIFICATE_VERIFY_BASE_URL')
+            or 'https://study.afritechbridge.online'
+        ).rstrip('/')
+
+    @staticmethod
+    def get_verification_url(certificate_number: str) -> str:
+        return f"{CertificateService.get_verify_base_url()}/verify/{certificate_number}"
+
+    @staticmethod
+    def evaluate_eligibility(student_id: int, course_id: int,
+                             enrollment: Optional[Enrollment] = None) -> Dict:
+        """Canonical certificate eligibility evaluation.
+
+        One rule for every caller (student routes, admin routes, automatic
+        completion triggers): every published module completed AND the
+        authoritative overall course score >= CERTIFICATE_PASSING_THRESHOLD.
+
+        Returns a flat, fully-populated payload — no nested ``details``
+        surprise layers, numeric failure counts, and a single documented
+        module-breakdown shape.
         """
-        try:
+        required_score = CERTIFICATE_PASSING_THRESHOLD
+
+        if enrollment is None:
             enrollment = Enrollment.query.filter_by(
                 student_id=student_id, course_id=course_id
             ).first()
-            
-            if not enrollment:
-                return False, "Not enrolled in course", {}
-            
-            course = Course.query.get(course_id)
-            if not course:
-                return False, "Course not found", {}
-            
-            # Recompute real completion from the published course. A stale
-            # `completed_at` / status flag must never make a learner eligible
-            # for a certificate they have not earned, and unpublished draft
-            # modules must not block someone who finished every real module.
-            from .enrollment_progress_service import EnrollmentProgressService
-            counts = EnrollmentProgressService.get_progress_counts(
-                student_id, course_id, enrollment
-            )
-            modules = EnrollmentProgressService.get_published_modules(course)
 
-            # PRIMARY CHECK: authoritative completion of all published modules
-            passing_score = getattr(course, 'passing_score', 80) or 80
-            overall_score = enrollment.calculate_course_score() if counts["is_complete"] else 0
-            if counts["is_complete"] and overall_score >= passing_score:
-                requirements_status = {
-                    "completed": True,
-                    "overall_score": overall_score,
-                    "completion_date": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
-                    "enrollment_status": enrollment.status,
-                    "completed_modules": counts["completed_modules"],
-                    "total_modules": counts["total_modules"],
-                    "lessons_completed": counts["completed_lessons"],
-                    "total_lessons": counts["total_lessons"],
-                }
-                return True, "Eligible for certificate", requirements_status
-            
-            # SECONDARY CHECK: Check module completion status in detail
-            requirements_status = {
-                "total_modules": len(modules),
-                "completed_modules": 0,
-                "failed_modules": 0,
-                "module_details": []
-            }
-            
-            overall_scores = []
-            
-            for module in modules:
-                module_progress = ModuleProgress.query.filter_by(
-                    student_id=student_id,
-                    module_id=module.id,
-                    enrollment_id=enrollment.id
-                ).first()
-                
-                if not module_progress:
-                    requirements_status["module_details"].append({
-                        "module_id": module.id,
-                        "module": module.title,
-                        "status": "not_started",
-                        "score": 0
-                    })
-                    continue
-                
-                module_detail = {
-                    "module_id": module.id,
-                    "module": module.title,
-                    "status": module_progress.status,
-                    "score": module_progress.cumulative_score or 0,
-                    "attempts": module_progress.attempts_count
-                }
-                
-                if module_progress.status == 'completed':
-                    requirements_status["completed_modules"] += 1
-                    overall_scores.append(module_progress.cumulative_score or 0)
-                elif module_progress.status == 'failed':
-                    requirements_status["failed_modules"] += 1
-                
-                requirements_status["module_details"].append(module_detail)
-            
-            # Check portfolio requirements (optional, not required)
-            portfolio_items = CertificateService._get_portfolio_items(student_id, course_id)
-            requirements_status["portfolio_items"] = len(portfolio_items)
-            requirements_status["portfolio_required"] = False  # Made optional
-            
-            # Calculate overall score
-            if overall_scores:
-                overall_score = sum(overall_scores) / len(overall_scores)
-                requirements_status["overall_score"] = overall_score
-            else:
-                overall_score = 0
-                requirements_status["overall_score"] = 0
-            
-            # Use default passing score of 80% if course doesn't have one
-            passing_score = getattr(course, 'passing_score', 80)
-            requirements_status["passing_score"] = passing_score
-            
-            # Check eligibility based on module completion
-            eligible = (
-                requirements_status["completed_modules"] == requirements_status["total_modules"] and
-                requirements_status["failed_modules"] == 0 and
-                overall_score >= passing_score
-                # Portfolio items no longer required
+        if not enrollment:
+            return CertificateService._eligibility_result(
+                eligible=False,
+                reason='Not enrolled in course',
+                error_code='NOT_ENROLLED',
+                current_score=0.0,
+                required_score=required_score,
+                all_modules_completed=False,
+                completed_modules=0,
+                total_modules=0,
+                failed_modules=0,
+                module_breakdown=[],
+                missing_requirements=['enrollment'],
             )
-            
-            if eligible:
-                return True, "Eligible for certificate", requirements_status
-            else:
-                # Get detailed ineligibility information
-                ineligibility_info = CertificateService._get_ineligibility_reason(requirements_status, passing_score)
-                # Return the summarized message as string for backwards compatibility, but include full details
-                return False, ineligibility_info["summary_message"], ineligibility_info
-                
-        except Exception as e:
-            current_app.logger.error(f"Certificate eligibility check error: {str(e)}")
-            return False, "Error checking eligibility", {}
-    
-    @staticmethod
-    def create_preliminary_certificate(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
-        """
-        Create a preliminary (locked) certificate for newly enrolled students.
-        This certificate will be blurred until the course is completed.
-        
-        Args:
-            student_id: ID of the student
-            course_id: ID of the course
-            
-        Returns:
-            Tuple of (success, message, certificate_data)
-        """
-        try:
-            # Check if enrollment exists
-            enrollment = Enrollment.query.filter_by(
-                user_id=student_id, course_id=course_id
-            ).first()
-            
-            if not enrollment:
-                return False, "Student not enrolled in this course", {}
-            
-            course = Course.query.get(course_id)
-            if not course:
-                return False, "Course not found", {}
-            
-            # Check if certificate already exists
-            existing_cert = Certificate.query.filter_by(
+
+        course = Course.query.get(course_id)
+        if not course:
+            return CertificateService._eligibility_result(
+                eligible=False,
+                reason='Course not found',
+                error_code='COURSE_NOT_FOUND',
+                current_score=0.0,
+                required_score=required_score,
+                all_modules_completed=False,
+                completed_modules=0,
+                total_modules=0,
+                failed_modules=0,
+                module_breakdown=[],
+                missing_requirements=['course'],
+            )
+
+        from .enrollment_progress_service import EnrollmentProgressService
+
+        counts = EnrollmentProgressService.get_progress_counts(
+            student_id, course_id, enrollment
+        )
+        published_modules = EnrollmentProgressService.get_published_modules(course)
+
+        # Authoritative overall score: average of ALL published module scores
+        # (unattempted modules count as 0 — never a fabricated passing score).
+        overall_score = float(enrollment.calculate_course_score() or 0.0)
+
+        module_breakdown = []
+        completed_count = 0
+        failed_count = 0
+        for module in published_modules:
+            module_progress = ModuleProgress.query.filter_by(
                 student_id=student_id,
-                course_id=course_id,
+                module_id=module.id,
                 enrollment_id=enrollment.id
             ).first()
-            
-            if existing_cert:
-                return True, "Certificate already exists", existing_cert.to_dict()
-            
-            # Create preliminary certificate with 0% completion
-            certificate = Certificate(
-                student_id=student_id,
-                course_id=course_id,
-                enrollment_id=enrollment.id,
-                overall_score=0,
-                is_active=True
+
+            if module_progress:
+                status = module_progress.status
+                score = float(module_progress.cumulative_score or 0.0)
+                attempts = module_progress.attempts_count
+            else:
+                status = 'not_started'
+                score = 0.0
+                attempts = 0
+
+            if status == 'completed':
+                completed_count += 1
+            elif status == 'failed':
+                failed_count += 1
+
+            module_breakdown.append({
+                'module_id': module.id,
+                'module_name': module.title,
+                'status': status,
+                'score': round(score, 1),
+                'attempts': attempts,
+                'is_passing': score >= required_score,
+            })
+
+        all_modules_completed = bool(
+            counts.get('is_complete') and
+            len(published_modules) > 0 and
+            completed_count == len(published_modules)
+        )
+        score_ok = overall_score >= required_score
+
+        missing = []
+        if not all_modules_completed:
+            missing.append('all_modules_completed')
+        if not score_ok:
+            missing.append('overall_score')
+
+        eligible = all_modules_completed and score_ok
+
+        if eligible:
+            return CertificateService._eligibility_result(
+                eligible=True,
+                reason='Eligible for certificate',
+                error_code=None,
+                current_score=overall_score,
+                required_score=required_score,
+                all_modules_completed=True,
+                completed_modules=completed_count,
+                total_modules=len(published_modules),
+                failed_modules=failed_count,
+                module_breakdown=module_breakdown,
+                missing_requirements=[],
+                enrollment=enrollment,
             )
-            
-            # Generate certificate number and verification hash
-            certificate.generate_certificate_number()
-            
-            # Set initial skills and portfolio (empty)
-            certificate.skills_acquired = json.dumps([])
-            certificate.portfolio_items = json.dumps([])
-            
-            db.session.add(certificate)
-            db.session.commit()
-            
-            cert_data = certificate.to_dict()
-            # Add completion metadata for frontend
-            cert_data["completion_status"] = "not_started"
-            cert_data["completion_percentage"] = 0
-            cert_data["is_locked"] = True
-            
-            return True, "Preliminary certificate created", cert_data
-            
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Preliminary certificate creation error: {str(e)}")
-            return False, "Failed to create preliminary certificate", {}
-    
+
+        # Pick a single primary error code for clients.
+        if 'all_modules_completed' in missing and 'overall_score' in missing:
+            error_code = 'REQUIREMENTS_NOT_MET'
+        elif 'all_modules_completed' in missing:
+            error_code = 'INCOMPLETE_MODULES'
+        else:
+            error_code = 'INSUFFICIENT_SCORE'
+
+        return CertificateService._eligibility_result(
+            eligible=False,
+            reason=CertificateService._summary_for(
+                missing, overall_score, required_score,
+                completed_count, len(published_modules)
+            ),
+            error_code=error_code,
+            current_score=overall_score,
+            required_score=required_score,
+            all_modules_completed=all_modules_completed,
+            completed_modules=completed_count,
+            total_modules=len(published_modules),
+            failed_modules=failed_count,
+            module_breakdown=module_breakdown,
+            missing_requirements=missing,
+            enrollment=enrollment,
+        )
+
     @staticmethod
-    def generate_certificate(student_id: int, course_id: int, force: bool = False) -> Tuple[bool, str, Dict]:
-        """
-        Generate course completion certificate
-        
-        Args:
-            student_id: ID of the student
-            course_id: ID of the course
-            force: Admin override - skip the recomputed eligibility check and
-                   do not reopen a manually completed enrollment.
-            
+    def _summary_for(missing, current_score, required_score,
+                     completed_modules, total_modules) -> str:
+        parts = []
+        if 'all_modules_completed' in missing:
+            remaining = max(0, total_modules - completed_modules)
+            parts.append(
+                f"Complete all published modules ({completed_modules}/{total_modules} done)"
+                + (f", including {remaining} remaining" if remaining else "")
+            )
+        if 'overall_score' in missing:
+            gap = required_score - current_score
+            parts.append(
+                f"Improve your overall course score by {gap:.1f}% "
+                f"(currently {current_score:.1f}%, requires {required_score:.0f}%)"
+            )
+        return ' and '.join(parts) if parts else 'Requirements not met'
+
+    @staticmethod
+    def _next_steps_for(missing, module_breakdown, current_score,
+                        required_score) -> List[str]:
+        steps = []
+        if 'all_modules_completed' in missing:
+            not_done = [
+                m for m in module_breakdown if m['status'] != 'completed'
+            ]
+            if not_done:
+                names = ', '.join(m['module_name'] for m in not_done[:3])
+                suffix = '…' if len(not_done) > 3 else ''
+                steps.append(f"Finish module(s): {names}{suffix}")
+            else:
+                steps.append('Complete every published lesson and assessment in the course')
+        if 'overall_score' in missing:
+            steps.append(
+                f"Raise your overall score to {required_score:.0f}% "
+                f"(currently {current_score:.1f}%) by improving low-scoring modules"
+            )
+        return steps or ['Review the course requirements and continue learning']
+
+    @staticmethod
+    def _eligibility_result(eligible, reason, error_code, current_score,
+                            required_score, all_modules_completed,
+                            completed_modules, total_modules, failed_modules,
+                            module_breakdown, missing_requirements,
+                            enrollment=None) -> Dict:
+        summary = reason if eligible else reason
+        return {
+            'eligible': eligible,
+            'reason': reason,
+            'error_code': error_code,
+            'summary': summary,
+            'next_steps': [] if eligible else CertificateService._next_steps_for(
+                missing_requirements, module_breakdown,
+                current_score, required_score
+            ),
+            'current_score': round(current_score, 1),
+            'overall_score': round(current_score, 1),  # compat alias
+            'required_score': required_score,
+            'passing_score': required_score,  # compat alias for admin normalizer
+            'all_modules_completed': all_modules_completed,
+            'completed_modules': completed_modules,
+            'total_modules': total_modules,
+            'failed_modules': failed_modules,
+            'module_breakdown': module_breakdown,
+            'missing_requirements': missing_requirements,
+            'failure_reasons': list(missing_requirements),
+            'enrollment': enrollment,  # internal use only — stripped by routes
+        }
+
+    @staticmethod
+    def check_certificate_eligibility(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
+        """Backwards-compatible tuple wrapper around evaluate_eligibility."""
+        try:
+            eligibility = CertificateService.evaluate_eligibility(student_id, course_id)
+            enrollment = eligibility.pop('enrollment', None)
+            _ = enrollment  # kept out of the response payload
+            return eligibility['eligible'], eligibility['reason'], eligibility
+        except Exception as e:
+            current_app.logger.error(f"Certificate eligibility check error: {str(e)}")
+            return False, "Error checking eligibility", {'error_code': 'SERVER_ERROR'}
+
+    @staticmethod
+    def strip_enrollment_field(eligibility: Dict) -> Dict:
+        """Remove the internal enrollment relationship from an eligibility payload."""
+        if isinstance(eligibility, dict):
+            eligibility.pop('enrollment', None)
+        return eligibility
+
+    @staticmethod
+    def generate_certificate(student_id: int, course_id: int, force: bool = False):
+        """Generate (or return) a course completion certificate.
+
+        The single canonical issuance path used by student routes, admin
+        validation, and automatic completion triggers.
+
         Returns:
-            Tuple of (success, message, certificate_data)
+            Tuple of (success, message, payload) where payload is either the
+            certificate dict (with a ``created`` flag) on success or the
+            canonical eligibility dict on eligibility failure.
         """
         try:
-            # Get enrollment
             enrollment = Enrollment.query.filter_by(
                 student_id=student_id, course_id=course_id
             ).first()
-            
+
             if not enrollment:
-                return False, "Enrollment not found", {}
-            
-            from .enrollment_progress_service import EnrollmentProgressService
-            
+                return False, "Enrollment not found", {
+                    'error_code': 'NOT_ENROLLED'
+                }
+
             if force:
                 # Admin override: honour the manually set completion state.
                 if enrollment.status != 'completed':
                     enrollment.status = 'completed'
                 if not enrollment.completed_at:
                     enrollment.completed_at = now_local()
-                overall_score_forced = enrollment.calculate_course_score()
-                eligible = True
-                reason = "Forced by admin"
-                requirements = {"completed": True, "overall_score": overall_score_forced}
+                eligibility = CertificateService.evaluate_eligibility(
+                    student_id, course_id, enrollment=enrollment
+                )
+                # Force skips the eligibility gate but keeps real score data.
+                eligibility['eligible'] = True
+                eligibility['error_code'] = None
+                eligibility['missing_requirements'] = []
+                eligibility['reason'] = 'Forced by admin'
             else:
-                # Reconcile progress/completion from the published course before the
-                # eligibility check (stale 100% flags must not grant certificates).
+                # Reconcile progress/completion from the published course before
+                # the eligibility check (stale 100% flags must not grant
+                # certificates).
                 from .enrollment_progress_service import EnrollmentProgressService
                 EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
-                db.session.flush()  # Flush to database before eligibility check
-                
-                # Check eligibility first
-                eligible, reason, requirements = CertificateService.check_certificate_eligibility(
-                    student_id, course_id
+                db.session.flush()
+
+                eligibility = CertificateService.evaluate_eligibility(
+                    student_id, course_id, enrollment=enrollment
                 )
-            
-            if not eligible:
-                return False, f"Not eligible for certificate: {reason}", {}
-            
-            # Check if certificate already exists (update existing instead of create new)
+                if not eligibility['eligible']:
+                    CertificateService.strip_enrollment_field(eligibility)
+                    return (
+                        False,
+                        f"Not eligible for certificate: {eligibility['summary']}",
+                        eligibility,
+                    )
+
+            overall_score = float(
+                enrollment.calculate_course_score() or eligibility.get('current_score') or 0.0
+            )
+
             existing_cert = Certificate.query.filter_by(
                 student_id=student_id,
-                course_id=course_id,
-                enrollment_id=enrollment.id
+                course_id=course_id
             ).first()
-            
-            # Calculate overall score
-            overall_score = requirements.get("overall_score", enrollment.calculate_course_score())
-            
-            # Add skills and portfolio items
+
+            if existing_cert:
+                payload = existing_cert.to_student_dict()
+                payload['created'] = False
+                # Admin force may need to refresh a stale score on the row.
+                if force and existing_cert.overall_score != overall_score:
+                    existing_cert.overall_score = overall_score
+                    existing_cert.recompute_verification_hash()
+                if not force:
+                    EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
+                db.session.commit()
+                CertificateService.strip_enrollment_field(eligibility)
+                return True, "Certificate already exists", payload
+
             skills_acquired = CertificateService._extract_course_skills(course_id)
             portfolio_items = CertificateService._get_portfolio_items(student_id, course_id)
-            
-            if existing_cert:
-                # Update existing certificate with final scores
-                existing_cert.overall_score = overall_score
-                existing_cert.skills_acquired = json.dumps(skills_acquired)
-                existing_cert.portfolio_items = json.dumps(portfolio_items)
-                existing_cert.issued_at = now_local()  # Update issue date
-                
-                message = "Certificate updated successfully"
-                certificate = existing_cert
-            else:
-                # Create new certificate
-                certificate = Certificate(
-                    student_id=student_id,
-                    course_id=course_id,
-                    enrollment_id=enrollment.id,
-                    overall_score=overall_score
-                )
-                
-                # Generate certificate number and verification hash
-                certificate.generate_certificate_number()
-                
-                certificate.skills_acquired = json.dumps(skills_acquired)
-                certificate.portfolio_items = json.dumps(portfolio_items)
-                
-                db.session.add(certificate)
-                message = "Certificate generated successfully"
-            
+
+            certificate = CertificateService._insert_certificate_with_retry(
+                student_id=student_id,
+                course_id=course_id,
+                enrollment=enrollment,
+                overall_score=overall_score,
+                skills_acquired=skills_acquired,
+                portfolio_items=portfolio_items,
+            )
+
+            if certificate is None:
+                # Lost a race with a concurrent issuance — the winner's
+                # certificate is the canonical one.
+                existing_cert = Certificate.query.filter_by(
+                    student_id=student_id, course_id=course_id
+                ).first()
+                if existing_cert:
+                    payload = existing_cert.to_student_dict()
+                    payload['created'] = False
+                    db.session.commit()
+                    return True, "Certificate already exists", payload
+                return False, "Failed to generate certificate", {
+                    'error_code': 'SERVER_ERROR'
+                }
+
+            # Transcript stats update joins the same transaction so a failure
+            # rolls back the whole issuance.
+            CertificateService._update_student_transcript(student_id)
+
             # Mark enrollment as completed through the authoritative service
             # (skipped on admin force so a manual override is not reopened)
             if not force:
                 EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
-            
+
             db.session.commit()
-            
-            # Update student transcript
-            CertificateService._update_student_transcript(student_id)
-            
-            # Award completion badges
-            CertificateService._award_completion_badges(student_id, course_id)
-            
-            return True, message, certificate.to_dict()
-            
+
+            payload = certificate.to_student_dict()
+            payload['created'] = True
+
+            # Badge awards are idempotent and self-contained; a failure here
+            # must not invalidate the already-committed certificate.
+            try:
+                CertificateService._award_completion_badges(student_id, course_id)
+            except Exception as badge_error:
+                current_app.logger.warning(
+                    f"Badge award failed after certificate {certificate.id} "
+                    f"issued for student {student_id}: {str(badge_error)}"
+                )
+
+            CertificateService.strip_enrollment_field(eligibility)
+            return True, "Certificate generated successfully", payload
+
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Certificate generation error: {str(e)}")
-            return False, "Failed to generate certificate", {}
-    
+            return False, "Failed to generate certificate", {
+                'error_code': 'SERVER_ERROR'
+            }
+
+    @staticmethod
+    def _insert_certificate_with_retry(student_id, course_id, enrollment,
+                                       overall_score, skills_acquired,
+                                       portfolio_items) -> Optional[Certificate]:
+        """Insert a certificate, retrying certificate-number collisions and
+        absorbing the (student_id, course_id) unique violation.
+
+        Returns the new Certificate, or None when a concurrent request already
+        created one.
+        """
+        for attempt in range(_CERTIFICATE_NUMBER_RETRIES):
+            certificate = Certificate(
+                student_id=student_id,
+                course_id=course_id,
+                enrollment_id=enrollment.id,
+                overall_score=overall_score,
+            )
+            certificate.generate_certificate_number()
+            certificate.skills_acquired = json.dumps(skills_acquired)
+            certificate.portfolio_items = json.dumps(portfolio_items)
+
+            db.session.add(certificate)
+            try:
+                db.session.flush()
+                return certificate
+            except IntegrityError:
+                db.session.rollback()
+                attempted_number = certificate.certificate_number
+                # Distinguish a number collision from a duplicate certificate.
+                if Certificate.query.filter_by(
+                    certificate_number=attempted_number
+                ).first():
+                    # Collision on the random number — try a fresh one.
+                    continue
+                # (student_id, course_id) violation: a concurrent request won.
+                return None
+        current_app.logger.error(
+            f"Certificate number collision retries exhausted for student "
+            f"{student_id} course {course_id}"
+        )
+        return None
+
     @staticmethod
     def verify_certificate(certificate_number: str, verification_hash: str = None) -> Tuple[bool, str, Dict]:
         """
         Verify the authenticity of a certificate
-        
+
         Args:
             certificate_number: Certificate number to verify
-            verification_hash: Optional verification hash
-            
+            verification_hash: Optional verification hash (server-side only;
+                never returned to clients)
+
         Returns:
-            Tuple of (valid, message, certificate_data)
+            Tuple of (valid, message, public_certificate_data)
         """
         try:
             certificate = Certificate.query.filter_by(
                 certificate_number=certificate_number
             ).first()
-            
+
             if not certificate:
                 return False, "Certificate not found", {}
-            
+
             if not certificate.is_active:
                 return False, "Certificate has been revoked", {}
-            
-            if certificate.expires_at and certificate.expires_at < datetime.utcnow():
+
+            # issued_at / expires_at are stored as naive Africa/Kigali
+            # wall-clock values (now_local); compare like-for-like.
+            if certificate.expires_at and certificate.expires_at < now_local():
                 return False, "Certificate has expired", {}
-            
-            # Verify hash if provided
+
+            # Verify hash if provided (kept server-side; used by internal
+            # callers, never shipped to public clients).
             if verification_hash and certificate.verification_hash != verification_hash:
                 return False, "Invalid verification hash", {}
-            
-            # Return certificate data for verification
-            cert_data = certificate.to_dict()
+
+            cert_data = certificate.to_public_dict()
             cert_data["verification_status"] = "valid"
             cert_data["verified_at"] = datetime.utcnow().isoformat()
-            
+
             return True, "Certificate is valid", cert_data
-            
+
         except Exception as e:
             current_app.logger.error(f"Certificate verification error: {str(e)}")
             return False, "Error verifying certificate", {}
@@ -443,7 +587,7 @@ class CertificateService:
         
         cert_list = []
         for cert in certificates:
-            cert_dict = cert.to_dict()
+            cert_dict = cert.to_student_dict()
             
             if include_completion:
                 # Get enrollment for completion data
@@ -499,6 +643,180 @@ class CertificateService:
         """Get all available skill badges"""
         badges = SkillBadge.query.filter_by(is_active=True).all()
         return [badge.to_dict() for badge in badges]
+
+    @staticmethod
+    def _badge_progress_for(student_id: int, badge: SkillBadge,
+                            earned_ids: set) -> Dict:
+        """Compute honest progress for a single badge.
+
+        Only badges with a genuine, derivable progress model (course
+        completion badges, the advanced-learner badge) receive a percentage.
+        Everything else returns ``computable: False`` instead of fabricated
+        numbers.
+        """
+        if badge.id in earned_ids:
+            return {
+                'badge': badge.to_dict(),
+                'earned': True,
+                'computable': True,
+                'progress_percentage': 100,
+                'requirements_met': 1,
+                'total_requirements': 1,
+                'next_step': None,
+            }
+
+        progress = {
+            'badge': badge.to_dict(),
+            'earned': False,
+            'computable': False,
+            'progress_percentage': None,
+            'requirements_met': None,
+            'total_requirements': None,
+            'next_step': None,
+        }
+
+        # Course-completion badges: "<Course Title> Completion" (the naming
+        # convention used by _award_completion_badges) or explicit criteria.
+        criteria = badge.criteria or {}
+        if isinstance(criteria, str):
+            try:
+                criteria = json.loads(criteria)
+            except (TypeError, ValueError):
+                criteria = {}
+
+        target_course = None
+        if isinstance(criteria, dict) and criteria.get('type') == 'course_completion':
+            if criteria.get('course_id'):
+                target_course = Course.query.get(criteria['course_id'])
+        if target_course is None and badge.name.endswith(' Completion'):
+            course_title = badge.name[:-len(' Completion')].strip()
+            target_course = Course.query.filter_by(title=course_title).first()
+
+        if target_course is not None:
+            from .enrollment_progress_service import EnrollmentProgressService
+            enrollment = Enrollment.query.filter_by(
+                student_id=student_id, course_id=target_course.id
+            ).first()
+            progress['computable'] = True
+            progress['total_requirements'] = 1
+            if enrollment:
+                counts = EnrollmentProgressService.get_progress_counts(
+                    student_id, target_course.id, enrollment
+                )
+                pct = int(round((counts.get('progress') or 0.0) * 100))
+                progress['progress_percentage'] = pct
+                progress['requirements_met'] = 1 if counts.get('is_complete') else 0
+                progress['next_step'] = (
+                    None if counts.get('is_complete')
+                    else f"Complete “{target_course.title}” ({pct}%)"
+                )
+            else:
+                progress['progress_percentage'] = 0
+                progress['requirements_met'] = 0
+                progress['next_step'] = f"Enroll in “{target_course.title}”"
+            return progress
+
+        # Advanced Learner badge: complete any advanced course.
+        if badge.name == 'Advanced Learner':
+            advanced_courses = Course.query.filter_by(
+                difficulty_level='advanced', is_published=True
+            ).all()
+            completed = 0
+            total = len(advanced_courses)
+            for course in advanced_courses:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=student_id, course_id=course.id
+                ).first()
+                if enrollment and enrollment.status == 'completed':
+                    completed += 1
+            progress['computable'] = True
+            progress['total_requirements'] = max(total, 1)
+            progress['requirements_met'] = completed
+            progress['progress_percentage'] = int(
+                round(100.0 * completed / max(total, 1))
+            )
+            progress['next_step'] = (
+                None if completed > 0
+                else 'Complete an advanced course'
+            )
+            return progress
+
+        # No genuine progress model — report honestly instead of inventing
+        # percentages.
+        progress['next_step'] = 'Progress is tracked automatically as you learn'
+        return progress
+
+    @staticmethod
+    def get_badge_progress(student_id: int) -> Dict:
+        """Real, data-driven badge progress for a student."""
+        earned_badges = CertificateService.get_student_badges(student_id)
+        earned_ids = {badge['badge_id'] for badge in earned_badges}
+        available_badges = CertificateService.get_available_badges()
+
+        badge_progress = []
+        for badge_dict in available_badges:
+            badge = SkillBadge.query.get(badge_dict['id'])
+            if badge is None:
+                continue
+            badge_progress.append(
+                CertificateService._badge_progress_for(student_id, badge, earned_ids)
+            )
+
+        return {
+            'badge_progress': badge_progress,
+            'earned_count': len(earned_badges),
+            'available_count': len(available_badges),
+        }
+
+    @staticmethod
+    def get_achievements_summary(student_id: int) -> Dict:
+        """Data-driven achievements summary — no fabricated milestones."""
+        certificates = CertificateService.get_student_certificates(
+            student_id, include_completion=False
+        )
+        badges = CertificateService.get_student_badges(student_id)
+
+        total_points = len(certificates) * 100 + sum(
+            (badge.get('badge') or {}).get('points_value') or 10 for badge in badges
+        )
+
+        if total_points >= 500:
+            level = 'Advanced'
+        elif total_points >= 200:
+            level = 'Intermediate'
+        elif total_points > 0:
+            level = 'Beginner'
+        else:
+            level = 'New Learner'
+
+        # Next unearned badge (highest points first) — real data only.
+        earned_ids = {b['badge_id'] for b in badges}
+        unearned = [
+            b for b in SkillBadge.query.filter_by(is_active=True).all()
+            if b.id not in earned_ids
+        ]
+        unearned.sort(key=lambda b: -(b.points_value or 10))
+        next_badge = unearned[0].name if unearned else None
+
+        next_level_threshold = (total_points // 100 + 1) * 100
+        points_to_next_level = max(0, next_level_threshold - total_points)
+
+        return {
+            'summary': {
+                'total_certificates': len(certificates),
+                'total_badges': len(badges),
+                'total_points': total_points,
+                'achievement_level': level,
+            },
+            'recent_achievements': {
+                'certificates': certificates[:3],
+                'badges': badges[:5],
+            },
+            'milestones': {
+                'next_badge': next_badge,
+                'points_to_next_level': points_to_next_level,
+            },
+        }
     
     @staticmethod
     def create_skill_badge(badge_data: Dict) -> Tuple[bool, str, Dict]:
@@ -555,28 +873,39 @@ class CertificateService:
             db.session.commit()
             
             student = User.query.get(student_id)
+            if not student:
+                return {"error": "Student not found"}
             
             # Get all enrollments and certificates
             enrollments = Enrollment.query.filter_by(student_id=student_id).all()
             certificates = Certificate.query.filter_by(student_id=student_id, is_active=True).all()
             badges = StudentSkillBadge.query.filter_by(student_id=student_id).all()
             
+            student_name = " ".join(
+                part for part in [student.first_name, student.last_name] if part
+            ) or (student.username or student.email or "Student")
+            
             transcript_data = {
                 "student_info": {
                     "id": student.id,
-                    "name": f"{student.first_name} {student.last_name}",
+                    "name": student_name,
                     "email": student.email,
-                    "join_date": student.created_at.isoformat()
+                    "join_date": student.created_at.isoformat() if student.created_at else None
                 },
                 "summary": transcript.to_dict(),
                 "course_history": [],
-                "certificates": [cert.to_dict() for cert in certificates],
+                "certificates": [cert.to_student_dict() for cert in certificates],
                 "badges": [badge.to_dict() for badge in badges],
                 "generated_at": datetime.utcnow().isoformat()
             }
             
             # Add detailed course history
             for enrollment in enrollments:
+                # Orphaned enrollments (soft-deleted course) must not break
+                # the whole transcript.
+                if not enrollment.course:
+                    continue
+                
                 course_data = {
                     "course": enrollment.course.to_dict(),
                     "enrollment": enrollment.to_dict(),
@@ -590,7 +919,7 @@ class CertificateService:
                 
                 for mp in module_progresses:
                     module_data = mp.to_dict()
-                    module_data["module_info"] = mp.module.to_dict()
+                    module_data["module_info"] = mp.module.to_dict() if mp.module else None
                     course_data["modules"].append(module_data)
                 
                 transcript_data["course_history"].append(course_data)
@@ -627,162 +956,24 @@ class CertificateService:
     
     @staticmethod
     def _extract_course_skills(course_id: int) -> List[str]:
-        """Extract skills acquired from course modules"""
+        """Extract skills acquired from course modules (deterministic order)."""
         course = Course.query.get(course_id)
         skills = []
-        
+
         if course.learning_objectives:
             # Extract skills from course objectives
             objectives = course.learning_objectives.split('\n')
-            skills.extend([obj.strip() for obj in objectives[:5]])  # Top 5
-        
-        # Add skills from modules
-        modules = course.modules.all()
+            skills.extend([obj.strip() for obj in objectives[:5] if obj.strip()])  # Top 5
+
+        # Add skills from modules (published only — drafts are not student-facing)
+        modules = [m for m in course.modules.all() if getattr(m, 'is_published', True)]
         for module in modules:
             if module.learning_objectives:
                 module_objectives = module.learning_objectives.split('\n')
-                skills.extend([obj.strip() for obj in module_objectives[:2]])  # Top 2 per module
-        
-        # Remove duplicates and return unique skills
-        return list(set(skills))[:10]  # Limit to 10 skills
-    
-    @staticmethod
-    def _get_ineligibility_reason(requirements: Dict, passing_score: float) -> Dict:
-        """
-        Get detailed reason for certificate ineligibility with specific module breakdown
-        
-        Args:
-            requirements: Dictionary containing requirements status
-            passing_score: Required passing score percentage
-            
-        Returns:
-            Dictionary with detailed failure information
-        """
-        failures = []
-        details = {}
-        
-        # Check module completion
-        if requirements["completed_modules"] < requirements["total_modules"]:
-            remaining = requirements["total_modules"] - requirements["completed_modules"]
-            failures.append(f"incomplete_modules")
-            details["incomplete_modules"] = {
-                "completed": requirements["completed_modules"],
-                "total": requirements["total_modules"],
-                "remaining": remaining,
-                "message": f"You have completed {requirements['completed_modules']}/{requirements['total_modules']} modules. "
-                          f"You need to complete {remaining} more module(s) to be eligible for a certificate."
-            }
-        
-        # Check for failed modules
-        if requirements["failed_modules"] > 0:
-            failures.append("failed_modules")
-            details["failed_modules"] = {
-                "count": requirements["failed_modules"],
-                "message": f"You have {requirements['failed_modules']} module(s) with failing scores. "
-                          f"You need to retake and pass these modules."
-            }
-        
-        # Check overall score
-        if requirements["overall_score"] < passing_score:
-            current_score = requirements["overall_score"]
-            score_gap = passing_score - current_score
-            failures.append("insufficient_score")
-            details["insufficient_score"] = {
-                "current_score": round(current_score, 1),
-                "required_score": passing_score,
-                "score_gap": round(score_gap, 1),
-                "message": f"Your current overall score is {current_score:.1f}%. "
-                          f"The minimum required score for a certificate is {passing_score}%. "
-                          f"You need to improve your score by {score_gap:.1f} percentage points."
-            }
-        
-        # Build module-specific details for additional context
-        module_details = []
-        for module_info in requirements.get("module_details", []):
-            module_status = {
-                "module_id": module_info.get("module_id"),
-                "module_name": module_info.get("module"),
-                "status": module_info.get("status"),
-                "score": module_info.get("score", 0),
-                "attempts": module_info.get("attempts", 0),
-                "is_passing": module_info.get("score", 0) >= passing_score,
-                "feedback": CertificateService._get_module_feedback(
-                    module_info.get("status"),
-                    module_info.get("score", 0),
-                    passing_score
-                )
-            }
-            module_details.append(module_status)
-        
-        if module_details:
-            details["module_breakdown"] = module_details
-        
-        return {
-            "eligible": False,
-            "failure_reasons": failures,
-            "summary_message": CertificateService._build_summary_message(failures, details),
-            "details": details,
-            "overall_score": round(requirements["overall_score"], 1),
-            "required_score": passing_score,
-            "completed_modules": requirements["completed_modules"],
-            "total_modules": requirements["total_modules"]
-        }
-    
-    @staticmethod
-    def _get_module_feedback(status: str, score: float, passing_score: float) -> str:
-        """
-        Get specific feedback for a module based on its status and score
-        
-        Args:
-            status: Module status (completed, in_progress, failed, not_started)
-            score: Module score percentage
-            passing_score: Required passing score
-            
-        Returns:
-            Feedback message for the module
-        """
-        if status == "completed":
-            return f"✓ Passed with {score:.1f}%"
-        elif status == "failed":
-            return f"✗ Failed with {score:.1f}% (required: {passing_score}%)"
-        elif status == "in_progress":
-            gap = passing_score - score
-            return f"In Progress - {score:.1f}% (need {gap:.1f}% more to pass)"
-        elif status == "not_started":
-            return "Not started - Complete all lessons and assessments in this module"
-        else:
-            return f"Unknown status: {status}"
-    
-    @staticmethod
-    def _build_summary_message(failure_reasons: List[str], details: Dict) -> str:
-        """
-        Build a human-friendly summary message from failure reasons
-        
-        Args:
-            failure_reasons: List of failure reason codes
-            details: Dictionary containing detailed information
-            
-        Returns:
-            Human-friendly summary message
-        """
-        if not failure_reasons:
-            return "All requirements met"
-        
-        message_parts = []
-        
-        if "incomplete_modules" in failure_reasons:
-            incomplete = details.get("incomplete_modules", {})
-            message_parts.append(f"Complete {incomplete.get('remaining', 0)} remaining module(s)")
-        
-        if "insufficient_score" in failure_reasons:
-            score_info = details.get("insufficient_score", {})
-            message_parts.append(f"Improve your score by {score_info.get('score_gap', 0):.1f}%")
-        
-        if "failed_modules" in failure_reasons:
-            failed = details.get("failed_modules", {})
-            message_parts.append(f"Retake {failed.get('count', 0)} failed module(s)")
-        
-        return " & ".join(message_parts) if message_parts else "Requirements not met"
+                skills.extend([obj.strip() for obj in module_objectives[:2] if obj.strip()])  # Top 2 per module
+
+        # Deterministic de-duplication (sorted, not unordered set)
+        return sorted(set(skills))[:10]  # Limit to 10 skills
     
     @staticmethod
     def _update_student_transcript(student_id: int):
@@ -1391,8 +1582,11 @@ class CertificateService:
             qr_x = width - 48*mm
             qr_y = footer_y - 4*mm
             
-            # Generate real QR code
-            verification_url = f"https://study.afritechbridge.online/verify/{certificate.certificate_number}"
+            # Generate real QR code pointing at the canonical verification URL
+            # (environment-configurable — see get_verify_base_url).
+            verification_url = CertificateService.get_verification_url(
+                certificate.certificate_number
+            )
             qr = qrcode.QRCode(
                 version=1,
                 error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -1447,7 +1641,7 @@ class CertificateService:
             # Verification URL
             pdf_canvas.setFont('Helvetica', 7)
             pdf_canvas.setFillColor(light_gray)
-            verify_url = f"study.afritechbridge.online/verify"
+            verify_url = CertificateService.get_verify_base_url().replace('https://', '').replace('http://', '') + '/verify'
             pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 12.5*mm, verify_url)
             
             # Footer section with elegant badge design
@@ -1507,7 +1701,7 @@ class CertificateService:
             pdf_canvas.drawCentredString(width / 2, 20*mm, 'Empowering the next generation of African tech leaders')
             pdf_canvas.setFillColor(teal)
             pdf_canvas.setFont('Helvetica-Bold', 6.5)
-            pdf_canvas.drawCentredString(width / 2, 16*mm, '2026 Afritech Bridge - All Rights Reserved')
+            pdf_canvas.drawCentredString(width / 2, 16*mm, f'{datetime.now().year} Afritech Bridge - All Rights Reserved')
             
             # Save PDF - this must be called to finalize the document
             pdf_canvas.showPage()  # Finish the current page
