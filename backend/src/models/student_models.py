@@ -67,13 +67,13 @@ class LessonCompletion(db.Model):
     
     def has_quiz(self):
         """Check if this lesson has an associated published quiz"""
-        from ..models.course_models import Quiz
-        return Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first() is not None
+        from ..services.scoring_prefetch import get_lesson_quiz
+        return get_lesson_quiz(self.lesson_id) is not None
     
     def has_assignment(self):
         """Check if this lesson has an associated published assignment"""
-        from ..models.course_models import Assignment
-        return Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first() is not None
+        from ..services.scoring_prefetch import get_lesson_assignment
+        return get_lesson_assignment(self.lesson_id) is not None
     
     def calculate_lesson_score(self):
         """
@@ -97,12 +97,21 @@ class LessonCompletion(db.Model):
         reading = self.reading_progress or 0.0
         engagement = self.engagement_score or 0.0
         
-        # Check what assessments exist for this lesson
-        from ..models.quiz_progress_models import QuizAttempt
-        from ..models.course_models import Quiz, Assignment, AssignmentSubmission
+        # Check what assessments exist for this lesson (request-scoped
+        # prefetch falls back to the original queries when inactive)
+        from ..config.scoring import (
+            ASSIGNMENT_PASSING_SCORE, ENGAGEMENT_REQUIREMENT,
+            FAILED_ASSESSMENT_LESSON_CAP, FAILED_QUIZ_LESSON_CAP,
+            PENDING_GRADING_SCORE_CAP, QUIZ_PASSING_SCORE,
+            READING_REQUIREMENT,
+        )
+        from ..services.scoring_prefetch import (
+            get_assignment_submission, get_best_quiz_attempt,
+            get_lesson_assignment, get_lesson_quiz,
+        )
         
-        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
+        lesson_quiz = get_lesson_quiz(self.lesson_id)
+        lesson_assignment = get_lesson_assignment(self.lesson_id)
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
@@ -111,14 +120,11 @@ class LessonCompletion(db.Model):
         quiz_score = 0.0
         quiz_passed = True  # Default for lessons without quiz
         if has_quiz:
-            best_attempt = QuizAttempt.query.filter_by(
-                user_id=self.student_id,
-                quiz_id=lesson_quiz.id
-            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            best_attempt = get_best_quiz_attempt(self.student_id, lesson_quiz.id)
             
             if best_attempt:
                 raw_quiz_score = best_attempt.score_percentage or 0.0
-                quiz_passing_score = lesson_quiz.passing_score or 70.0
+                quiz_passing_score = lesson_quiz.passing_score or QUIZ_PASSING_SCORE
                 quiz_passed = raw_quiz_score >= quiz_passing_score
                 
                 # Only use quiz score if passed, otherwise 0
@@ -131,16 +137,13 @@ class LessonCompletion(db.Model):
         assignment_passed = True  # Default for lessons without assignment
         assignment_pending_review = False  # Track if assignment is submitted but not yet graded
         if has_assignment:
-            best_submission = AssignmentSubmission.query.filter_by(
-                student_id=self.student_id,
-                assignment_id=lesson_assignment.id
-            ).first()
+            best_submission = get_assignment_submission(self.student_id, lesson_assignment.id)
             
             if best_submission and best_submission.grade is not None:
                 # Calculate percentage score
                 points_possible = lesson_assignment.points_possible or 100
                 raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
-                assignment_passing_score = 60.0  # Standard assignment passing score
+                assignment_passing_score = ASSIGNMENT_PASSING_SCORE
                 assignment_passed = raw_assignment_score >= assignment_passing_score
                 
                 # Only use assignment score if passed, otherwise 0
@@ -154,14 +157,14 @@ class LessonCompletion(db.Model):
         
         # Apply reading and engagement penalties for poor performance
         reading_penalty = 1.0
-        if reading < 90.0:
+        if reading < READING_REQUIREMENT:
             # Significant penalty for low reading progress
-            reading_penalty = 0.5 + (reading / 90.0) * 0.5  # Scale from 0.5 to 1.0
+            reading_penalty = 0.5 + (reading / READING_REQUIREMENT) * 0.5  # Scale from 0.5 to 1.0
         
         engagement_penalty = 1.0
-        if engagement < 60.0:
+        if engagement < ENGAGEMENT_REQUIREMENT:
             # Penalty for low engagement
-            engagement_penalty = 0.7 + (engagement / 60.0) * 0.3  # Scale from 0.7 to 1.0
+            engagement_penalty = 0.7 + (engagement / ENGAGEMENT_REQUIREMENT) * 0.3  # Scale from 0.7 to 1.0
         
         # Calculate weighted score based on available assessments
         # NOTE: When assignment is pending review, we calculate full reading/engagement
@@ -170,13 +173,14 @@ class LessonCompletion(db.Model):
             # Full assessment: 25% each component
             if not quiz_passed or not assignment_passed:
                 if assignment_pending_review:
-                    # Assignment pending review: show reading/engagement contribution (up to 70%)
-                    # This preserves progress visibility while preventing premature auto-completion
+                    # Assignment pending review: show reading/engagement contribution
+                    # (capped below the lesson threshold) so progress stays visible
+                    # while preventing premature auto-completion
                     reading_engagement_score = (reading * 0.5) + (engagement * 0.5)
-                    base_score = min(70.0, reading_engagement_score) if quiz_passed else min(60.0, reading_engagement_score)
+                    base_score = min(PENDING_GRADING_SCORE_CAP, reading_engagement_score) if quiz_passed else min(FAILED_ASSESSMENT_LESSON_CAP, reading_engagement_score)
                 else:
-                    # Assessment failed: cap score at 60%
-                    base_score = min(60.0, (reading * 0.5) + (engagement * 0.5))
+                    # Assessment failed: cap score at the failed-assessment cap
+                    base_score = min(FAILED_ASSESSMENT_LESSON_CAP, (reading * 0.5) + (engagement * 0.5))
             else:
                 base_score = (
                     (reading * 0.25) +
@@ -187,8 +191,8 @@ class LessonCompletion(db.Model):
         elif has_quiz:
             # Quiz only: Reading 35%, Engagement 35%, Quiz 30%
             if not quiz_passed:
-                # Cap score at 65% if quiz not passed
-                base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
+                # Cap score when quiz not passed
+                base_score = min(FAILED_QUIZ_LESSON_CAP, (reading * 0.5) + (engagement * 0.5))
             else:
                 base_score = (
                     (reading * 0.35) +
@@ -199,12 +203,12 @@ class LessonCompletion(db.Model):
             # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
             if not assignment_passed:
                 if assignment_pending_review:
-                    # Assignment pending review: show reading/engagement contribution (up to 70%)
-                    # Keeps progress visible while waiting for instructor review
-                    base_score = min(70.0, (reading * 0.5) + (engagement * 0.5))
+                    # Assignment pending review: show reading/engagement contribution
+                    # (capped below the lesson threshold)
+                    base_score = min(PENDING_GRADING_SCORE_CAP, (reading * 0.5) + (engagement * 0.5))
                 else:
-                    # Assignment not submitted or failed: cap at 65%
-                    base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
+                    # Assignment not submitted or failed: cap at the failed cap
+                    base_score = min(FAILED_QUIZ_LESSON_CAP, (reading * 0.5) + (engagement * 0.5))
             else:
                 base_score = (
                     (reading * 0.35) +
@@ -229,11 +233,17 @@ class LessonCompletion(db.Model):
         reading = self.reading_progress or 0.0
         engagement = self.engagement_score or 0.0
         
-        from ..models.quiz_progress_models import QuizAttempt
-        from ..models.course_models import Quiz, Assignment, AssignmentSubmission
+        from ..config.scoring import (
+            ASSIGNMENT_PASSING_SCORE, QUIZ_PASSING_SCORE,
+            READING_REQUIREMENT, ENGAGEMENT_REQUIREMENT,
+        )
+        from ..services.scoring_prefetch import (
+            get_assignment_submission, get_best_quiz_attempt,
+            get_lesson_assignment, get_lesson_quiz,
+        )
         
-        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
+        lesson_quiz = get_lesson_quiz(self.lesson_id)
+        lesson_assignment = get_lesson_assignment(self.lesson_id)
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
@@ -243,14 +253,11 @@ class LessonCompletion(db.Model):
         quiz_passed = True  # Default for lessons without quiz
         quiz_status = "not_required"
         if has_quiz:
-            best_attempt = QuizAttempt.query.filter_by(
-                user_id=self.student_id,
-                quiz_id=lesson_quiz.id
-            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            best_attempt = get_best_quiz_attempt(self.student_id, lesson_quiz.id)
             
             if best_attempt:
                 raw_quiz_score = best_attempt.score_percentage or 0.0
-                quiz_passing_score = lesson_quiz.passing_score or 70.0
+                quiz_passing_score = lesson_quiz.passing_score or QUIZ_PASSING_SCORE
                 quiz_passed = raw_quiz_score >= quiz_passing_score
                 quiz_score = raw_quiz_score
                 quiz_status = "passed" if quiz_passed else "failed"
@@ -263,15 +270,12 @@ class LessonCompletion(db.Model):
         assignment_passed = True  # Default for lessons without assignment
         assignment_status = "not_required"
         if has_assignment:
-            best_submission = AssignmentSubmission.query.filter_by(
-                student_id=self.student_id,
-                assignment_id=lesson_assignment.id
-            ).first()
+            best_submission = get_assignment_submission(self.student_id, lesson_assignment.id)
             
             if best_submission and best_submission.grade is not None:
                 points_possible = lesson_assignment.points_possible or 100
                 raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
-                assignment_passing_score = 60.0
+                assignment_passing_score = ASSIGNMENT_PASSING_SCORE
                 assignment_passed = raw_assignment_score >= assignment_passing_score
                 assignment_score = raw_assignment_score
                 assignment_status = "passed" if assignment_passed else "failed"
@@ -293,8 +297,8 @@ class LessonCompletion(db.Model):
             weights = {'reading': 50, 'engagement': 50, 'quiz': 0, 'assignment': 0}
         
         # Check completion requirements
-        reading_meets_requirement = reading >= 90.0
-        engagement_meets_requirement = engagement >= 60.0
+        reading_meets_requirement = reading >= READING_REQUIREMENT
+        engagement_meets_requirement = engagement >= ENGAGEMENT_REQUIREMENT
         
         return {
             'scores': {
@@ -972,14 +976,13 @@ class ModuleProgress(db.Model):
         if not module_lessons:
             return 0.0
         
+        from ..services.scoring_prefetch import get_lesson_completion
+        
         total_score = 0.0
         
         for lesson in module_lessons:
-            # Get lesson completion for this student
-            completion = LessonCompletion.query.filter_by(
-                student_id=self.student_id,
-                lesson_id=lesson.id
-            ).first()
+            # Get lesson completion for this student (prefetch-aware)
+            completion = get_lesson_completion(self.student_id, lesson.id)
             
             if completion:
                 # Use the comprehensive lesson score calculation
@@ -1005,8 +1008,6 @@ class ModuleProgress(db.Model):
         
         Returns a score from 0-100.
         """
-        from .course_models import Quiz, Assignment, Project
-        
         # Get the module score (average of all lesson scores)
         module_lessons_score = self.calculate_module_score()
         
@@ -1017,43 +1018,32 @@ class ModuleProgress(db.Model):
         final = self.final_assessment_score or 0.0
         
         # Check what assessments exist in this module — published lessons only
+        # (request-scoped prefetch collapses these lookups during bulk scoring)
+        from ..services.scoring_prefetch import (
+            has_published_assignment_for_lessons, has_published_quiz_for_lessons,
+            module_has_final_assessment, module_has_projects,
+        )
         lesson_ids = [
             lesson.id for lesson in self.module.lessons
             if getattr(lesson, 'is_published', True)
         ] if self.module else []
         
-        # Check for lesson-level quizzes (quizzes linked to lessons in this module)
         # Only PUBLISHED assessments affect weighting - drafts must not.
-        has_quizzes = Quiz.query.filter(
-            Quiz.lesson_id.in_(lesson_ids),
-            Quiz.is_published == True  # noqa: E712
-        ).first() is not None if lesson_ids else False
+        has_quizzes = has_published_quiz_for_lessons(lesson_ids)
+        has_assignments = has_published_assignment_for_lessons(lesson_ids)
         
-        # Check for lesson-level assignments
-        has_assignments = Assignment.query.filter(
-            Assignment.lesson_id.in_(lesson_ids),
-            Assignment.is_published == True  # noqa: E712
-        ).first() is not None if lesson_ids else False
+        # Module-level final assessment quiz (module_id but no lesson_id):
+        # identifies if a final assessment EXISTS, not just if one was taken.
+        has_final_assessment = (
+            module_has_final_assessment(self.module_id) if self.module else False
+        )
         
-        # Check for module-level final assessment quiz (quiz with module_id but no lesson_id)
-        # This correctly identifies if a final assessment EXISTS, not just if one has been taken
-        has_final_assessment = Quiz.query.filter(
-            Quiz.module_id == self.module_id,
-            Quiz.lesson_id.is_(None),
-            Quiz.is_published == True
-        ).first() is not None if self.module else False
-        
-        # Check for published projects covering this module (whole-course
-        # projects with no module assignment cover every module).
-        has_projects = False
-        if self.module:
-            for project in Project.query.filter_by(
-                course_id=self.module.course_id, is_published=True
-            ).all():
-                covered = project.get_modules()
-                if not covered or self.module_id in covered:
-                    has_projects = True
-                    break
+        # Published projects covering this module (whole-course projects with
+        # no module assignment cover every module).
+        has_projects = (
+            module_has_projects(self.module.course_id, self.module_id)
+            if self.module else False
+        )
         
         # Projects share the hands-on (assignments) bucket: blend with lesson
         # assignments when both exist, otherwise stand in for them entirely.
@@ -1103,6 +1093,42 @@ class ModuleProgress(db.Model):
         """Alias for calculate_module_weighted_score for backwards compatibility"""
         return self.calculate_module_weighted_score()
 
+    def has_pending_assignment_grading(self) -> bool:
+        """True when any published lesson assignment in this module has a
+        submitted-but-ungraded submission for this student (integrity cap:
+        the lesson score is held below the completion threshold until an
+        instructor grades the work)."""
+        from ..services.scoring_prefetch import (
+            get_lesson_assignment, get_ungraded_assignment_ids, is_active,
+        )
+        if not self.module:
+            return False
+        lesson_ids = [
+            lesson.id for lesson in self.module.lessons
+            if getattr(lesson, 'is_published', True)
+        ]
+        if not lesson_ids:
+            return False
+        if is_active():
+            ungraded = get_ungraded_assignment_ids(self.student_id)
+            for lesson_id in lesson_ids:
+                assignment = get_lesson_assignment(lesson_id)
+                if assignment is not None and assignment.id in ungraded:
+                    return True
+            return False
+        from ..models.course_models import Assignment, AssignmentSubmission
+        return (
+            AssignmentSubmission.query
+            .join(Assignment, AssignmentSubmission.assignment_id == Assignment.id)
+            .filter(
+                Assignment.lesson_id.in_(lesson_ids),
+                Assignment.is_published == True,  # noqa: E712
+                AssignmentSubmission.student_id == self.student_id,
+                AssignmentSubmission.grade.is_(None),
+            )
+            .first() is not None
+        )
+
     def sync_scores_from_assessments(self):
         """Recompute assignment/project/quiz/final scores from attempt records.
 
@@ -1135,6 +1161,55 @@ class ModuleProgress(db.Model):
             if getattr(lesson, 'is_published', True)
         ]
         lesson_ids = [lesson.id for lesson in published_lessons]
+
+        # ── batched fast path: same best-attempt policy, zero per-row
+        #    queries (prefetch populated by CourseProgressService) ──────
+        from ..services import scoring_prefetch
+        if scoring_prefetch.is_active():
+            best_assignment = 0.0
+            best_quiz = 0.0
+            for lesson_id in lesson_ids:
+                assignment = scoring_prefetch.get_lesson_assignment(lesson_id)
+                if assignment is not None:
+                    pct = scoring_prefetch.get_graded_assignment_pct(
+                        self.student_id, assignment.id
+                    )
+                    if pct > best_assignment:
+                        best_assignment = pct
+                quiz = scoring_prefetch.get_lesson_quiz(lesson_id)
+                if quiz is not None:
+                    pct = scoring_prefetch.get_best_quiz_pct(
+                        self.student_id, quiz.id
+                    )
+                    if pct > best_quiz:
+                        best_quiz = pct
+            if best_assignment > (self.assignment_score or 0.0):
+                self.assignment_score = best_assignment
+            if best_quiz > (self.quiz_score or 0.0):
+                self.quiz_score = best_quiz
+
+            final_quiz = scoring_prefetch.get_module_final_quiz(self.module_id)
+            if final_quiz is not None:
+                best_final = scoring_prefetch.get_best_quiz_pct(
+                    self.student_id, final_quiz.id
+                )
+                if best_final > (self.final_assessment_score or 0.0):
+                    self.final_assessment_score = best_final
+
+            best_project = 0.0
+            for project in scoring_prefetch.get_course_projects(self.module.course_id):
+                covered = project.get_modules()
+                if covered and self.module_id not in covered:
+                    continue
+                pct = scoring_prefetch.get_project_best_pct(project.id)
+                if pct > best_project:
+                    best_project = pct
+            if best_project > (self.project_score or 0.0):
+                self.project_score = best_project
+
+            # Recompute cumulative with the healed fields
+            self.calculate_cumulative_score()
+            return
 
         # ── lesson assignments: best graded percentage across the module ──
         if lesson_ids:

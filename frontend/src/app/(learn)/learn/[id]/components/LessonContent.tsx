@@ -11,7 +11,7 @@ import {
   Star, Flame, BookOpen, Maximize2, Minimize2, FolderOpen
 } from 'lucide-react';
 import Link from 'next/link';
-import { StudentApiService } from '@/services/studentApi';
+import { StudentApiService, CertificateEligibilityRequirements } from '@/services/studentApi';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ViewMode } from '../types';
 import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmentApi';
@@ -27,6 +27,8 @@ import {
   LESSON_READING_PROGRESS_THRESHOLD,
   MODULE_PASSING_THRESHOLD,
   DEFAULT_QUIZ_PASSING_THRESHOLD,
+  CERTIFICATE_PASSING_THRESHOLD,
+  describeCertificateRequirement,
 } from '../utils/learningRules';
 
 // Helper function to format time in MM:SS format
@@ -175,12 +177,37 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   }, [isLessonCompleted]);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
   const [certificateError, setCertificateError] = useState<string | null>(null);
+  // Authoritative eligibility (Rules A/B/C) — backend decides, we display.
+  const [certificateEligibility, setCertificateEligibility] =
+    useState<CertificateEligibilityRequirements | null>(null);
+
+  // Refresh eligibility when the course-end certificate section is shown so
+  // the button state and missing requirements come from the backend, not
+  // from frontend threshold guesses. Network failures leave the button
+  // enabled — only a definitive "ineligible" response disables it.
+  useEffect(() => {
+    if (!courseId || !isLastModule || !isLastLessonInModule || nextModuleInfo) return;
+    let cancelled = false;
+    StudentApiService.checkCertificateEligibility(courseId)
+      .then((res) => {
+        if (!cancelled) setCertificateEligibility(res.requirements ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCertificateEligibility(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [courseId, isLastModule, isLastLessonInModule, nextModuleInfo]);
 
   const handleGenerateCertificate = async () => {
     if (!courseId) return;
 
     setIsGeneratingCertificate(true);
     setCertificateError(null);
+
+    const requirementLabel = (code: string, requiredScore?: number): string =>
+      describeCertificateRequirement(code, requiredScore ?? CERTIFICATE_PASSING_THRESHOLD);
 
     try {
       const response = await StudentApiService.generateCertificate(courseId);
@@ -194,9 +221,27 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             details.push(`Score: ${req.current_score}% (need ${req.required_score || 70}%)`);
           }
           if (req.failure_reasons?.length) {
-            details.push(...req.failure_reasons);
+            details.push(
+              ...req.failure_reasons.map((code) =>
+                requirementLabel(code, req.required_score)
+              )
+            );
           } else if (req.all_modules_completed === false) {
             details.push('Not all modules are complete with passing scores');
+          }
+          if (req.pending_gradings?.length) {
+            details.push('Waiting for instructor grading of submitted assignments');
+          }
+          if (
+            typeof req.final_assessment_required === 'boolean' &&
+            req.final_assessment_required &&
+            req.final_assessment_passed === false
+          ) {
+            details.push(
+              typeof req.final_assessment_score === 'number'
+                ? `Final assessment score: ${req.final_assessment_score}% (need 70%)`
+                : 'Final assessment not attempted yet'
+            );
           }
         }
         const base = response.summary || response.message || 'Failed to generate certificate';
@@ -254,6 +299,16 @@ export const LessonContent: React.FC<LessonContentProps> = ({
     (a: any) => !a.submission_status?.submitted
   );
   const showQuizAssignPrompt = readingComplete && !isLessonCompleted && (quizNotAttempted || assignmentsNotSubmitted);
+
+  // Requirement states used by the "Requirements to Continue" card so the
+  // list reports what is actually left, not a static copy-paste of every
+  // possible requirement.
+  const effectiveQuizPassingScore =
+    lessonQuiz?.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
+  const quizRequirementMet = !!lessonQuiz && (lessonQuiz.best_score ?? 0) >= effectiveQuizPassingScore;
+  const assignmentsPending = lessonAssignments.filter(
+    (a: any) => !a.submission_status?.submitted
+  ).length;
 
   // Check if this is the last lesson of the last module (course completion)
   const isCourseComplete = isLastLessonInModule && isLastModule;
@@ -427,7 +482,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             icon={<BookOpen className="h-4 w-4 text-blue-400" />}
             expanded={expandedCards.header}
             onToggle={(open) => setExpandedCards(prev => ({ ...prev, header: open }))}
-            badge={<span className="text-[10px] text-gray-400 font-mono">{Math.round(readingProgress)}%</span>}
+            badge={<span className="text-xs text-gray-400 font-mono">{Math.round(readingProgress)}%</span>}
           >
           <motion.div
             initial={{ opacity: 0, y: 16 }}
@@ -454,7 +509,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
                       transition={{ type: 'spring', stiffness: 300, delay: 0.2 }}
-                      className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
+                      className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30"
                     >
                       <CheckCircle className="h-3 w-3" />
                       COMPLETE
@@ -466,14 +521,14 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   {/* Lesson X of Y pill */}
-                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-[11px] font-semibold text-gray-300 ring-1 ring-gray-700">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-xs font-semibold text-gray-300 ring-1 ring-gray-700">
                     <BookOpen className="h-3 w-3 text-blue-400" />
                     Lesson {currentLessonIndex + 1} of {totalLessons}
                   </span>
 
                   {/* Score pill — uses level color */}
                   <span
-                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1"
+                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ring-1"
                     style={{
                       backgroundColor: `${lessonLevel.cssColor}1a`,
                       color: lessonLevel.cssColor,
@@ -486,7 +541,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
                   {/* Module score pill */}
                   {moduleScoring && currentModuleId && currentModuleId > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-[11px] font-semibold text-gray-300 ring-1 ring-gray-700">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-xs font-semibold text-gray-300 ring-1 ring-gray-700">
                       <Flame className="h-3 w-3 text-orange-400" />
                       Module: {moduleScoring.cumulativeScore.toFixed(1)}%
                     </span>
@@ -572,7 +627,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
             {/* XP-style Reading Progress */}
             <div className="relative z-10 mt-4">
-              <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+              <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                 <div className="flex items-center gap-1">
                   <BookOpen className="h-3 w-3" style={{ color: lessonLevel.cssColor }} />
                   <span>Reading Progress</span>
@@ -625,7 +680,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   {/* Content — always visible */}
                   <TabsTrigger
                     value="content"
-                    className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                    className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all duration-200
                       data-[state=active]:shadow-sm
                       text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                       ${currentViewMode === 'content' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
@@ -642,7 +697,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   {hasQuiz && (
                     <TabsTrigger
                       value="quiz"
-                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all duration-200
                         data-[state=active]:shadow-sm
                         text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                         ${currentViewMode === 'quiz' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
@@ -663,7 +718,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   {hasAssignments && (
                     <TabsTrigger
                       value="assignments"
-                      className="flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all duration-200
                         data-[state=active]:shadow-sm
                         text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                         bg-transparent"
@@ -677,7 +732,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   {hasProject && (
                     <TabsTrigger
                       value="project"
-                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all duration-200
                         data-[state=active]:shadow-sm
                         text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                         ${currentViewMode === 'project' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
@@ -694,7 +749,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   {/* Notes — always visible */}
                   <TabsTrigger
                     value="notes"
-                    className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                    className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg transition-all duration-200
                       data-[state=active]:shadow-sm
                       text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                       ${currentViewMode === 'notes' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
@@ -773,8 +828,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onToggle={(open) => setExpandedCards(prev => ({ ...prev, progress: open }))}
                   badge={
                     isLessonCompleted
-                      ? <span className="text-[10px] font-bold text-emerald-400">{Math.round(lessonScore)}%</span>
-                      : <span className="text-[10px] text-blue-400 font-mono">{Math.round(lessonScore)}%</span>
+                      ? <span className="text-xs font-bold text-emerald-400">{Math.round(lessonScore)}%</span>
+                      : <span className="text-xs text-blue-400 font-mono">{Math.round(lessonScore)}%</span>
                   }
                 >
                 {isLessonCompleted ? (
@@ -819,7 +874,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="text-lg font-bold text-emerald-300">
                               {Math.floor(timeSpent / 60)}m {timeSpent % 60}s
                             </div>
-                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                            <div className="flex items-center justify-center gap-1 text-xs text-emerald-400/70 mt-0.5">
                               <Clock className="h-3 w-3" />
                               Time Spent
                             </div>
@@ -833,7 +888,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="text-lg font-bold text-emerald-300">
                               {Math.round(engagementScore)}%
                             </div>
-                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                            <div className="flex items-center justify-center gap-1 text-xs text-emerald-400/70 mt-0.5">
                               <Zap className="h-3 w-3" />
                               Engagement
                             </div>
@@ -847,7 +902,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="text-lg font-bold text-emerald-300">
                               {Math.round(readingProgress)}%
                             </div>
-                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                            <div className="flex items-center justify-center gap-1 text-xs text-emerald-400/70 mt-0.5">
                               <BookOpen className="h-3 w-3" />
                               Reading
                             </div>
@@ -960,9 +1015,70 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                                   </div>
                                 ) : (
                                   <div className="space-y-3">
+                                    {certificateEligibility && (
+                                      <div className="bg-gray-900/40 border border-gray-700/50 rounded-lg p-3 space-y-1 text-xs text-gray-300">
+                                        <p>
+                                          Course score:{' '}
+                                          <span className="font-bold text-yellow-300">
+                                            {(certificateEligibility.overall_score ??
+                                              certificateEligibility.current_score ??
+                                              0)
+                                              .toFixed(1)}
+                                            %
+                                          </span>{' '}
+                                          — certificate requires{' '}
+                                          <span className="font-bold text-yellow-300">
+                                            {certificateEligibility.certificate_passing_threshold ??
+                                              certificateEligibility.required_score ??
+                                              CERTIFICATE_PASSING_THRESHOLD}
+                                            %
+                                          </span>
+                                        </p>
+                                        {certificateEligibility.final_assessment_required && (
+                                          <p>
+                                            Final assessment:{' '}
+                                            {certificateEligibility.final_assessment_passed
+                                              ? `Passed${typeof certificateEligibility.final_assessment_score === 'number' ? ` (${certificateEligibility.final_assessment_score}%)` : ''}`
+                                              : typeof certificateEligibility.final_assessment_score === 'number'
+                                                ? `Not passed (${certificateEligibility.final_assessment_score}%)`
+                                                : 'Not attempted'}
+                                          </p>
+                                        )}
+                                        {certificateEligibility.eligible === false && (
+                                          <ul className="list-disc list-inside text-amber-300 space-y-0.5">
+                                            {(certificateEligibility.failure_reasons ?? []).length > 0 ? (
+                                              certificateEligibility.failure_reasons.map((code) => (
+                                                <li key={code}>
+                                                  {describeCertificateRequirement(
+                                                    code,
+                                                    certificateEligibility.required_score
+                                                  )}
+                                                </li>
+                                              ))
+                                            ) : (
+                                              (certificateEligibility.next_steps ?? []).map(
+                                                (step, idx) => <li key={idx}>{step}</li>
+                                              )
+                                            )}
+                                          </ul>
+                                        )}
+                                        {certificateEligibility.pending_gradings?.map((p) => (
+                                          <p
+                                            key={`${p.module_id}-${p.component}`}
+                                            className="text-amber-300"
+                                          >
+                                            {p.message}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    )}
                                     <Button 
                                       onClick={handleGenerateCertificate}
-                                      disabled={isGeneratingCertificate || !courseId}
+                                      disabled={
+                                        isGeneratingCertificate ||
+                                        !courseId ||
+                                        certificateEligibility?.eligible === false
+                                      }
                                       className="w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white font-semibold disabled:opacity-50"
                                     >
                                       {isGeneratingCertificate ? (
@@ -973,7 +1089,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                                       ) : (
                                         <>
                                           <GraduationCap className="h-5 w-5 mr-2" />
-                                          Get Your Certificate
+                                          {certificateEligibility?.eligible === false
+                                            ? 'Certificate Requirements Not Met'
+                                            : 'Get Your Certificate'}
                                         </>
                                       )}
                                     </Button>
@@ -1063,7 +1181,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                                 initial={{ opacity: 0, x: -8 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: 0.3 }}
-                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider"
                                 style={{
                                   backgroundColor: `${lessonLevel.cssColor}18`,
                                   color: lessonLevel.cssColor,
@@ -1108,7 +1226,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               >
                                 {Math.round(readingProgress)}%
                               </motion.div>
-                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                              <div className="flex items-center justify-center gap-1 text-xs mt-0.5">
                                 <BookOpen className="h-3 w-3" style={{ color: lessonLevel.cssColor }} />
                                 <span className="font-medium text-gray-400">Reading</span>
                               </div>
@@ -1147,7 +1265,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               >
                                 {Math.round(engagementScore)}%
                               </motion.div>
-                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                              <div className="flex items-center justify-center gap-1 text-xs mt-0.5">
                                 <Zap className="h-3 w-3 text-green-400" />
                                 <span className="font-medium text-gray-400">Engagement</span>
                               </div>
@@ -1184,7 +1302,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               >
                                 {Math.floor(timeSpent / 60)}m
                               </motion.div>
-                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                              <div className="flex items-center justify-center gap-1 text-xs mt-0.5">
                                 <Clock className="h-3 w-3 text-orange-400" />
                                 <span className="font-medium text-gray-400">Time</span>
                               </div>
@@ -1219,7 +1337,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                                 {Math.round(lessonScore)}%
                               </motion.span>
                               {lessonScore < LESSON_PASSING_THRESHOLD && (
-                                <span className="text-[10px] text-gray-500 font-mono">
+                                <span className="text-xs text-gray-500 font-mono">
                                   ({LESSON_PASSING_THRESHOLD - Math.round(lessonScore)}% left)
                                 </span>
                               )}
@@ -1248,7 +1366,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           </div>
 
                           {/* Checkpoint labels */}
-                          <div className="flex justify-between mt-1 text-[9px] text-gray-600 font-mono px-0.5">
+                          <div className="flex justify-between mt-1 text-xs text-gray-600 font-mono px-0.5">
                             <span>0%</span>
                             <span>40%</span>
                             <span>60%</span>
@@ -1262,7 +1380,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               initial={{ opacity: 0, y: 4 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ delay: 0.7 }}
-                              className="mt-2 flex items-center gap-1.5 text-[10px] text-gray-500"
+                              className="mt-2 flex items-center gap-1.5 text-xs text-gray-500"
                             >
                               <Star className="h-3 w-3 text-yellow-500/70" />
                               <span>
@@ -1412,7 +1530,11 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     </AlertDescription>
                   </Alert>
                 ) : lessonQuiz ? (
-                  <div key={`quiz-${lessonQuiz.id}-${lessonQuiz.attempts_used || 0}`}>
+                  /* Key on quiz identity ONLY. Attempt-count is deliberately
+                     excluded: it changes the moment a submission succeeds, and
+                     re-keying here unmounted the tracker mid-render and wiped
+                     the results screen the student had just earned. */
+                  <div key={`quiz-${lessonQuiz.id}`}>
                     <QuizAttemptTracker
                       quiz={lessonQuiz}
                       onStartQuiz={() => onTrackInteraction('quiz_started', { quizId: lessonQuiz.id })}
@@ -1600,7 +1722,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             onToggle={(open) => setExpandedCards(prev => ({ ...prev, requirements: open }))}
             badge={
               !isLessonCompleted && hasNextLesson
-                ? <span className="text-[10px] text-yellow-400 font-mono">{Math.round(readingProgress)}% read</span>
+                ? <span className="text-xs text-yellow-400 font-mono">{Math.round(readingProgress)}% read</span>
                 : undefined
             }
           >
@@ -1622,29 +1744,66 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   )}
                   {lessonQuiz && (
                     <li className="flex items-start space-x-2">
-                      <FileText className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-400" />
-                      <span>
-                        <strong>Quiz:</strong> Complete the lesson quiz
-                        <button
-                          onClick={() => setCurrentViewMode('quiz')}
-                          className="ml-2 text-blue-300 underline hover:text-blue-200"
-                        >
-                          Take Quiz →
-                        </button>
-                      </span>
+                      {quizRequirementMet ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-green-400" />
+                          <span>
+                            <strong>Quiz:</strong> Passed with {lessonQuiz.best_score}% (needs{' '}
+                            {effectiveQuizPassingScore}%)
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-400" />
+                          <span>
+                            <strong>Quiz:</strong> Score at least {effectiveQuizPassingScore}%
+                            {lessonQuiz.best_score ? ` (best so far: ${lessonQuiz.best_score}%)` : ''}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentViewMode('quiz')}
+                              className="ml-2 text-blue-300 underline hover:text-blue-200"
+                            >
+                              {lessonQuiz.best_score ? 'Retake Quiz' : 'Take Quiz'} &rarr;
+                            </button>
+                          </span>
+                        </>
+                      )}
                     </li>
                   )}
                   {lessonAssignments.length > 0 && (
                     <li className="flex items-start space-x-2">
-                      <Clipboard className="h-4 w-4 mt-0.5 flex-shrink-0 text-purple-400" />
+                      {assignmentsPending === 0 ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-green-400" />
+                          <span>
+                            <strong>Assignments:</strong> All {lessonAssignments.length} submitted
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Clipboard className="h-4 w-4 mt-0.5 flex-shrink-0 text-purple-400" />
+                          <span>
+                            <strong>Assignments:</strong> Submit{' '}
+                            {assignmentsPending === lessonAssignments.length
+                              ? `${lessonAssignments.length} assignment${lessonAssignments.length > 1 ? 's' : ''}`
+                              : `${assignmentsPending} of ${lessonAssignments.length} assignments`}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentViewMode('assignments')}
+                              className="ml-2 text-purple-300 underline hover:text-purple-200"
+                            >
+                              View Assignments &rarr;
+                            </button>
+                          </span>
+                        </>
+                      )}
+                    </li>
+                  )}
+                  {readingComplete && quizRequirementMet && assignmentsPending === 0 && (
+                    <li className="flex items-start space-x-2">
+                      <CheckCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-green-400" />
                       <span>
-                        <strong>Assignments:</strong> Submit {lessonAssignments.length} assignment{lessonAssignments.length > 1 ? 's' : ''}
-                        <button
-                          onClick={() => setCurrentViewMode('assignments')}
-                          className="ml-2 text-purple-300 underline hover:text-purple-200"
-                        >
-                          View Assignments →
-                        </button>
+                        All requirements met. This lesson will be marked complete automatically.
                       </span>
                     </li>
                   )}
@@ -1663,7 +1822,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             icon={<ArrowRight className="h-4 w-4 text-blue-400" />}
             expanded={expandedCards.nav}
             onToggle={(open) => setExpandedCards(prev => ({ ...prev, nav: open }))}
-            badge={<span className="text-[10px] text-gray-400 font-mono">{currentLessonIndex + 1}/{totalLessons}</span>}
+            badge={<span className="text-xs text-gray-400 font-mono">{currentLessonIndex + 1}/{totalLessons}</span>}
           >
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-4">
             <div className="flex justify-between items-center">
@@ -1736,7 +1895,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 <p className="text-sm font-semibold text-white leading-tight">
                   {currentLesson?.title}
                 </p>
-                <p className="text-[10px] text-gray-500 leading-tight">
+                <p className="text-xs text-gray-500 leading-tight">
                   Fullscreen Content
                 </p>
               </div>

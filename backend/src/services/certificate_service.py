@@ -17,10 +17,12 @@ from ..models.student_models import (
     ModuleProgress, AssessmentAttempt
 )
 
-# Canonical certificate threshold: the overall course score required for
-# certificate issuance. This is deliberately distinct from the lesson (80),
-# quiz (70 default) and assignment (60) thresholds.
-CERTIFICATE_PASSING_THRESHOLD = 70.0
+# Canonical certificate threshold re-exported for backwards compatibility.
+# The single source of truth is src/config/scoring.py — import from there.
+# This is deliberately distinct from the lesson (80), quiz (70 default) and
+# assignment (60) thresholds.
+from ..config.scoring import CERTIFICATE_PASSING_SCORE
+CERTIFICATE_PASSING_THRESHOLD = CERTIFICATE_PASSING_SCORE
 
 # Bounded retries when the random certificate number collides with an
 # already-issued number.
@@ -52,221 +54,23 @@ class CertificateService:
                              enrollment: Optional[Enrollment] = None) -> Dict:
         """Canonical certificate eligibility evaluation.
 
-        One rule for every caller (student routes, admin routes, automatic
-        completion triggers): every published module completed AND the
-        authoritative overall course score >= CERTIFICATE_PASSING_THRESHOLD.
+        Delegates to CourseProgressService.evaluate — the single
+        authoritative computation for course score, content completion,
+        and certificate eligibility (Rules A/B/C):
+
+        A. overall weighted course score >= 70 (every published module in
+           the denominator, unattempted counting 0),
+        B. every published required lesson completed,
+        C. every required module final assessment passed (>= 70).
 
         Returns a flat, fully-populated payload — no nested ``details``
         surprise layers, numeric failure counts, and a single documented
         module-breakdown shape.
         """
-        required_score = CERTIFICATE_PASSING_THRESHOLD
-
-        if enrollment is None:
-            enrollment = Enrollment.query.filter_by(
-                student_id=student_id, course_id=course_id
-            ).first()
-
-        if not enrollment:
-            return CertificateService._eligibility_result(
-                eligible=False,
-                reason='Not enrolled in course',
-                error_code='NOT_ENROLLED',
-                current_score=0.0,
-                required_score=required_score,
-                all_modules_completed=False,
-                completed_modules=0,
-                total_modules=0,
-                failed_modules=0,
-                module_breakdown=[],
-                missing_requirements=['enrollment'],
-            )
-
-        course = Course.query.get(course_id)
-        if not course:
-            return CertificateService._eligibility_result(
-                eligible=False,
-                reason='Course not found',
-                error_code='COURSE_NOT_FOUND',
-                current_score=0.0,
-                required_score=required_score,
-                all_modules_completed=False,
-                completed_modules=0,
-                total_modules=0,
-                failed_modules=0,
-                module_breakdown=[],
-                missing_requirements=['course'],
-            )
-
-        from .enrollment_progress_service import EnrollmentProgressService
-
-        counts = EnrollmentProgressService.get_progress_counts(
-            student_id, course_id, enrollment
+        from .course_progress_service import CourseProgressService
+        return CourseProgressService.evaluate(
+            student_id, course_id, enrollment=enrollment
         )
-        published_modules = EnrollmentProgressService.get_published_modules(course)
-
-        # Authoritative overall score: average of ALL published module scores
-        # (unattempted modules count as 0 — never a fabricated passing score).
-        overall_score = float(enrollment.calculate_course_score() or 0.0)
-
-        module_breakdown = []
-        completed_count = 0
-        failed_count = 0
-        for module in published_modules:
-            module_progress = ModuleProgress.query.filter_by(
-                student_id=student_id,
-                module_id=module.id,
-                enrollment_id=enrollment.id
-            ).first()
-
-            if module_progress:
-                status = module_progress.status
-                score = float(module_progress.cumulative_score or 0.0)
-                attempts = module_progress.attempts_count
-            else:
-                status = 'not_started'
-                score = 0.0
-                attempts = 0
-
-            if status == 'completed':
-                completed_count += 1
-            elif status == 'failed':
-                failed_count += 1
-
-            module_breakdown.append({
-                'module_id': module.id,
-                'module_name': module.title,
-                'status': status,
-                'score': round(score, 1),
-                'attempts': attempts,
-                'is_passing': score >= required_score,
-            })
-
-        all_modules_completed = bool(
-            counts.get('is_complete') and
-            len(published_modules) > 0 and
-            completed_count == len(published_modules)
-        )
-        score_ok = overall_score >= required_score
-
-        missing = []
-        if not all_modules_completed:
-            missing.append('all_modules_completed')
-        if not score_ok:
-            missing.append('overall_score')
-
-        eligible = all_modules_completed and score_ok
-
-        if eligible:
-            return CertificateService._eligibility_result(
-                eligible=True,
-                reason='Eligible for certificate',
-                error_code=None,
-                current_score=overall_score,
-                required_score=required_score,
-                all_modules_completed=True,
-                completed_modules=completed_count,
-                total_modules=len(published_modules),
-                failed_modules=failed_count,
-                module_breakdown=module_breakdown,
-                missing_requirements=[],
-                enrollment=enrollment,
-            )
-
-        # Pick a single primary error code for clients.
-        if 'all_modules_completed' in missing and 'overall_score' in missing:
-            error_code = 'REQUIREMENTS_NOT_MET'
-        elif 'all_modules_completed' in missing:
-            error_code = 'INCOMPLETE_MODULES'
-        else:
-            error_code = 'INSUFFICIENT_SCORE'
-
-        return CertificateService._eligibility_result(
-            eligible=False,
-            reason=CertificateService._summary_for(
-                missing, overall_score, required_score,
-                completed_count, len(published_modules)
-            ),
-            error_code=error_code,
-            current_score=overall_score,
-            required_score=required_score,
-            all_modules_completed=all_modules_completed,
-            completed_modules=completed_count,
-            total_modules=len(published_modules),
-            failed_modules=failed_count,
-            module_breakdown=module_breakdown,
-            missing_requirements=missing,
-            enrollment=enrollment,
-        )
-
-    @staticmethod
-    def _summary_for(missing, current_score, required_score,
-                     completed_modules, total_modules) -> str:
-        parts = []
-        if 'all_modules_completed' in missing:
-            remaining = max(0, total_modules - completed_modules)
-            parts.append(
-                f"Complete all published modules ({completed_modules}/{total_modules} done)"
-                + (f", including {remaining} remaining" if remaining else "")
-            )
-        if 'overall_score' in missing:
-            gap = required_score - current_score
-            parts.append(
-                f"Improve your overall course score by {gap:.1f}% "
-                f"(currently {current_score:.1f}%, requires {required_score:.0f}%)"
-            )
-        return ' and '.join(parts) if parts else 'Requirements not met'
-
-    @staticmethod
-    def _next_steps_for(missing, module_breakdown, current_score,
-                        required_score) -> List[str]:
-        steps = []
-        if 'all_modules_completed' in missing:
-            not_done = [
-                m for m in module_breakdown if m['status'] != 'completed'
-            ]
-            if not_done:
-                names = ', '.join(m['module_name'] for m in not_done[:3])
-                suffix = '…' if len(not_done) > 3 else ''
-                steps.append(f"Finish module(s): {names}{suffix}")
-            else:
-                steps.append('Complete every published lesson and assessment in the course')
-        if 'overall_score' in missing:
-            steps.append(
-                f"Raise your overall score to {required_score:.0f}% "
-                f"(currently {current_score:.1f}%) by improving low-scoring modules"
-            )
-        return steps or ['Review the course requirements and continue learning']
-
-    @staticmethod
-    def _eligibility_result(eligible, reason, error_code, current_score,
-                            required_score, all_modules_completed,
-                            completed_modules, total_modules, failed_modules,
-                            module_breakdown, missing_requirements,
-                            enrollment=None) -> Dict:
-        summary = reason if eligible else reason
-        return {
-            'eligible': eligible,
-            'reason': reason,
-            'error_code': error_code,
-            'summary': summary,
-            'next_steps': [] if eligible else CertificateService._next_steps_for(
-                missing_requirements, module_breakdown,
-                current_score, required_score
-            ),
-            'current_score': round(current_score, 1),
-            'overall_score': round(current_score, 1),  # compat alias
-            'required_score': required_score,
-            'passing_score': required_score,  # compat alias for admin normalizer
-            'all_modules_completed': all_modules_completed,
-            'completed_modules': completed_modules,
-            'total_modules': total_modules,
-            'failed_modules': failed_modules,
-            'module_breakdown': module_breakdown,
-            'missing_requirements': missing_requirements,
-            'failure_reasons': list(missing_requirements),
-            'enrollment': enrollment,  # internal use only — stripped by routes
-        }
 
     @staticmethod
     def check_certificate_eligibility(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
@@ -300,9 +104,7 @@ class CertificateService:
             canonical eligibility dict on eligibility failure.
         """
         try:
-            enrollment = Enrollment.query.filter_by(
-                student_id=student_id, course_id=course_id
-            ).first()
+            enrollment = Enrollment.get_canonical(student_id, course_id)
 
             if not enrollment:
                 return False, "Enrollment not found", {
@@ -694,9 +496,7 @@ class CertificateService:
 
         if target_course is not None:
             from .enrollment_progress_service import EnrollmentProgressService
-            enrollment = Enrollment.query.filter_by(
-                student_id=student_id, course_id=target_course.id
-            ).first()
+            enrollment = Enrollment.get_canonical(student_id, target_course.id)
             progress['computable'] = True
             progress['total_requirements'] = 1
             if enrollment:
@@ -724,9 +524,7 @@ class CertificateService:
             completed = 0
             total = len(advanced_courses)
             for course in advanced_courses:
-                enrollment = Enrollment.query.filter_by(
-                    student_id=student_id, course_id=course.id
-                ).first()
+                enrollment = Enrollment.get_canonical(student_id, course.id)
                 if enrollment and enrollment.status == 'completed':
                     completed += 1
             progress['computable'] = True

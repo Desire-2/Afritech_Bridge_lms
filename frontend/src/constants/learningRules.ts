@@ -18,3 +18,31 @@ export const CERTIFICATE_PASSING_THRESHOLD = 70;
  * backend `LessonCompletion.video_completed` rule (90%+ threshold).
  */
 export const VIDEO_WATCH_COMPLETE_THRESHOLD = 90;
+
+/**
+ * Human-readable label for a certificate eligibility `missing_requirements`
+ * code returned by the backend (Rules A/B/C). Kept here so every surface
+ * (learning player, transcript, gallery) explains blocked certificates the
+ * same way. The backend remains authoritative for eligibility itself.
+ */
+export function describeCertificateRequirement(
+  code: string,
+  requiredScore: number = CERTIFICATE_PASSING_THRESHOLD
+): string {
+  switch (code) {
+    case 'all_modules_completed':
+      return 'Not all modules are complete';
+    case 'all_lessons_completed':
+      return 'Not all lessons are completed';
+    case 'overall_score':
+      return `Overall score below ${requiredScore}%`;
+    case 'final_assessment':
+      return `Final assessment not passed (at least ${requiredScore}% required)`;
+    case 'enrollment':
+      return 'Not enrolled in this course';
+    case 'course':
+      return 'Course not found';
+    default:
+      return code;
+  }
+}

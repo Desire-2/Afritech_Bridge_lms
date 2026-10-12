@@ -13,6 +13,7 @@ export {
   DEFAULT_QUIZ_PASSING_THRESHOLD,
   ASSIGNMENT_PASSING_THRESHOLD,
   CERTIFICATE_PASSING_THRESHOLD,
+  describeCertificateRequirement,
 } from '@/constants/learningRules';
 
 export interface LessonScoreInputs {

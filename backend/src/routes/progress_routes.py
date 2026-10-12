@@ -142,87 +142,62 @@ def get_module_progress(module_id):
 @progress_bp.route("/course/<int:course_id>/completion-state", methods=["GET"])
 @student_required
 def get_course_completion_state(course_id):
-    """Authoritative course-completion decision (M-10).
+    """Authoritative course-completion decision (M-10) — READ-ONLY.
 
     Counts only published modules; a module counts as completed when its
     ModuleProgress.status is 'completed'. The overall score uses the same
-    authoritative weighted-score calculation as progression gates.
-    Certificate generation must key off this response, not client-side
-    lesson counting.
+    authoritative weighted-score calculation as progression gates and
+    certificate eligibility (CourseProgressService). Certificate generation
+    must key off this response, not client-side lesson counting.
+
+    GET never mutates enrollment state: derived status is owned exclusively
+    by EnrollmentProgressService.sync_enrollment, invoked from write paths
+    (lesson completion, module completion, certificate generation).
     """
     try:
         student_id = int(get_jwt_identity())
 
         from ..models.course_models import Course, Enrollment
-        from ..models.student_models import ModuleProgress
-        from ..services.enrollment_progress_service import EnrollmentProgressService
+        from ..services.course_progress_service import CourseProgressService
 
         course = Course.query.get(course_id)
         if not course:
             return jsonify({"success": False, "error": "Course not found"}), 404
 
-        enrollment = Enrollment.query.filter_by(
-            student_id=student_id, course_id=course_id
-        ).first()
+        enrollment = Enrollment.get_canonical(student_id, course_id)
         if not enrollment:
             return jsonify({"success": False, "error": "Not enrolled in course"}), 403
 
-        published_modules = EnrollmentProgressService.get_published_modules(course)
-        completed_modules = 0
-        locked_modules = 0
-        scores = []
-        incomplete = []
-
-        for module in published_modules:
-            progress = ModuleProgress.query.filter_by(
-                student_id=student_id,
-                module_id=module.id,
-                enrollment_id=enrollment.id
-            ).first()
-            status = progress.status if progress else 'locked'
-            if status == 'completed':
-                completed_modules += 1
-                scores.append(progress.cumulative_score or 0.0)
-            else:
-                locked_modules += 1
-                incomplete.append({
-                    "id": module.id,
-                    "title": module.title,
-                    "status": status,
-                    "score": (progress.cumulative_score or 0.0) if progress else 0.0
-                })
-            # Heal score fields for reporting without persisting
-            if progress:
-                progress.sync_scores_from_assessments()
-
-        total_modules = len(published_modules)
-        overall_score = (sum(scores) / len(scores)) if scores else 0.0
-        course_completed = total_modules > 0 and completed_modules == total_modules
-
-        # Keep the enrollment row in sync with the authoritative counts
-        if course_completed and not enrollment.completed_at:
-            from src.utils.time_utils import now_local
-            enrollment.completed_at = now_local()
-            enrollment.status = 'completed'
-            enrollment.progress = 1.0
-            db.session.commit()
-        elif not course_completed and enrollment.status == 'completed':
-            # Completed module count dropped (e.g. retake) — reopen honestly
-            enrollment.completed_at = None
-            enrollment.status = 'active'
-            enrollment.progress = completed_modules / total_modules if total_modules else 0.0
-            db.session.commit()
+        # Single canonical computation — same score/eligibility as
+        # certificates and detailed progress. No writes on this path.
+        state = CourseProgressService.evaluate(
+            student_id, course_id, enrollment=enrollment, course=course
+        )
 
         return jsonify({
             "success": True,
             "data": {
-                "course_completed": course_completed,
-                "completed_modules": completed_modules,
-                "total_modules": total_modules,
-                "locked_modules": locked_modules,
-                "overall_score": round(overall_score, 2),
+                "course_completed": state["course_completed"],
+                "completed_modules": state["completed_modules"],
+                "total_modules": state["total_modules"],
+                "locked_modules": state["locked_modules"],
+                "overall_score": round(state["overall_score"], 2),
                 "enrollment_completed": bool(enrollment.completed_at),
-                "incomplete_modules": incomplete
+                "incomplete_modules": state["incomplete_modules"],
+                # Certificate eligibility (Rules A/B/C) — same numbers the
+                # issuance paths enforce; threshold exposed for the UI.
+                "certificate_passing_threshold": state["certificate_passing_threshold"],
+                "thresholds": state["thresholds"],
+                "certificate_eligible": state["eligible"],
+                "certificate_missing_requirements": state["missing_requirements"],
+                "certificate_next_steps": state["next_steps"],
+                "all_lessons_completed": state["all_lessons_completed"],
+                "completed_lessons": state["completed_lessons"],
+                "total_lessons": state["total_lessons"],
+                "final_assessment_required": state["final_assessment_required"],
+                "final_assessment_passed": state["final_assessment_passed"],
+                "final_assessment_score": state["final_assessment_score"],
+                "pending_gradings": state["pending_gradings"],
             }
         }), 200
 

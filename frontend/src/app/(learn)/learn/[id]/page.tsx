@@ -8,6 +8,7 @@ import { AssessmentApiService, ProgressApiService } from '@/services/api';
 import { EnhancedModuleUnlockService } from '@/services/enhancedModuleUnlockService';
 import ContentAssignmentService, { type ContentQuiz, type ContentAssignment } from '@/services/contentAssignmentApi';
 import { Card, CardContent } from '@/components/ui/card';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
@@ -102,7 +103,11 @@ const LearningPage = () => {
   // Core state - ALL HOOKS MUST BE DECLARED FIRST
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
+  // Fatal load errors only (course/payment/cohort fetch failed with no usable
+  // player state). Recoverable, in-context problems use `navError` below so a
+  // single locked lesson never replaces the whole player.
   const [error, setError] = useState<string | null>(null);
+  const [navError, setNavError] = useState<string | null>(null);
   // Cohort-level payment info from 402/403 response
   const [paymentInfo, setPaymentInfo] = useState<Record<string, any> | null>(null);
   const [isPaymentRequired, setIsPaymentRequired] = useState(false);
@@ -133,6 +138,9 @@ const LearningPage = () => {
   });
   const [newBadgesEarned, setNewBadgesEarned] = useState<string[]>([]);
   const [showCertificateNotification, setShowCertificateNotification] = useState(false);
+  // Content complete but certificate blocked (score / final assessment /
+  // lesson gaps) — explained once instead of re-firing generation.
+  const [certificateBlockedMessage, setCertificateBlockedMessage] = useState<string | null>(null);
   
   // UI Enhancement State
   const [showUnlockAnimation, setShowUnlockAnimation] = useState(false);
@@ -1277,13 +1285,34 @@ const LearningPage = () => {
         totalAssignments: 0,
         completedAssignments: 0,
         overallScore: state.overall_score,
-        // Course-level overall score uses the canonical 70% threshold
-        // (CERTIFICATE_PASSING_THRESHOLD) — lesson completion is 80%.
-        passingThreshold: CERTIFICATE_PASSING_THRESHOLD
+        // Course-level overall score uses the canonical threshold reported
+        // by the backend (CERTIFICATE threshold, 70 — lesson completion is
+        // 80). Never computed client-side.
+        passingThreshold: state.certificate_passing_threshold ?? CERTIFICATE_PASSING_THRESHOLD
       };
       setCourseCompletion(completion);
 
-      if (state.course_completed && !certificateIssuedRef.current) {
+      // Certificate eligibility (score + content + final assessment) comes
+      // from the SAME backend evaluation — generation only fires when the
+      // backend says eligible, never on content completion alone.
+      const eligible =
+        state.certificate_eligible ?? (state.course_completed && state.overall_score >= completion.passingThreshold);
+
+      if (state.course_completed && !eligible && !certificateIssuedRef.current) {
+        certificateIssuedRef.current = true; // explain once, don't re-fire
+        const reasons = state.certificate_next_steps?.length
+          ? state.certificate_next_steps
+          : ['Meet the remaining certificate requirements to receive your certificate.'];
+        setCertificateBlockedMessage(
+          `Course complete — certificate pending: ${reasons.join('; ')}`
+        );
+        console.warn(
+          'Certificate blocked after course completion:',
+          state.certificate_missing_requirements
+        );
+      }
+
+      if (eligible && !certificateIssuedRef.current) {
         certificateIssuedRef.current = true;
         try {
           const certificateResponse = await StudentApiService.generateCertificate(courseId);
@@ -1546,6 +1575,7 @@ const LearningPage = () => {
         } else if (requestedTab === 'assessment') {
           setCurrentViewMode('content');
         }
+        let requestedLessonLocked = false;
         if (requestedLessonId && response.course?.modules) {
           for (const module of response.course.modules) {
             const requestedLesson = module.lessons?.find((lesson: any) => lesson.id === requestedLessonId);
@@ -1557,10 +1587,17 @@ const LearningPage = () => {
               if (viewAsStudent || isAccessibleInResponse(module.id) || requestedStatus === 'completed') {
                 lessonToSet = requestedLesson;
                 moduleIdToSet = module.id;
+              } else {
+                // Deep link targets a locked lesson: fall back to the resume
+                // path below and tell the learner why (never fail silently).
+                requestedLessonLocked = true;
               }
               break;
             }
           }
+        }
+        if (requestedLessonLocked && !lessonToSet) {
+          setNavError('The lesson from that link is still locked. Open the first available lesson to continue — your progress is safe.');
         }
         
         // 1. Resume the server-persisted lesson first. This is authoritative
@@ -1664,13 +1701,27 @@ const LearningPage = () => {
     fetchCourseData();
   }, [courseId, isAuthenticated, authLoading, viewAsStudent]);
 
-  // Keep the current route shareable without a full navigation.
+  // Keep the current route shareable, and make the browser's Back button
+  // step back through lessons.
+  //  - the very first sync (URL has no ?lesson yet) REPLACES, so Back still
+  //    leaves the player instead of pointing at nothing;
+  //  - a lesson CHANGE pushes a real history entry, so Back/Forward walks the
+  //    lessons (the popstate listener above replays it);
+  //  - tab switches REPLACE, so flipping between content/notes/quiz doesn't
+  //    bury the history stack under entries nobody wants.
   useEffect(() => {
     if (!currentLesson?.id || typeof window === 'undefined') return;
     const url = new URL(window.location.href);
-    url.searchParams.set('lesson', String(currentLesson.id));
-    url.searchParams.set('tab', currentViewMode);
-    window.history.replaceState({}, '', url.toString());
+    const nextLesson = String(currentLesson.id);
+    const nextTab = currentViewMode;
+    const currentLessonParam = url.searchParams.get('lesson');
+    if (currentLessonParam === nextLesson && url.searchParams.get('tab') === nextTab) return;
+
+    url.searchParams.set('lesson', nextLesson);
+    url.searchParams.set('tab', nextTab);
+
+    const isLessonChange = currentLessonParam !== null && currentLessonParam !== nextLesson;
+    window.history[isLessonChange ? 'pushState' : 'replaceState']({}, '', url.toString());
   }, [currentLesson?.id, currentViewMode]);
 
   // Fetch lesson completion status when course data is loaded
@@ -1770,8 +1821,21 @@ const LearningPage = () => {
     loadProjectsIntoSidebar();
   }, [courseData?.course?.modules, courseData?.course, courseId]);
 
+  // Get module status. Memoised because the sidebar and the lesson controls
+  // both receive it; a new function identity on every render re-renders the
+  // whole navigation tree.
+  const getModuleStatus = useCallback((moduleId: number): ModuleStatus => {
+    const canAccess = progressiveLearning?.canAccessModule(moduleId);
+    const progressStatus = progressiveLearning?.getModuleStatus(moduleId);
+
+    if (progressiveLearning && canAccess) {
+      return (progressStatus?.status as ModuleStatus) || 'locked';
+    }
+    return 'locked';
+  }, [progressiveLearning]);
+
   // Enhanced lesson selection with loading states, error handling, and accessibility
-  const handleLessonSelect = async (lessonId: number, moduleId: number) => {
+  const handleLessonSelect = useCallback(async (lessonId: number, moduleId: number) => {
     // Prevent duplicate navigation only. Content requests are stale-safe, so
     // learners can switch lessons while the previous request is still loading.
     if (currentLesson?.id === lessonId) {
@@ -1786,7 +1850,7 @@ const LearningPage = () => {
       
       if (!lesson) {
         console.error('❌ Target lesson not found:', lessonId);
-        setError('Lesson not found. Please refresh and try again.');
+        setNavError('That lesson could not be found in this course. Refresh the page if the problem continues.');
         return;
       }
 
@@ -1807,7 +1871,13 @@ const LearningPage = () => {
         targetModuleStatus !== 'locked';
 
       if (!canAccessTarget) {
-        setError('This lesson is locked. Complete the previous module to continue.');
+        // Recoverable: keep the player shell and explain why the lesson is locked.
+        const previousModule = targetModuleIndex > 0 ? courseModules[targetModuleIndex - 1] : null;
+        setNavError(
+          previousModule
+            ? `“${lesson.title}” is locked. Complete module “${previousModule.title}” to unlock it.`
+            : `“${lesson.title}” is locked. Complete the previous lessons to unlock it.`
+        );
         return;
       }
 
@@ -1816,7 +1886,8 @@ const LearningPage = () => {
         
         // Show loading state
         setContentLoading(true);
-        setError(null); // Clear any previous errors
+        setError(null); // Clear any previous fatal errors
+        setNavError(null); // Clear any previous navigation error
         
         // Save current progress before switching
         if (currentLesson && forceSaveProgress) {
@@ -1886,11 +1957,20 @@ const LearningPage = () => {
         
       } catch (error) {
         console.error('❌ Failed to navigate to lesson:', error);
-        setError('Failed to load lesson. Please try again.');
+        setNavError('That lesson could not be opened. You are still on your current lesson — try again in a moment.');
         setContentLoading(false);
       }
     }
-  };
+  }, [
+    currentLesson,
+    currentModuleId,
+    courseData,
+    viewAsStudent,
+    lessonCompletionStatus,
+    getModuleStatus,
+    forceSaveProgress,
+    flushNotes,
+  ]);
 
   // Assessment navigation uses the same lesson transition pipeline as the
   // sidebar and lesson controls. This keeps progress/notes flushing and stale
@@ -2321,6 +2401,9 @@ const LearningPage = () => {
       }]);
     } catch (error) {
       console.warn('Failed to update lesson bookmark:', error);
+      // The control deliberately does NOT flip on failure, so say why —
+      // otherwise the click looks like it did nothing.
+      toast.error('Could not save your bookmark. Please try again.');
     }
   }, [isBookmarked]);
 
@@ -2331,7 +2414,7 @@ const LearningPage = () => {
       lessonId: currentLesson?.id,
       timestamp: new Date().toISOString()
     }]);
-    
+
     try {
       if (navigator.share && currentLesson) {
         await navigator.share({
@@ -2341,10 +2424,15 @@ const LearningPage = () => {
         });
       } else if (navigator.clipboard) {
         await navigator.clipboard.writeText(window.location.href);
+        toast.success('Lesson link copied to clipboard');
+      } else {
+        toast.error('Sharing is not supported in this browser.');
       }
-    } catch (error) {
-      // User cancellation and unavailable clipboard permissions are harmless.
+    } catch (error: any) {
+      // AbortError = the learner dismissed the share sheet; that's not a failure.
+      if (error?.name === 'AbortError') return;
       console.warn('Lesson share was not completed:', error);
+      toast.error('Could not share this lesson. Your progress was not affected.');
     }
   };
 
@@ -2401,21 +2489,16 @@ const LearningPage = () => {
     }
   }, [currentLesson?.id, moduleScoring, checkCourseCompletion]);
 
-  // Get module status
-  const getModuleStatus = (moduleId: number): ModuleStatus => {
-    const canAccess = progressiveLearning?.canAccessModule(moduleId);
-    const progressStatus = progressiveLearning?.getModuleStatus(moduleId);
-    
-    if (progressiveLearning && canAccess) {
-      return (progressStatus?.status as ModuleStatus) || 'locked';
-    }
-    return 'locked';
-  };
-
   // Navigation helpers
-  const courseModules = courseData?.course?.modules || courseData?.modules || [];
-  const allLessons = NavUtils.getAllLessons(courseModules);
-  const currentLessonIndex = NavUtils.getCurrentLessonIndex(currentLesson, courseModules);
+  const courseModules = useMemo(
+    () => courseData?.course?.modules || courseData?.modules || [],
+    [courseData]
+  );
+  const allLessons = useMemo(() => NavUtils.getAllLessons(courseModules), [courseModules]);
+  const currentLessonIndex = useMemo(
+    () => NavUtils.getCurrentLessonIndex(currentLesson, courseModules),
+    [currentLesson, courseModules]
+  );
 
   const hasPrevLesson = NavUtils.hasPrevLesson(
     currentLessonIndex,
@@ -2619,7 +2702,7 @@ const LearningPage = () => {
   if (authLoading) {
     return (
       <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
-        <Card className="w-96 bg-gray-800/50 border-gray-700">
+        <Card className="w-full max-w-sm mx-4 bg-gray-800/50 border-gray-700">
           <CardContent className="p-8 text-center">
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-green-400" />
             <h3 className="text-lg font-semibold mb-2 text-white">Verifying Your Access</h3>
@@ -2634,7 +2717,7 @@ const LearningPage = () => {
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
-        <Card className="w-96 bg-gray-800/50 border-gray-700">
+        <Card className="w-full max-w-sm mx-4 bg-gray-800/50 border-gray-700">
           <CardContent className="p-8 text-center">
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-orange-400" />
             <h3 className="text-lg font-semibold mb-2 text-white">Access Required</h3>
@@ -2649,7 +2732,7 @@ const LearningPage = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
-        <Card className="w-96 bg-gray-800/50 border-gray-700">
+        <Card className="w-full max-w-sm mx-4 bg-gray-800/50 border-gray-700">
           <CardContent className="p-8 text-center">
             <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-400" />
             <h3 className="text-lg font-semibold mb-2 text-white">Loading Learning Interface</h3>
@@ -2935,6 +3018,25 @@ const LearningPage = () => {
         helpDialogOpen={helpDialogOpen}
         setHelpDialogOpen={setHelpDialogOpen}
       />
+
+      {/* Recoverable navigation / action error — never replaces the player. */}
+      {navError && (
+        <div
+          role="alert"
+          className="relative z-40 mx-3 mt-3 flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+          <p className="flex-1 leading-relaxed">{navError}</p>
+          <button
+            type="button"
+            onClick={() => setNavError(null)}
+            className="shrink-0 rounded p-1 text-amber-300 hover:bg-amber-500/20 hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            aria-label="Dismiss message"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       <div className={focusMode ? 'block' : 'flex'}>
         {!focusMode && <LearningSidebar
@@ -3717,7 +3819,7 @@ const LearningPage = () => {
                   >
                     <div className="flex items-center justify-center gap-2 sm:gap-3">
                       <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
-                      <span>📚 Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}</span>
+                      <span>Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}</span>
                     </div>
                   </Button>
                 </motion.div>
@@ -3746,6 +3848,39 @@ const LearningPage = () => {
       </Dialog>
 
       <AnimatePresence>
+        {certificateBlockedMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -100 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -100 }}
+            className="fixed top-4 right-4 z-50"
+            role="alert"
+          >
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-xl p-6 shadow-2xl max-w-sm">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-white/20 rounded-full">
+                  <Award className="h-6 w-6" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-lg">Certificate Pending</h4>
+                  <p className="text-amber-100 text-sm">{certificateBlockedMessage}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCertificateBlockedMessage(null)}
+                  className="text-white hover:bg-white/20"
+                  aria-label="Dismiss certificate notice"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {showCertificateNotification && (
           <motion.div
             initial={{ opacity: 0, y: -100 }}
@@ -3759,7 +3894,7 @@ const LearningPage = () => {
                   <Award className="h-6 w-6" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-lg">🎓 Course Completed!</h4>
+                  <h4 className="font-bold text-lg">Course Completed!</h4>
                   <p className="text-green-100 text-sm">Your certificate is ready</p>
                 </div>
                 <Button

@@ -243,6 +243,20 @@ export interface CertificateEligibilityRequirements {
   error_code: string | null;
   summary: string;
   next_steps: string[];
+  /** Present when the backend reports them (unified eligibility payload). */
+  all_lessons_completed?: boolean;
+  content_complete?: boolean;
+  course_completed?: boolean;
+  certificate_passing_threshold?: number;
+  final_assessment_required?: boolean;
+  final_assessment_passed?: boolean;
+  final_assessment_score?: number | null;
+  pending_gradings?: Array<{
+    module_id: number;
+    module_name: string;
+    component: string;
+    message: string;
+  }>;
 }
 
 export interface CertificateEligibilityResult {
@@ -801,6 +815,32 @@ export class StudentApiService {
     overall_score: number;
     enrollment_completed: boolean;
     incomplete_modules: Array<{ id: number; title: string; status: string; score: number }>;
+    /** Canonical certificate threshold reported by the backend (70). */
+    certificate_passing_threshold?: number;
+    thresholds?: {
+      lesson_passing_score: number;
+      module_passing_score: number;
+      certificate_passing_score: number;
+      final_assessment_passing_score: number;
+      quiz_passing_score: number;
+      assignment_passing_score: number;
+    };
+    /** Certificate eligibility (Rules A/B/C) from the same evaluation. */
+    certificate_eligible?: boolean;
+    certificate_missing_requirements?: string[];
+    certificate_next_steps?: string[];
+    all_lessons_completed?: boolean;
+    completed_lessons?: number;
+    total_lessons?: number;
+    final_assessment_required?: boolean;
+    final_assessment_passed?: boolean;
+    final_assessment_score?: number | null;
+    pending_gradings?: Array<{
+      module_id: number;
+      module_name: string;
+      component: string;
+      message: string;
+    }>;
   }> {
     const response = await api.get(`/student/progress/course/${courseId}/completion-state`);
     if (!response.data?.success || !response.data?.data) {

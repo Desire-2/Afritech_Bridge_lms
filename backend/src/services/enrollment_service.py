@@ -3,6 +3,7 @@ from ..utils.time_utils import now_local
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 import json
 
 from ..models.user_models import db, User
@@ -99,10 +100,8 @@ class EnrollmentService:
             if not course.is_published:
                 return False, "Course is not published", {}
                 
-            # Check if already enrolled
-            existing_enrollment = Enrollment.query.filter_by(
-                student_id=student_id, course_id=course_id
-            ).first()
+            # Check if already enrolled (canonical live enrollment)
+            existing_enrollment = Enrollment.get_canonical(student_id, course_id)
             
             if existing_enrollment:
                 return False, "Already enrolled in this course", {
@@ -116,12 +115,22 @@ class EnrollmentService:
             # Check prerequisites (if implemented)
             if not EnrollmentService._check_prerequisites(user, course):
                 return False, "Prerequisites not met", {}
-                
-            # Create enrollment
-            enrollment = EnrollmentService._create_enrollment(student_id, course_id)
             
-            # Commit the transaction
-            db.session.commit()
+            # Create enrollment
+            try:
+                enrollment = EnrollmentService._create_enrollment(student_id, course_id)
+                # Commit the transaction
+                db.session.commit()
+            except IntegrityError:
+                # Concurrent duplicate (partial unique index on direct
+                # enrollments) — roll back and return the winner.
+                db.session.rollback()
+                existing = Enrollment.get_canonical(student_id, course_id)
+                if existing:
+                    return False, "Already enrolled in this course", {
+                        "enrollment_id": existing.id
+                    }
+                raise
             
             return True, "Successfully enrolled in course", {
                 "enrollment_id": enrollment.id,

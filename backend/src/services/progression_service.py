@@ -405,10 +405,11 @@ class ProgressionService:
                     lesson_failures.append(f"Lesson '{lesson.title}': {', '.join(missing_reqs) if missing_reqs else req_reason}")
                     continue
                 
-                # Check lesson score threshold (80% minimum for lesson completion)
+                # Check lesson score threshold (LESSON_PASSING_SCORE minimum)
+                from ..config.scoring import LESSON_PASSING_SCORE, MODULE_PASSING_SCORE
                 lesson_score = completion.calculate_lesson_score()
-                if lesson_score < 80.0:
-                    lesson_failures.append(f"Lesson '{lesson.title}' score {lesson_score:.1f}% < 80%")
+                if lesson_score < LESSON_PASSING_SCORE:
+                    lesson_failures.append(f"Lesson '{lesson.title}' score {lesson_score:.1f}% < {LESSON_PASSING_SCORE:.0f}%")
             
             # If ANY lesson fails, module cannot be completed
             if lesson_failures:
@@ -423,8 +424,9 @@ class ProgressionService:
             cumulative_score = module_progress.calculate_cumulative_score()
             current_app.logger.info(f"All lessons passed. Module {module_id} cumulative_score={cumulative_score:.2f}% for student {student_id}")
             
-            # Check if meets passing requirement (70%)
-            if cumulative_score >= 70.0:
+            # Check if meets the module passing requirement
+            from ..config.scoring import MODULE_PASSING_SCORE
+            if cumulative_score >= MODULE_PASSING_SCORE:
                 current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - all {lessons_checked} lessons satisfied - unlocking next module")
                 
                 # Mark module as completed and save cumulative score
@@ -436,6 +438,14 @@ class ProgressionService:
                 
                 # Unlock next module
                 ProgressionService._unlock_next_module(student_id, module_id, enrollment_id)
+                
+                # Keep derived enrollment completion in step NOW (write path
+                # owns enrollment status — GET endpoints never write it).
+                from .enrollment_progress_service import EnrollmentProgressService
+                if enrollment_id:
+                    enrollment = Enrollment.query.get(enrollment_id)
+                    if enrollment:
+                        EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
                 
                 db.session.commit()
                 current_app.logger.info(f"✅ Module {module_id} completion committed to database")

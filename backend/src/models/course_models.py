@@ -2,6 +2,8 @@ from ..utils.time_utils import now_local
 # Course Management Models for Afritec Bridge LMS
 
 from datetime import datetime, timezone
+from typing import Optional
+import sqlalchemy as sa
 # Assuming db is initialized in main.py or a central extensions file and imported here
 from .user_models import db, User # Assuming user_models.py is in the same directory and has db
 
@@ -951,16 +953,55 @@ class Enrollment(db.Model):
     __table_args__ = (
         # Allow same student in different cohorts of the same course
         db.UniqueConstraint('student_id', 'course_id', 'application_window_id', name='_student_course_cohort_uc'),
+        # Direct (no-window) enrollments: NULLs are distinct in SQL, so the
+        # constraint above cannot dedupe them — this partial index can.
+        # Mirrored by migration b7e8f9a0c1d2 for existing databases.
+        db.Index(
+            'uq_enrollments_direct_student_course',
+            'student_id', 'course_id',
+            unique=True,
+            postgresql_where=sa.text('application_window_id IS NULL'),
+            sqlite_where=sa.text('application_window_id IS NULL'),
+        ),
     )
 
     def __repr__(self):
         return f'<Enrollment User {self.student_id} in Course {self.course_id}>'
-    
+
+    @staticmethod
+    def get_canonical(student_id: int, course_id: int,
+                      application_window_id=None) -> Optional['Enrollment']:
+        """The enrollment every progress/certificate query must use.
+
+        Prefers live enrollments (active/completed) over terminated ones and,
+        among equals, the most recently created row — never an arbitrary
+        ``.first()`` that could latch onto a stale duplicate.
+        """
+        query = Enrollment.query.filter_by(
+            student_id=student_id, course_id=course_id
+        )
+        if application_window_id is not None:
+            query = query.filter_by(application_window_id=application_window_id)
+        enrollments = query.order_by(Enrollment.id.desc()).all()
+        if not enrollments:
+            return None
+        live = [
+            e for e in enrollments
+            if e.status in ('active', 'completed', 'pending_payment', 'suspended')
+        ]
+        if live:
+            # Prefer completed, then the newest live row.
+            completed = [e for e in live if e.status == 'completed']
+            return completed[0] if completed else live[0]
+        return enrollments[0]
+
     def calculate_course_score(self):
         """
-        Calculate the overall course score as the average of all published
-        module scores. Modules the student has not scored yet count as 0, so
-        an unfinished course can never report a full score.
+        Authoritative overall course score: the arithmetic mean of every
+        published module's weighted cumulative score
+        (ModuleProgress.calculate_cumulative_score — the SAME formula module
+        completion/unlocking uses). Unattempted or missing-progress modules
+        contribute 0.0 so an unfinished course can never report a full score.
         Returns a score from 0-100.
         """
         from ..models.student_models import ModuleProgress
@@ -969,20 +1010,24 @@ class Enrollment(db.Model):
         course_modules = [m for m in self.course.modules.all() if m.is_published]
         if not course_modules:
             return 0.0
-        
-        total_score = 0.0
-        
-        for module in course_modules:
-            # Get module progress for this student
-            module_progress = ModuleProgress.query.filter_by(
+
+        # One query for all of this enrollment's module progress rows.
+        progress_by_module = {
+            row.module_id: row
+            for row in ModuleProgress.query.filter_by(
                 student_id=self.student_id,
-                module_id=module.id,
-                enrollment_id=self.id
-            ).first()
-            
+                enrollment_id=self.id,
+            ).all()
+        }
+
+        total_score = 0.0
+        for module in course_modules:
+            module_progress = progress_by_module.get(module.id)
             if module_progress:
-                # Use the module score (average of all lesson scores)
-                total_score += module_progress.calculate_module_score()
+                # Weighted cumulative score: reading/engagement + quizzes +
+                # assignments + projects + final assessment with dynamic
+                # weights — matches the progression system exactly.
+                total_score += float(module_progress.calculate_cumulative_score() or 0.0)
             # else: unattempted published module contributes 0
         
         return (total_score / len(course_modules))

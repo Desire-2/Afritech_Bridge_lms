@@ -212,9 +212,7 @@ class EnrollmentProgressService:
 
     @staticmethod
     def sync_student_course(student_id: int, course_id: int, commit: bool = True) -> Dict:
-        enrollment = Enrollment.query.filter_by(
-            student_id=student_id, course_id=course_id
-        ).first()
+        enrollment = Enrollment.get_canonical(student_id, course_id)
         if not enrollment:
             return {}
         return EnrollmentProgressService.sync_enrollment(enrollment, commit=commit)

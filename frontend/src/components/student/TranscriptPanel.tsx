@@ -28,6 +28,7 @@ import {
   transcriptPdfFilename,
   safeTranscriptCourseTitle,
 } from '@/lib/transcriptPdf';
+import { describeCertificateRequirement } from '@/constants/learningRules';
 
 const safeTitle = safeTranscriptCourseTitle;
 
@@ -110,18 +111,28 @@ export default function TranscriptPanel() {
         }));
         await loadTranscript();
       } else {
-        const reasons = result.requirements?.failure_reasons?.join('; ');
+        const req = result.requirements;
+        const required = req?.required_score;
+        const reasons = req?.failure_reasons
+          ?.map((code) => describeCertificateRequirement(code, required))
+          .join('; ');
+        const pending = req?.pending_gradings?.length
+          ? 'Waiting for instructor grading'
+          : null;
+        const detail = [reasons, pending].filter(Boolean).join('; ');
         setCourseMessage(prev => ({
           ...prev,
           [courseId]: {
             type: 'error',
-            text: reasons
-              ? `${result.summary || result.message || 'Requirements not met'} — ${reasons}`
+            text: detail
+              ? `${result.summary || result.message || 'Requirements not met'} — ${detail}`
               : result.summary || result.message || 'Requirements not met',
           },
         }));
       }
     } catch (err: any) {
+      // Network/server failure — clearly distinct from legitimate
+      // ineligibility (which is handled in the try block above).
       const body = err?.response?.data || {};
       setCourseMessage(prev => ({
         ...prev,

@@ -2119,11 +2119,10 @@ def get_detailed_course_progress(course_id):
     
     try:
         from ..services.enrollment_progress_service import EnrollmentProgressService
+        from ..config.scoring import CERTIFICATE_PASSING_SCORE
         
         course = Course.query.get_or_404(course_id)
-        enrollment = Enrollment.query.filter_by(
-            student_id=current_user_id, course_id=course_id
-        ).first()
+        enrollment = Enrollment.get_canonical(current_user_id, course_id)
         
         # Published modules/lessons only — drafts must not affect student stats
         modules = EnrollmentProgressService.get_published_modules(course)
@@ -2163,17 +2162,12 @@ def get_detailed_course_progress(course_id):
                 ).count()
         
         # Overall score from the authoritative weighted calculation
-        module_scores = []
-        for module in modules:
-            module_progress = ModuleProgress.query.filter_by(
-                student_id=current_user_id,
-                module_id=module.id,
-                **({"enrollment_id": enrollment.id} if enrollment else {})
-            ).first()
-            if module_progress:
-                module_scores.append(module_progress.calculate_module_weighted_score())
-        
-        overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
+        # (mean over ALL published modules; unattempted = 0 — same formula
+        # certificates and completion-state use).
+        if enrollment:
+            overall_score = float(enrollment.calculate_course_score() or 0.0)
+        else:
+            overall_score = 0.0
         
         return jsonify({
             "lessons_completed": completed_lessons,
@@ -2182,7 +2176,8 @@ def get_detailed_course_progress(course_id):
             "total_quizzes": total_quizzes,
             "completed_assignments": completed_assignments,
             "total_assignments": total_assignments,
-            "overall_score": overall_score
+            "overall_score": overall_score,
+            "certificate_passing_threshold": CERTIFICATE_PASSING_SCORE,
         }), 200
         
     except Exception as e:
