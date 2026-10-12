@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,9 @@ import {
   Award,
   CheckCircle,
   AlertCircle,
-  Download,
+  AlertTriangle,
+  PartyPopper,
+  XCircle,
   X,
   Send,
   Paperclip,
@@ -66,13 +68,30 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const [resubmittedForCurrentRequest, setResubmittedForCurrentRequest] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [textResponseError, setTextResponseError] = useState<string | null>(null);
   const [assignmentData, setAssignmentData] = useState<ContentAssignment>(assignment);
   const stagedFilesRef = useRef<StagedFile[]>([]);
   const assignmentIdRef = useRef(assignment.id);
+  const assignmentDataRef = useRef<ContentAssignment>(assignment);
+  const errorAlertRef = useRef<HTMLDivElement>(null);
+  const responseFieldId = useId();
+  const responseErrorId = useId();
+  const fileUploadFieldId = useId();
 
   useEffect(() => {
     stagedFilesRef.current = stagedFiles;
   }, [stagedFiles]);
+
+  useEffect(() => {
+    assignmentDataRef.current = assignmentData;
+  }, [assignmentData]);
+
+  // Move focus to the error alert after a failed submission/validation
+  useEffect(() => {
+    if (error || validationErrors.length > 0) {
+      errorAlertRef.current?.focus();
+    }
+  }, [error, validationErrors]);
 
   // Sync assignment data when props change
   React.useEffect(() => {
@@ -86,6 +105,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       setSubmissionResult(null);
       setError(null);
       setValidationErrors([]);
+      setTextResponseError(null);
       setResubmittedForCurrentRequest(false);
       assignmentIdRef.current = assignment.id;
     }
@@ -109,39 +129,79 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     };
   }, []);
 
-  const isFileUpload = assignmentData.assignment_type === 'file_upload' || assignmentData.assignment_type === 'both';
-  const isTextResponse = assignmentData.assignment_type === 'text_response' || assignmentData.assignment_type === 'both';
+  // Single source of truth for rendering: prefer the freshest data (background
+  // poll / manual refresh) over the original prop when timestamps say so.
+  const displayAssignment: ContentAssignment = (() => {
+    const polledTime = Date.parse(assignmentData.updated_at || '') || 0;
+    const propTime = Date.parse(assignment.updated_at || '') || 0;
+    return polledTime >= propTime ? assignmentData : assignment;
+  })();
+
+  const isFileUpload = displayAssignment.assignment_type === 'file_upload' || displayAssignment.assignment_type === 'both';
+  const isTextResponse = displayAssignment.assignment_type === 'text_response' || displayAssignment.assignment_type === 'both';
   const isResubmitMode = submissionMode === 'resubmit';
 
   // Enhanced status checking using latest assignment data
-  const isSubmitted = Boolean(assignmentData.submission_status?.submitted);
-  const isGraded = assignmentData.submission_status?.status === 'graded';
+  const isSubmitted = Boolean(displayAssignment.submission_status?.submitted);
+  const isGraded = displayAssignment.submission_status?.status === 'graded';
   const isPendingReview = isSubmitted && !isGraded;
   
   // More flexible modification request detection
   const hasModificationRequest = Boolean(
-    assignmentData.modification_requested || 
-    assignmentData.modification_request_reason ||
-    (assignmentData.submission_status?.status === 'needs_revision')
+    displayAssignment.modification_requested || 
+    displayAssignment.modification_request_reason ||
+    (displayAssignment.submission_status?.status === 'needs_revision')
   );
   
-  // Only allow resubmit when instructor specifically requests modifications
-  // Only allow resubmit if not already resubmitted for this modification request
-  const canResubmit = hasModificationRequest && isSubmitted && !resubmittedForCurrentRequest;
+  // Only allow resubmit when instructor specifically requests modifications,
+  // the backend still permits it, and the student has not already resubmitted
+  // for the current modification request.
+  const backendAllowsResubmit = displayAssignment.can_resubmit !== false;
+  const canResubmit = hasModificationRequest && isSubmitted && !resubmittedForCurrentRequest && backendAllowsResubmit;
 
-  const allowedFileTypes = assignmentData.allowed_file_types 
-    ? assignmentData.allowed_file_types.split(',').map(t => t.trim()) 
+  const allowedFileTypes = displayAssignment.allowed_file_types 
+    ? displayAssignment.allowed_file_types.split(',').map(t => t.trim()) 
     : ['*'];
   
-  const maxFileSizeMB = assignmentData.max_file_size_mb || 10;
+  const maxFileSizeMB = displayAssignment.max_file_size_mb || 10;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+
+  // Compare a freshly fetched assignment against the last known data to detect
+  // a new/changed instructor modification request (a new revision round).
+  const detectModificationRequestChange = (updatedData: ContentAssignment) => {
+    const prevData = assignmentDataRef.current;
+    const newModReq = Boolean(updatedData.modification_requested);
+    const newStatus = updatedData.submission_status?.status;
+    const newModAt = updatedData.modification_request_at || '';
+    const oldModReq = Boolean(prevData.modification_requested);
+    const oldStatus = prevData.submission_status?.status;
+    const oldModAt = prevData.modification_request_at || '';
+    const meaningfulChange = newModReq !== oldModReq || newStatus !== oldStatus || newModAt !== oldModAt;
+    const isNewModificationRequest =
+      (newModReq && !oldModReq) ||
+      (newStatus === 'needs_revision' && oldStatus !== 'needs_revision') ||
+      (newModReq && Boolean(newModAt) && newModAt !== oldModAt);
+    return { meaningfulChange, isNewModificationRequest };
+  };
+
+  // A new revision round re-opens resubmission for the current request
+  const reopenResubmission = () => {
+    setResubmittedForCurrentRequest(false);
+    setTextResponseError(null);
+    toast.info('Your instructor has requested modifications for this assignment.');
+  };
 
   // Function to refresh assignment data
   const refreshAssignmentData = async () => {
     setRefreshing(true);
     try {
       const updatedData = await ContentAssignmentService.refreshAssignmentData(assignmentData.id);
+      const { isNewModificationRequest } = detectModificationRequestChange(updatedData);
       setAssignmentData(updatedData);
+      assignmentDataRef.current = updatedData;
+      if (isNewModificationRequest) {
+        reopenResubmission();
+      }
       toast.success('Assignment data refreshed');
     } catch (error) {
       console.error('Failed to refresh assignment data:', error);
@@ -155,15 +215,13 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const silentRefresh = async () => {
     try {
       const updatedData = await ContentAssignmentService.refreshAssignmentData(assignmentData.id);
+      const { meaningfulChange, isNewModificationRequest } = detectModificationRequestChange(updatedData);
       // Only update if something meaningful changed
-      const newModReq = Boolean(updatedData.modification_requested);
-      const newStatus = updatedData.submission_status?.status;
-      const oldModReq = Boolean(assignmentData.modification_requested);
-      const oldStatus = assignmentData.submission_status?.status;
-      if (newModReq !== oldModReq || newStatus !== oldStatus) {
+      if (meaningfulChange) {
         setAssignmentData(updatedData);
-        if (newModReq && !oldModReq) {
-          toast.info('Your instructor has requested modifications for this assignment.');
+        assignmentDataRef.current = updatedData;
+        if (isNewModificationRequest) {
+          reopenResubmission();
         }
       }
     } catch {
@@ -287,12 +345,20 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   };
 
   const handleSubmit = async () => {
+    // Double-submit protection: no-op while a submission is already in flight
+    if (submitting) {
+      toast.error('Submission already in progress');
+      return;
+    }
+    
     // Validation
     if (isTextResponse && !textResponse.trim()) {
+      setTextResponseError('Please provide a text response');
       setError('Please provide a text response');
       toast.error('Text response is required');
       return;
     }
+    setTextResponseError(null);
     
     const validStagedFiles = typeof FileUploadService.getValidStagedFiles === 'function'
       ? FileUploadService.getValidStagedFiles(stagedFiles)
@@ -301,11 +367,6 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     if (isFileUpload && validStagedFiles.length === 0 && !isTextResponse) {
       setError('Please select at least one valid file');
       toast.error('File upload is required');
-      return;
-    }
-    
-    if (submitting) {
-      toast.error('Submission already in progress');
       return;
     }
     
@@ -470,8 +531,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   };
 
   const getDaysUntilDue = () => {
-    if (!assignment.due_date) return null;
-    const dueDate = new Date(assignment.due_date);
+    if (!displayAssignment.due_date) return null;
+    const dueDate = new Date(displayAssignment.due_date);
     const now = new Date();
     const diffTime = dueDate.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -495,24 +556,35 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <FileText className="h-3 w-3 mr-1" />
                     Assignment
                   </Badge>
-                  {assignment.submission_status?.status === 'graded' && (
+                  {displayAssignment.submission_status?.status === 'graded' && (
                     <Badge variant="outline" className="bg-white/50 backdrop-blur-sm border-green-300">
                       <Award className="h-3 w-3 mr-1 text-green-600" />
                       Graded
                     </Badge>
                   )}
-                  {assignment.submission_status?.submitted && !assignment.submission_status?.status && (
+                  {displayAssignment.submission_status?.submitted && !displayAssignment.submission_status?.status && (
                     <Badge variant="outline" className="bg-white/50 backdrop-blur-sm border-yellow-300">
                       <Clock className="h-3 w-3 mr-1 text-yellow-600" />
                       Pending Review
                     </Badge>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={refreshAssignmentData}
+                    disabled={refreshing}
+                    aria-label="Refresh assignment status"
+                    title="Refresh assignment status"
+                    className="h-9 w-9 p-0 rounded-full hover:bg-green-100 dark:hover:bg-green-900/40"
+                  >
+                    <RefreshCw className={`h-4 w-4 text-gray-600 dark:text-gray-400 ${refreshing ? 'animate-spin' : ''}`} />
+                  </Button>
                 </div>
-                <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3">{assignment.title}</h3>
-                {assignment.description && (
+                <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3">{displayAssignment.title}</h3>
+                {displayAssignment.description && (
                   <div className="text-gray-700 dark:text-gray-300 text-sm sm:text-base">
                     <MarkdownRenderer 
-                      content={assignment.description} 
+                      content={displayAssignment.description} 
                       variant="compact" 
                       className="prose-sm leading-relaxed" 
                     />
@@ -531,11 +603,11 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
                   </div>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400">{assignment.points_possible}</div>
+                <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400">{displayAssignment.points_possible}</div>
                 <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Points</div>
               </div>
               
-              {assignment.due_date && (
+              {displayAssignment.due_date && (
                 <div className={`bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center shadow-md hover:shadow-lg transition-all ${
                   isOverdue 
                     ? 'border-2 border-red-400 dark:border-red-600' 
@@ -582,14 +654,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   </div>
                 </div>
                 <div className="text-xl sm:text-2xl font-bold text-purple-600 dark:text-purple-400 capitalize">
-                  {assignment.assignment_type.replace('_', ' ')}
+                  {displayAssignment.assignment_type.replace('_', ' ')}
                 </div>
                 <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Submission Type</div>
               </div>
             </div>
 
             {/* Instructions */}
-            {assignment.instructions && (
+            {displayAssignment.instructions && (
               <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-xl p-6 sm:p-7 mb-6 border-l-4 border-green-500 shadow-lg hover:shadow-xl transition-all duration-300">
                 <h4 className="font-bold text-gray-900 dark:text-white text-lg sm:text-xl mb-5 flex items-center">
                   <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg mr-3 shadow-sm">
@@ -599,7 +671,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 </h4>
                 <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-green-100 dark:border-green-900">
                   <MarkdownRenderer 
-                    content={assignment.instructions} 
+                    content={displayAssignment.instructions} 
                     variant="card" 
                     className="prose-green" 
                   />
@@ -635,14 +707,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     </li>
                   </>
                 )}
-                {assignment.due_date && (
+                {displayAssignment.due_date && (
                   <li className="flex items-start gap-2">
                     <Clock className={`h-5 w-5 flex-shrink-0 mt-0.5 ${
                       isOverdue ? 'text-red-500' : isDueSoon ? 'text-yellow-500' : 'text-purple-500'
                     }`} />
                     <div>
                       <span className={isOverdue ? 'text-red-700 dark:text-red-400 font-bold' : isDueSoon ? 'text-yellow-700 dark:text-yellow-400 font-semibold' : ''}>
-                        Due date: {new Date(assignment.due_date).toLocaleDateString('en-US', {
+                        Due date: {new Date(displayAssignment.due_date).toLocaleDateString('en-US', {
                           weekday: 'long',
                           year: 'numeric',
                           month: 'long',
@@ -651,8 +723,18 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                           minute: '2-digit'
                         })}
                       </span>
-                      {isOverdue && <span className="block text-red-600 dark:text-red-400 text-sm mt-1">⚠️ This assignment is past due</span>}
-                      {isDueSoon && <span className="block text-yellow-600 dark:text-yellow-400 text-sm mt-1">⏰ Due soon - submit before deadline</span>}
+                      {isOverdue && (
+                        <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400 text-sm mt-1">
+                          <AlertTriangle className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                          This assignment is past due
+                        </span>
+                      )}
+                      {isDueSoon && (
+                        <span className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400 text-sm mt-1">
+                          <Clock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                          Due soon - submit before deadline
+                        </span>
+                      )}
                     </div>
                   </li>
                 )}
@@ -676,23 +758,34 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-slate-200 dark:border-gray-700">
                     <div className="flex items-center justify-between mb-2">
                       <h5 className="font-semibold text-gray-900 dark:text-white text-sm">Submission Status</h5>
-                      <div className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      <div className={`px-2 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1 ${
                         isGraded 
                           ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
                           : hasModificationRequest
                             ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 animate-pulse'
                             : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
                       }`}>
-                        {isGraded 
-                          ? '✓ Graded' 
-                          : hasModificationRequest 
-                            ? '⚠️ Needs Revision' 
-                            : '⏳ Under Review'}
+                        {isGraded ? (
+                          <>
+                            <CheckCircle className="h-3 w-3" aria-hidden="true" />
+                            Graded
+                          </>
+                        ) : hasModificationRequest ? (
+                          <>
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                            Needs Revision
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="h-3 w-3" aria-hidden="true" />
+                            Under Review
+                          </>
+                        )}
                       </div>
                     </div>
                     <p className="text-gray-600 dark:text-gray-400 text-sm">
-                      {assignment.submission_status?.submitted_at && (
-                        <>Submitted on {new Date(assignment.submission_status.submitted_at).toLocaleDateString('en-US', {
+                      {displayAssignment.submission_status?.submitted_at && (
+                        <>Submitted on {new Date(displayAssignment.submission_status.submitted_at).toLocaleDateString('en-US', {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric',
@@ -704,21 +797,23 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   </div>
 
                   {/* Grade Status */}
-                  {isGraded && assignment.submission_status?.grade !== undefined && (
+                  {isGraded && displayAssignment.submission_status?.grade !== undefined && (
                     <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-slate-200 dark:border-gray-700">
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="font-semibold text-gray-900 dark:text-white text-sm">Grade</h5>
                         <div className="flex items-center gap-2">
                           <Award className="h-4 w-4 text-green-600 dark:text-green-400" />
                           <span className="font-bold text-lg text-green-600 dark:text-green-400">
-                            {assignment.submission_status.grade}/{assignment.points_possible}
+                            {displayAssignment.submission_status.grade}/{displayAssignment.points_possible}
                           </span>
                         </div>
                       </div>
                       <p className="text-gray-600 dark:text-gray-400 text-sm">
-                        {((assignment.submission_status.grade / assignment.points_possible) * 100).toFixed(1)}% 
-                        {assignment.submission_status?.graded_at && (
-                          <> • Graded {new Date(assignment.submission_status.graded_at).toLocaleDateString()}</>
+                        {displayAssignment.points_possible > 0
+                          ? `${((displayAssignment.submission_status.grade / displayAssignment.points_possible) * 100).toFixed(1)}%`
+                          : '—'}
+                        {displayAssignment.submission_status?.graded_at && (
+                          <> • Graded {new Date(displayAssignment.submission_status.graded_at).toLocaleDateString()}</>
                         )}
                       </p>
                     </div>
@@ -726,7 +821,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 </div>
 
                 {/* Instructor Feedback */}
-                {assignment.submission_status?.feedback && !hasModificationRequest && (
+                {displayAssignment.submission_status?.feedback && !hasModificationRequest && (
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-5 shadow-sm border border-slate-200 dark:border-gray-700 mb-4">
                     <h5 className="font-semibold text-gray-900 dark:text-white text-sm mb-3 flex items-center">
                       <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded mr-2">
@@ -738,15 +833,15 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 border-l-4 border-blue-500">
                       <div className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
                         <MarkdownRenderer 
-                          content={assignment.submission_status.feedback} 
+                          content={displayAssignment.submission_status.feedback} 
                           variant="compact" 
                           className="prose-sm prose-blue" 
                         />
                       </div>
-                      {assignment.submission_status?.grader_name && (
+                      {displayAssignment.submission_status?.grader_name && (
                         <p className="text-xs text-blue-600 dark:text-blue-400 mt-3 font-medium flex items-center gap-1">
                           <Award className="h-3 w-3" />
-                          Graded by {assignment.submission_status.grader_name}
+                          Graded by {displayAssignment.submission_status.grader_name}
                         </p>
                       )}
                     </div>
@@ -766,9 +861,9 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   <h4 className="text-white font-bold text-base sm:text-lg">
                     Modification Requested
                   </h4>
-                  {assignment.modification_request_at && (
+                  {displayAssignment.modification_request_at && (
                     <span className="ml-auto text-xs text-white/80 font-medium hidden sm:block">
-                      {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
+                      {new Date(displayAssignment.modification_request_at).toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',
@@ -785,7 +880,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     Your instructor has requested modifications to your assignment. Please review the feedback below and resubmit.
                   </p>
 
-                  {assignment.modification_request_reason && (
+                  {displayAssignment.modification_request_reason && (
                     <div className="bg-white dark:bg-gray-800/70 rounded-lg p-4 sm:p-5 border border-orange-200 dark:border-orange-800/50 shadow-sm">
                       <div className="prose prose-sm dark:prose-invert max-w-none
                         prose-headings:text-orange-900 dark:prose-headings:text-orange-200
@@ -797,7 +892,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                         prose-h2:text-base prose-h2:font-bold prose-h2:mt-4 prose-h2:mb-2
                         prose-h3:text-sm prose-h3:font-semibold prose-h3:mt-3 prose-h3:mb-1">
                         <MarkdownRenderer 
-                          content={assignment.modification_request_reason} 
+                          content={displayAssignment.modification_request_reason} 
                           variant="compact" 
                           className="leading-relaxed" 
                         />
@@ -805,10 +900,10 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     </div>
                   )}
 
-                  {assignment.modification_request_at && (
+                  {displayAssignment.modification_request_at && (
                     <p className="text-xs text-orange-500 dark:text-orange-400 font-medium flex items-center gap-1.5 sm:hidden">
                       <Clock className="h-3 w-3" />
-                      Requested on {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
+                      Requested on {new Date(displayAssignment.modification_request_at).toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',
@@ -823,7 +918,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full">
-              {assignment.submission_status?.status === 'graded' && !hasModificationRequest ? (
+              {displayAssignment.submission_status?.status === 'graded' && !hasModificationRequest ? (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submitted')}
@@ -866,7 +961,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <Button
                       onClick={() => setSubmissionMode('resubmit')}
                       className="flex-1 w-full sm:w-auto bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-orange-400/30 animate-pulse min-h-[3rem] sm:min-h-[4rem]"
-                      disabled={resubmittedForCurrentRequest}
+                      disabled={!canResubmit}
                     >
                       <div className="flex items-center justify-center w-full">
                         <div className="p-1 bg-white/20 rounded-full mr-2 sm:mr-3">
@@ -877,25 +972,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                         <div className="ml-2 px-2 py-1 bg-white/20 text-white text-xs rounded-full font-bold">
                           Required
                         </div>
-                        {resubmittedForCurrentRequest && (
-                          <span className="ml-2 px-2 py-1 bg-orange-200 text-orange-800 text-xs rounded-full font-bold">Already Resubmitted</span>
+                        {!canResubmit && (
+                          <span className="ml-2 px-2 py-1 bg-orange-200 text-orange-800 text-xs rounded-full font-bold">
+                            {resubmittedForCurrentRequest ? 'Already Resubmitted' : 'Resubmission Closed'}
+                          </span>
                         )}
                       </div>
                     </Button>
                   )}
-                  
-                  <Button 
-                    variant="outline" 
-                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
-                  >
-                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
-                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
-                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <span className="hidden sm:inline">Course Resources</span>
-                      <span className="sm:hidden">Resources</span>
-                    </div>
-                  </Button>
                 </>
               ) : isOverdue ? (
                 <>
@@ -913,19 +997,6 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                       <div className="ml-2 px-2 py-1 bg-red-200 dark:bg-red-900/50 text-red-800 dark:text-red-300 text-xs rounded-full font-bold">
                         Overdue
                       </div>
-                    </div>
-                  </Button>
-                  
-                  <Button 
-                    variant="outline" 
-                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
-                  >
-                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
-                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
-                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <span className="hidden sm:inline">Course Resources</span>
-                      <span className="sm:hidden">Resources</span>
                     </div>
                   </Button>
                 </>
@@ -946,19 +1017,6 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                       </div>
                     </div>
                   </Button>
-                  
-                  <Button 
-                    variant="outline" 
-                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
-                  >
-                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
-                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
-                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <span className="hidden sm:inline">Course Resources</span>
-                      <span className="sm:hidden">Resources</span>
-                    </div>
-                  </Button>
                 </>
               )}
             </div>
@@ -970,19 +1028,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
   // Submitted State
   if (submissionMode === 'submitted') {
-    const isGraded = assignment.submission_status?.status === 'graded';
-    const grade = assignment.submission_status?.grade;
-    const feedback = assignment.submission_status?.feedback;
-    const percentage = grade ? (grade / assignment.points_possible) * 100 : 0;
-    
-    // Calculate letter grade
-    const getLetterGrade = (percent: number) => {
-      if (percent >= 90) return 'A';
-      if (percent >= 80) return 'B';
-      if (percent >= 70) return 'C';
-      if (percent >= 60) return 'D';
-      return 'F';
-    };
+    const isGraded = displayAssignment.submission_status?.status === 'graded';
+    const grade = displayAssignment.submission_status?.grade;
+    const feedback = displayAssignment.submission_status?.feedback;
+    const pointsPossible = displayAssignment.points_possible;
+    // Guard against missing/zero points_possible so we never render NaN%
+    const percentage = typeof grade === 'number' && pointsPossible > 0
+      ? (grade / pointsPossible) * 100
+      : null;
     
     return (
       <div className="space-y-6">
@@ -999,8 +1052,13 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   </div>
                 )}
               </div>
-              <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                {isGraded ? '🎉 Assignment Graded!' : '✅ Assignment Submitted!'}
+              <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2 flex items-center justify-center gap-2.5">
+                {isGraded ? (
+                  <PartyPopper className="h-7 w-7 text-green-600 dark:text-green-400" aria-hidden="true" />
+                ) : (
+                  <CheckCircle className="h-7 w-7 text-green-600 dark:text-green-400" aria-hidden="true" />
+                )}
+                {isGraded ? 'Assignment Graded!' : 'Assignment Submitted!'}
               </h3>
               <p className="text-gray-700 dark:text-gray-300 text-sm sm:text-base max-w-2xl mx-auto">
                 {isGraded 
@@ -1014,8 +1072,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 <div>
                   <p className="text-gray-600 dark:text-gray-400 font-medium mb-1">Submitted At</p>
                   <p className="font-bold text-gray-900 dark:text-white">
-                    {assignment.submission_status?.submitted_at 
-                      ? new Date(assignment.submission_status.submitted_at).toLocaleString('en-US', {
+                    {displayAssignment.submission_status?.submitted_at 
+                      ? new Date(displayAssignment.submission_status.submitted_at).toLocaleString('en-US', {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric',
@@ -1030,7 +1088,17 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   <Badge className={`text-base font-semibold ${isGraded 
                     ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-300" 
                     : "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300"}`}>
-                    {isGraded ? '✓ Graded' : '⏳ Under Review'}
+                    {isGraded ? (
+                      <>
+                        <CheckCircle className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                        Graded
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                        Under Review
+                      </>
+                    )}
                   </Badge>
                 </div>
               </div>
@@ -1040,19 +1108,16 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             {isGraded && grade !== undefined && (
               <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-xl p-6 sm:p-8 mb-6 border-2 border-green-200 dark:border-green-700 shadow-lg">
                 <div className="text-center mb-4">
-                  <div className="flex items-center justify-center gap-4 mb-3">
+                  <div className="flex items-center justify-center mb-3">
                     <div className="p-3 bg-green-100 dark:bg-green-900 rounded-full">
                       <Award className="h-8 w-8 text-green-600 dark:text-green-400" />
                     </div>
-                    <span className="text-6xl sm:text-7xl font-bold bg-gradient-to-br from-green-600 to-emerald-600 dark:from-green-400 dark:to-emerald-400 bg-clip-text text-transparent">
-                      {getLetterGrade(percentage)}
-                    </span>
                   </div>
                   <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                    {grade} / {assignment.points_possible} Points
+                    {grade} / {displayAssignment.points_possible} Points
                   </p>
                   <p className="text-lg sm:text-xl font-semibold text-green-600 dark:text-green-400">
-                    {percentage.toFixed(1)}%
+                    {percentage !== null ? `${percentage.toFixed(1)}%` : '—'}
                   </p>
                 </div>
 
@@ -1060,53 +1125,79 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 <div className="mt-4 mb-2">
                   <div className="flex justify-between text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
                     <span>0%</span>
-                    {assignment.passing_score && (
+                    {displayAssignment.passing_score && (
                       <span className="text-orange-600 dark:text-orange-400">
-                        Pass: {assignment.passing_score}%
+                        Pass: {displayAssignment.passing_score}%
                       </span>
                     )}
                     <span>100%</span>
                   </div>
-                  <div className="relative h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="relative h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={percentage !== null ? Math.min(100, Math.max(0, Math.round(percentage))) : undefined}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuetext={percentage !== null ? `${percentage.toFixed(1)}%` : undefined}
+                    aria-label="Assignment score"
+                  >
                     <div
                       className={`h-full rounded-full transition-all duration-700 ease-out ${
-                        percentage >= (assignment.passing_score || 60) 
-                          ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
-                          : 'bg-gradient-to-r from-red-500 to-orange-500'
+                        !displayAssignment.passing_score
+                          ? 'bg-gradient-to-r from-blue-500 to-indigo-500'
+                          : percentage !== null && percentage >= displayAssignment.passing_score
+                            ? 'bg-gradient-to-r from-green-500 to-emerald-500'
+                            : 'bg-gradient-to-r from-red-500 to-orange-500'
                       }`}
-                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                      style={{ width: `${percentage !== null ? Math.min(Math.max(percentage, 0), 100) : 0}%` }}
                     />
-                    {assignment.passing_score && (
+                    {displayAssignment.passing_score && (
                       <div 
                         className="absolute top-0 h-full w-0.5 bg-orange-500 dark:bg-orange-400"
-                        style={{ left: `${assignment.passing_score}%` }}
+                        style={{ left: `${displayAssignment.passing_score}%` }}
                       />
                     )}
                   </div>
-                  {assignment.passing_score && (
+                  {percentage === null ? (
+                    <p className="text-xs font-medium mt-1.5 text-center text-gray-500 dark:text-gray-400">
+                      Score percentage unavailable
+                    </p>
+                  ) : displayAssignment.passing_score ? (
                     <p className={`text-xs font-semibold mt-1.5 text-center ${
-                      percentage >= assignment.passing_score
+                      percentage >= displayAssignment.passing_score
                         ? 'text-green-600 dark:text-green-400'
                         : 'text-red-600 dark:text-red-400'
                     }`}>
-                      {percentage >= assignment.passing_score 
-                        ? '✓ Passing score met' 
-                        : `✗ Below passing score (${assignment.passing_score}%)`}
+                      {percentage >= displayAssignment.passing_score ? (
+                        <>
+                          <CheckCircle className="h-3.5 w-3.5 inline-block align-[-2px] mr-1" aria-hidden="true" />
+                          Passing score met
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-3.5 w-3.5 inline-block align-[-2px] mr-1" aria-hidden="true" />
+                          Below passing score ({displayAssignment.passing_score}%)
+                        </>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-xs font-medium mt-1.5 text-center text-gray-500 dark:text-gray-400">
+                      Passing threshold not set
                     </p>
                   )}
                 </div>
                 
-                {assignment.submission_status?.graded_at && (
+                {displayAssignment.submission_status?.graded_at && (
                   <div className="text-center text-sm text-gray-600 dark:text-gray-400 bg-white/50 dark:bg-gray-800/50 rounded-lg py-2 px-4 mt-4">
-                    Graded on {new Date(assignment.submission_status.graded_at).toLocaleDateString('en-US', {
+                    Graded on {new Date(displayAssignment.submission_status.graded_at).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
                       hour: '2-digit',
                       minute: '2-digit'
                     })}
-                    {assignment.submission_status?.grader_name && 
-                      ` by ${assignment.submission_status.grader_name}`}
+                    {displayAssignment.submission_status?.grader_name && 
+                      ` by ${displayAssignment.submission_status.grader_name}`}
                   </div>
                 )}
               </div>
@@ -1139,9 +1230,9 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             )}
 
             {/* AI Excel Grading Result */}
-            {(assignment.submission_status?.id || submissionResult?.submission?.id) && (
+            {(displayAssignment.submission_status?.id || submissionResult?.submission?.id) && (
               <StudentExcelGradingResult
-                submissionId={assignment.submission_status?.id || submissionResult?.submission?.id}
+                submissionId={displayAssignment.submission_status?.id || submissionResult?.submission?.id}
                 submissionType="assignment"
               />
             )}
@@ -1179,13 +1270,27 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     return (
       <div className="space-y-6">
         {/* Error Alert */}
-        {error && (
-          <Alert className="border-2 border-red-400 bg-red-50 dark:bg-red-950/30 shadow-md animate-in slide-in-from-top">
+        {(error || validationErrors.length > 0) && (
+          <Alert
+            ref={errorAlertRef}
+            tabIndex={-1}
+            role="alert"
+            className="border-2 border-red-400 bg-red-50 dark:bg-red-950/30 shadow-md animate-in slide-in-from-top focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          >
             <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
             <AlertTitle className="text-red-800 dark:text-red-300 font-bold">
               {isResubmitMode ? 'Resubmission Error' : 'Submission Error'}
             </AlertTitle>
-            <AlertDescription className="text-red-700 dark:text-red-200">{error}</AlertDescription>
+            <AlertDescription className="text-red-700 dark:text-red-200">
+              {error}
+              {validationErrors.length > 0 && (
+                <ul className="mt-2 list-disc pl-5 space-y-1">
+                  {validationErrors.map((validationError, index) => (
+                    <li key={`${validationError}-${index}`}>{validationError}</li>
+                  ))}
+                </ul>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -1202,7 +1307,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               <p className="text-orange-800 dark:text-orange-200 text-sm font-medium">
                 Review the feedback below and upload your revised work.
               </p>
-              {assignment.modification_request_reason && (
+              {displayAssignment.modification_request_reason && (
                 <div className="bg-white dark:bg-gray-800/70 rounded-lg p-4 border border-orange-200 dark:border-orange-800/50 shadow-sm">
                   <div className="prose prose-sm dark:prose-invert max-w-none
                     prose-headings:text-orange-900 dark:prose-headings:text-orange-200
@@ -1211,7 +1316,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     prose-p:text-gray-700 dark:prose-p:text-gray-300
                     prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
                     <MarkdownRenderer 
-                      content={assignment.modification_request_reason} 
+                      content={displayAssignment.modification_request_reason} 
                       variant="compact" 
                       className="leading-relaxed" 
                     />
@@ -1226,7 +1331,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
           <CardHeader className="border-b dark:border-gray-700">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{assignment.title}</h3>
+                <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{displayAssignment.title}</h3>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-2">
                   <Edit className="h-4 w-4" />
                   {isResubmitMode ? 'Update and resubmit your assignment' : 'Complete and submit your assignment'}
@@ -1236,7 +1341,9 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 variant="ghost"
                 onClick={() => setSubmissionMode('view')}
                 disabled={submitting}
-                className="hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="Close submission form"
+                title="Close submission form"
+                className="h-11 w-11 p-0 hover:bg-gray-100 dark:hover:bg-gray-800"
               >
                 <X className="h-5 w-5" />
               </Button>
@@ -1245,7 +1352,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
         
         <CardContent className="space-y-6 p-6 sm:p-8">
           {/* Due Date Warning */}
-          {assignment.due_date && (isDueSoon || isOverdue) && (
+          {displayAssignment.due_date && (isDueSoon || isOverdue) && (
             <Alert className={`shadow-md animate-in slide-in-from-top ${
               isOverdue 
                 ? 'bg-red-50 dark:bg-red-950/30 border-2 border-red-400' 
@@ -1256,15 +1363,25 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   isOverdue ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'
                 }`} />
                 <div className="flex-1">
-                  <p className={`font-bold text-base ${
+                  <p className={`font-bold text-base flex items-center gap-2 ${
                     isOverdue ? 'text-red-800 dark:text-red-300' : 'text-yellow-800 dark:text-yellow-300'
                   }`}>
-                    {isOverdue ? '⚠️ This assignment is overdue!' : '⏰ Assignment due soon'}
+                    {isOverdue ? (
+                      <>
+                        <AlertTriangle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                        This assignment is overdue!
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                        Assignment due soon
+                      </>
+                    )}
                   </p>
                   <p className={`text-sm mt-1 ${
                     isOverdue ? 'text-red-700 dark:text-red-200' : 'text-yellow-700 dark:text-yellow-200'
                   }`}>
-                    Due: {new Date(assignment.due_date).toLocaleDateString('en-US', {
+                    Due: {new Date(displayAssignment.due_date).toLocaleDateString('en-US', {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric',
@@ -1280,19 +1397,38 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
           {/* Text Response */}
           {isTextResponse && (
             <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 border-2 border-gray-200 dark:border-gray-700 shadow-sm">
-              <label className="block text-base font-bold text-gray-900 dark:text-white mb-3 flex items-center">
+              <label htmlFor={responseFieldId} className="block text-base font-bold text-gray-900 dark:text-white mb-3 flex items-center">
                 <div className="p-1.5 bg-green-100 dark:bg-green-900 rounded-lg mr-2">
                   <FileText className="h-4 w-4 text-green-600 dark:text-green-400" />
                 </div>
                 Your Response <span className="text-red-500 ml-1">*</span>
               </label>
               <textarea
+                id={responseFieldId}
                 value={textResponse}
-                onChange={(e) => setTextResponse(e.target.value)}
+                onChange={(e) => {
+                  setTextResponse(e.target.value);
+                  setTextResponseError(null);
+                }}
                 rows={12}
-                className="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 dark:bg-gray-700 dark:text-white resize-none transition-all text-base"
+                aria-invalid={textResponseError ? true : undefined}
+                aria-describedby={textResponseError ? responseErrorId : undefined}
+                className={`w-full px-4 py-3 border-2 ${
+                  textResponseError
+                    ? 'border-red-500 dark:border-red-600 focus:ring-red-500 focus:border-red-500'
+                    : 'border-gray-300 dark:border-gray-600 focus:ring-green-500 focus:border-green-500'
+                } rounded-lg focus:ring-2 dark:bg-gray-700 dark:text-white resize-none transition-all text-base`}
                 placeholder="Write your response here... Be clear, concise, and thorough in your answer."
               />
+              {textResponseError && (
+                <p
+                  id={responseErrorId}
+                  className="mt-2 flex items-center gap-1.5 text-sm font-medium text-red-600 dark:text-red-400"
+                >
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                  {textResponseError}
+                </p>
+              )}
               <div className="flex justify-between mt-3 text-sm">
                 <span className="text-gray-600 dark:text-gray-400 font-medium">
                   {textResponse.length} characters
@@ -1307,24 +1443,27 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
           {/* File Upload */}
           {isFileUpload && (
             <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 border-2 border-gray-200 dark:border-gray-700 shadow-sm">
-              <label className="block text-base font-bold text-gray-900 dark:text-white mb-3 flex items-center">
+              <label
+                htmlFor={fileUploadFieldId}
+                className="block text-base font-bold text-gray-900 dark:text-white mb-3 flex items-center"
+              >
                 <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg mr-2">
                   <Upload className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                 </div>
                 Upload Files {!isTextResponse && <span className="text-red-500 ml-1">*</span>}
               </label>
               
-              <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center hover:border-green-400 dark:hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/20 transition-all cursor-pointer">
+              <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center hover:border-green-400 dark:hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/20 transition-all cursor-pointer focus-within:border-green-500 focus-within:ring-2 focus-within:ring-green-500">
                 <input
                   type="file"
                   multiple
                   accept={allowedFileTypes.join(',')}
                   onChange={handleFileSelect}
-                  className="hidden"
-                  id={`file-upload-${assignmentData.id}`}
+                  className="sr-only"
+                  id={fileUploadFieldId}
                 />
                 <label
-                  htmlFor={`file-upload-${assignmentData.id}`}
+                  htmlFor={fileUploadFieldId}
                   className="cursor-pointer"
                 >
                   <div className="p-4 bg-green-100 dark:bg-green-900 rounded-full w-fit mx-auto mb-4">

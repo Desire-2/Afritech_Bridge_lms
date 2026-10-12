@@ -14,7 +14,8 @@
     "lint": "next lint",
     "build:worker": "opennextjs-cloudflare",
     "preview": "opennextjs-cloudflare && wrangler dev",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts || true"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts || true",
+    "test:video": "npx --yes tsx --test \"src/app/(learn)/learn/[id]/utils/__tests__/videoCoverage.test.ts\""
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -47,6 +48,7 @@
     "@radix-ui/react-toggle": "^1.1.1",
     "@radix-ui/react-toggle-group": "^1.1.1",
     "@radix-ui/react-tooltip": "^1.1.6",
+    "@tailwindcss/typography": "^0.5.16",
     "@types/canvas-confetti": "^1.9.0",
     "@vercel/blob": "^2.0.0",
     "axios": "^1.12.2",
@@ -75,6 +77,7 @@
     "recharts": "^2.15.4",
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "sonner": "^1.7.2",
     "tailwind-merge": "^2.6.0",

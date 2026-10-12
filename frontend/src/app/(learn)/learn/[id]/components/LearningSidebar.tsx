@@ -95,9 +95,25 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   
   // State to track which modules are expanded
   const [openModules, setOpenModules] = useState<Set<number>>(new Set());
+  // Local state used to reveal lock-reason text for locked lessons/assessments
+  // (locked controls stay focusable; the reason lives in the DOM, not in a
+  // tooltip attached to a disabled button).
+  const [revealedLockId, setRevealedLockId] = useState<string | null>(null);
+  // True when the sidebar renders as an overlay drawer (below the lg breakpoint)
+  const [isOverlayViewport, setIsOverlayViewport] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const moduleProgressRequestRef = useRef(0);
+
+  // Track overlay (mobile drawer) mode so dialog semantics can be applied
+  // only when the sidebar floats over the page content.
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const syncViewport = () => setIsOverlayViewport(!mediaQuery.matches);
+    syncViewport();
+    mediaQuery.addEventListener('change', syncViewport);
+    return () => mediaQuery.removeEventListener('change', syncViewport);
+  }, []);
 
   // Mobile navigation behaves as a modal drawer: Escape closes it, focus is
   // trapped while open, and focus returns to the control that opened it.
@@ -105,10 +121,13 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
     if (!sidebarOpen || window.innerWidth >= 1024 || !sidebarRef.current) return;
 
     previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const focusable = sidebarRef.current.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
-    );
-    focusable[0]?.focus();
+    const getFocusableElements = () =>
+      Array.from(
+        sidebarRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      ).filter((element) => element.offsetParent !== null);
+    getFocusableElements()[0]?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -116,7 +135,11 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         setSidebarOpen?.(false);
         return;
       }
-      if (event.key !== 'Tab' || focusable.length === 0) return;
+      if (event.key !== 'Tab') return;
+      // Re-query on every Tab so the trap stays correct while modules
+      // expand/collapse and add or remove focusable controls.
+      const focusable = getFocusableElements();
+      if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
@@ -173,6 +196,11 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         }
       }
       
+      // Bail out with the previous Set when nothing changed so React can
+      // skip the re-render (the parent re-renders every second from the timer).
+      if (newSet.size === prev.size && Array.from(newSet).every(id => prev.has(id))) {
+        return prev;
+      }
       return newSet;
     });
   }, [currentModuleId, currentLessonId, modules, getModuleStatus]);
@@ -290,7 +318,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   // Helper function to get lesson status color
   const getLessonStatusColor = (isCompleted: boolean, canAccess: boolean) => {
     if (isCompleted) return 'text-green-400';
-    if (!canAccess) return 'text-gray-500';
+    if (!canAccess) return 'text-gray-400';
     return 'text-blue-400';
   };
 
@@ -372,21 +400,23 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}
         ref={sidebarRef}
-        role="navigation"
+        id="course-navigation-sidebar"
+        role={sidebarOpen && isOverlayViewport ? 'dialog' : 'navigation'}
+        aria-modal={sidebarOpen && isOverlayViewport ? true : undefined}
         aria-label="Course navigation"
       >
-        <div className="h-full overflow-y-auto overscroll-contain">
-        <div className="p-3 sm:p-4 border-b border-gray-800">
+        <div className="flex h-full min-h-0 flex-col">
+        <div className="shrink-0 p-3 sm:p-4 border-b border-gray-800">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
             <Button
               variant="ghost"
               size="sm"
-              className="lg:hidden h-8 w-8 p-0 text-gray-400 hover:text-white hover:bg-gray-800"
+              className="lg:hidden h-11 w-11 p-0 text-gray-400 hover:text-white hover:bg-gray-800 active:bg-gray-700"
               onClick={() => setSidebarOpen?.(false)}
               aria-label="Close course navigation"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
@@ -395,26 +425,24 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
           {/* Module release progress indicator */}
           {totalModuleCount && releasedModuleCount !== undefined && totalModuleCount > releasedModuleCount && (
             <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30 flex items-center gap-1">
-              <Clock className="h-3 w-3" />
+              <Clock className="h-3 w-3" aria-hidden="true" />
               <span>{releasedModuleCount} of {totalModuleCount} modules available</span>
             </div>
           )}
-          {currentLessonId && (
-            <div className="mt-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-700/30">
-              Currently viewing lesson
-            </div>
-          )}
-          {loadingProgress && (
-            <p className="mt-2 text-xs text-gray-400" role="status">Loading progress…</p>
-          )}
+          {/* Reserved-height status line so the module list never shifts */}
+          <div className="mt-2 h-4">
+            {loadingProgress && (
+              <p className="text-xs text-gray-400" role="status">Loading progress…</p>
+            )}
+          </div>
           {progressError && (
-            <div className="mt-2 text-xs text-amber-300 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30" role="status">
+            <div className="mt-2 text-xs text-amber-300 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30" role="alert">
               {progressError} Locked states may update after refresh.
             </div>
           )}
         </div>
         
-        <ScrollArea className="px-3 sm:px-4 py-2">
+        <ScrollArea className="min-h-0 flex-1 px-3 sm:px-4 py-2">
           {modules?.map((module: ModuleData, moduleIndex: number) => {
             const moduleStatus = getModuleStatus(module.id);
             const isCurrentModule = module.id === currentModuleId;
@@ -489,18 +517,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                     <Button
                       variant="ghost"
                       onClick={isLocked ? handleModuleClick : undefined}
-                      className={`w-full justify-between text-left p-2 sm:p-3 h-auto hover:bg-gray-800/50 text-gray-200 ${
+                      aria-expanded={isOpen && !isLocked}
+                      className={`w-full justify-between text-left p-2 sm:p-3 h-auto hover:bg-gray-800/50 active:bg-gray-800 text-gray-200 ${
                         isLocked ? 'cursor-pointer opacity-70 hover:opacity-100' : ''
                       }`}
                     >
                       <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
                         <div className="flex-shrink-0">
                           {moduleStatus === 'completed' ? (
-                            <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-400" />
+                            <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-400" aria-hidden="true" />
                           ) : moduleStatus === 'in_progress' || moduleStatus === 'unlocked' ? (
-                            <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-blue-400" />
+                            <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-blue-400" aria-hidden="true" />
                           ) : (
-                            <Lock className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
+                            <Lock className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400" aria-hidden="true" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -510,18 +539,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                             </p>
                             {moduleStatus === 'completed' && (
                               <Badge variant="secondary" className="bg-green-900/50 text-green-300 text-xs px-1.5 py-0">
-                                ✓
+                                <span aria-hidden="true">✓</span>
+                                <span className="sr-only">completed</span>
                               </Badge>
                             )}
                             {isLocked && (
                               <Badge variant="outline" className="bg-orange-900/30 text-orange-300 text-xs px-1.5 py-0 border-orange-700/50">
-                                <Lock className="h-3 w-3 mr-0.5" />
+                                <Lock className="h-3 w-3 mr-0.5" aria-hidden="true" />
                                 Click to see requirements
                               </Badge>
                             )}
                           </div>
                           <div className="space-y-1 mt-1">
-                            <p className="text-[10px] sm:text-xs text-gray-400">
+                            <p className="text-xs text-gray-400">
                               {hasProgressData 
                                 ? `${moduleProgress.completedLessons}/${moduleProgress.totalLessons} lessons completed`
                                 : `${module.lessons?.length || 0} lessons`
@@ -533,9 +563,10 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                               <div className="space-y-0.5">
                                 <Progress 
                                   value={moduleProgress.progressPercentage} 
+                                  aria-label={`Module ${moduleIndex + 1} progress: ${moduleProgress.progressPercentage}% complete`}
                                   className="h-1 sm:h-1.5 bg-gray-700"
                                 />
-                                <p className="text-[9px] sm:text-xs text-gray-500">
+                                <p className="text-xs text-gray-400">
                                   {moduleProgress.progressPercentage}% complete
                                 </p>
                               </div>
@@ -543,9 +574,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                           </div>
                         </div>
                       </div>
-                      <ChevronDown className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500 transition-transform duration-200 ${
+                      <ChevronDown className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-400 transition-transform duration-200 ${
                         isOpen && !isLocked ? 'rotate-180' : ''
-                      } ${isLocked ? 'opacity-50' : ''}`} />
+                      } ${isLocked ? 'opacity-50' : ''}`} aria-hidden="true" />
                     </Button>
                   </CollapsibleTrigger>
 
@@ -556,9 +587,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="ml-8 mt-1 h-7 px-2 text-xs text-blue-300 hover:bg-blue-900/30"
+                          className="ml-8 mt-1 h-7 px-2 text-xs text-blue-300 hover:bg-blue-900/30 active:bg-blue-900/50"
                         >
-                          <BarChart3 className="h-3 w-3 mr-1" />
+                          <BarChart3 className="h-3 w-3 mr-1" aria-hidden="true" />
                           View score breakdown ({Math.round(moduleProgress.cumulativeScore)}%)
                         </Button>
                       </DialogTrigger>
@@ -597,6 +628,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       const assessments = lessonAssessments[lesson.id] || [];
                       const statusText = getLessonStatusText(isLessonCompleted, canAccessLesson);
                       const statusColor = getLessonStatusColor(isLessonCompleted, canAccessLesson);
+                      const lessonLockReasonId = `lock-reason-lesson-${lesson.id}`;
+                      const lessonLockReason = 'Complete previous lessons or unlock this module first to open this lesson.';
                       
                       return (
                         <div key={lesson.id} className="space-y-1">
@@ -606,38 +639,50 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                 <Button
                                   variant={isCurrentLesson ? "secondary" : "ghost"}
                                   className={`w-full justify-start text-left p-1.5 sm:p-2 h-auto text-xs sm:text-sm transition-all duration-200 ${
-                                    isCurrentLesson ? 'bg-blue-900/50 text-white hover:bg-blue-900/60 shadow-md' : 'text-gray-300 hover:bg-gray-800/50'
+                                    isCurrentLesson
+                                      ? 'bg-blue-900/50 text-white hover:bg-blue-900/60 shadow-md active:bg-blue-900/70 cursor-pointer'
+                                      : !canAccessLesson
+                                        ? 'text-gray-400 opacity-70 hover:bg-gray-800/40 active:bg-gray-800/60 cursor-pointer'
+                                        : 'text-gray-300 hover:bg-gray-800/50 active:bg-gray-800/70 cursor-pointer'
                                   } ${
                                     isLessonCompleted ? 'ring-1 ring-green-500/50 bg-green-900/20 hover:bg-green-900/30' : ''
                                   } ${
-                                    !canAccessLesson ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : 'cursor-pointer hover:ring-1 hover:ring-blue-500/30 hover:translate-x-0.5'
+                                    canAccessLesson && !isCurrentLesson ? 'hover:ring-1 hover:ring-blue-500/30 hover:translate-x-0.5' : ''
                                   }`}
-                                  onClick={() => canAccessLesson && handleLessonSelection(lesson.id, module.id)}
-                                  disabled={!canAccessLesson}
+                                  onClick={() => {
+                                    if (!canAccessLesson) {
+                                      setRevealedLockId(lessonLockReasonId);
+                                      return;
+                                    }
+                                    handleLessonSelection(lesson.id, module.id);
+                                  }}
+                                  aria-disabled={!canAccessLesson || undefined}
+                                  aria-describedby={!canAccessLesson ? lessonLockReasonId : undefined}
+                                  aria-current={isCurrentLesson ? 'page' : undefined}
                                 >
                                   <div className="flex items-center space-x-1 sm:space-x-2 flex-1 min-w-0">
-                                    <span className="text-[10px] sm:text-xs text-gray-500 flex-shrink-0">
+                                    <span className="text-xs text-gray-400 flex-shrink-0">
                                       {lessonIndex + 1}.
                                     </span>
                                     <span className="truncate flex-1 text-xs sm:text-sm">{lesson.title}</span>
                                     
                                     {/* Status indicators */}
                                     {isCurrentLesson && !isLessonCompleted && (
-                                      <Badge className="bg-blue-900/80 text-blue-200 text-[10px] sm:text-xs px-1 sm:px-1.5 py-0 flex-shrink-0 mr-1">
+                                      <Badge className="bg-blue-900/80 text-blue-200 text-xs px-1 sm:px-1.5 py-0 flex-shrink-0 mr-1">
                                         Current
                                       </Badge>
                                     )}
                                     {isLessonCompleted ? (
                                       <div className="flex items-center space-x-0.5 sm:space-x-1 flex-shrink-0">
-                                        <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 text-green-400" />
-                                        <Badge className="bg-green-900/50 text-green-300 text-[10px] sm:text-xs px-1 sm:px-1.5 py-0">
+                                        <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 text-green-400" aria-hidden="true" />
+                                        <Badge className="bg-green-900/50 text-green-300 text-xs px-1 sm:px-1.5 py-0">
                                           Done
                                         </Badge>
                                       </div>
                                     ) : !canAccessLesson ? (
-                                      <Lock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-gray-500 flex-shrink-0" />
+                                      <Lock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-gray-400 flex-shrink-0" aria-hidden="true" />
                                     ) : (
-                                      <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-400 flex-shrink-0" />
+                                      <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-400 flex-shrink-0" aria-hidden="true" />
                                     )}
                                   </div>
                                 </Button>
@@ -684,6 +729,17 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                             </Tooltip>
                           </TooltipProvider>
 
+                          {/* Persistent lock reason: always in the DOM (referenced by
+                              aria-describedby), revealed as visible text on click. */}
+                          {!canAccessLesson && (
+                            <p
+                              id={lessonLockReasonId}
+                              className={`pl-6 text-xs text-orange-300 ${revealedLockId === lessonLockReasonId ? 'block' : 'sr-only'}`}
+                            >
+                              {lessonLockReason}
+                            </p>
+                          )}
+
                           {/* Display assessments for this lesson */}
                           {assessments.length > 0 && (
                             <div className="ml-4 sm:ml-6 md:ml-8 space-y-1">
@@ -693,8 +749,22 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                 const quizPassed = quizCompletionStatus[assessment.id]?.passed;
                                 // Quiz is accessible if lesson is completed OR in instructor preview mode
                                 const canAccessQuiz = viewAsStudent || (isLessonCompleted && assessment.type === 'quiz');
+                                const assessmentDisabled = assessment.type === 'quiz'
+                                  ? !canAccessQuiz
+                                  : !canAccessLesson;
+                                const assessmentKey = `${assessment.type}-${assessment.id}`;
+                                const assessmentLockReasonId = `lock-reason-assessment-${assessmentKey}`;
+                                const assessmentLockReason = assessment.type === 'quiz'
+                                  ? 'Complete the lesson first to unlock this quiz.'
+                                  : 'Complete the lesson first to unlock this item.';
                                 
                                 const handleAssessmentClick = () => {
+                                  if (assessmentDisabled) {
+                                    // Locked: stay in place and reveal the reason (the
+                                    // reason text also lives in the DOM for screen readers).
+                                    setRevealedLockId(assessmentLockReasonId);
+                                    return;
+                                  }
                                   if (assessment.type === 'quiz' && canAccessQuiz) {
                                     // Use responsive handler that auto-closes sidebar on mobile
                                     handleQuizSelection(lesson.id, module.id, assessment.id);
@@ -714,48 +784,47 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     }
                                   }
                                 };
-                                const assessmentDisabled = assessment.type === 'quiz'
-                                  ? !canAccessQuiz
-                                  : !canAccessLesson;
                                 
                                 return (
-                                <TooltipProvider key={`${assessment.type}-${assessment.id}`}>
+                                <React.Fragment key={assessmentKey}>
+                                <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <button
                                         type="button"
                                         onClick={handleAssessmentClick}
-                                        disabled={assessmentDisabled}
+                                        aria-disabled={assessmentDisabled || undefined}
+                                        aria-describedby={assessmentDisabled ? assessmentLockReasonId : undefined}
                                         aria-label={`${assessment.type}: ${assessment.title}`}
-                                        className={`flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded border text-[10px] sm:text-xs transition-all duration-200 ${getAssessmentColor(assessment.type)} ${
-                                          assessment.type === 'quiz' && !canAccessQuiz ? 'opacity-50 cursor-not-allowed' : 
-                                          assessment.type === 'quiz' && canAccessQuiz ? 'cursor-pointer hover:scale-105 hover:shadow-md' :
-                                          !canAccessLesson ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105'
+                                        className={`flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded border text-xs transition-all duration-200 ${getAssessmentColor(assessment.type)} ${
+                                          assessmentDisabled
+                                            ? 'opacity-70 cursor-pointer'
+                                            : 'cursor-pointer hover:shadow-md hover:border-current active:opacity-80'
                                         } ${isQuizCompleted && quizPassed ? 'ring-1 ring-green-500/50' : ''}`}
                                       >
                                         <div className="flex-shrink-0">
                                           {getAssessmentIcon(assessment.type, 'h-3 w-3 sm:h-3.5 sm:w-3.5')}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                          <p className="truncate font-medium text-[10px] sm:text-xs">
+                                          <p className="truncate font-medium text-xs">
                                             {assessment.type.charAt(0).toUpperCase() + assessment.type.slice(1)}
                                           </p>
-                                          <p className="text-[9px] sm:text-xs opacity-75 truncate">{assessment.title}</p>
+                                          <p className="text-xs truncate">{assessment.title}</p>
                                           {isQuizCompleted && quizScore !== undefined && (
-                                            <p className={`text-[9px] sm:text-xs font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            <p className={`text-xs font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
                                               Score: {Math.round(quizScore)}%
                                             </p>
                                           )}
                                         </div>
                                         {isQuizCompleted ? (
-                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" />
+                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" aria-hidden="true" />
                                         ) : assessment.status === 'completed' ? (
-                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" />
+                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" aria-hidden="true" />
                                         ) : assessment.status === 'in_progress' ? (
-                                          <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-yellow-400" />
+                                          <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-yellow-400" aria-hidden="true" />
                                         ) : null}
                                         {!assessment.status && !isQuizCompleted && (
-                                          <span className="text-[9px] sm:text-xs opacity-60">pending</span>
+                                          <span className="text-xs">pending</span>
                                         )}
                                       </button>
                                     </TooltipTrigger>
@@ -803,6 +872,17 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
+                                {/* Persistent lock reason for the assessment (in the DOM for
+                                    screen readers, revealed as visible text on click). */}
+                                {assessmentDisabled && (
+                                  <p
+                                    id={assessmentLockReasonId}
+                                    className={`pl-2 text-xs text-orange-300 ${revealedLockId === assessmentLockReasonId ? 'block' : 'sr-only'}`}
+                                  >
+                                    {assessmentLockReason}
+                                  </p>
+                                )}
+                                </React.Fragment>
                               )})}
                             </div>
                           )}
@@ -810,7 +890,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       );
                     })
                     ) : (
-                      <div className="text-sm text-gray-500 py-2 px-3">
+                      <div className="text-sm text-gray-400 py-2 px-3">
                         No lessons available in this module
                       </div>
                     )}

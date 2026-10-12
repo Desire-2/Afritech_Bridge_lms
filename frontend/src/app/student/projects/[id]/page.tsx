@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { StudentSubmissionService, SubmissionDetail } from '@/services/student-submission.service';
+import { sanitizeHtml } from '@/utils/sanitizeHtml';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -223,15 +224,15 @@ export default function ProjectDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div
-            className="prose prose-sm dark:prose-invert max-w-none"
-            dangerouslySetInnerHTML={{ __html: project.description }}
+            className="prose prose-sm dark:prose-invert max-w-[72ch]"
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(project.description || '') }}
           />
           {project.objectives && (
             <>
               <h4 className="text-sm font-semibold mt-4">Learning Objectives</h4>
               <div
-                className="prose prose-sm dark:prose-invert max-w-none"
-                dangerouslySetInnerHTML={{ __html: project.objectives }}
+                className="prose prose-sm dark:prose-invert max-w-[72ch]"
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(project.objectives || '') }}
               />
             </>
           )}

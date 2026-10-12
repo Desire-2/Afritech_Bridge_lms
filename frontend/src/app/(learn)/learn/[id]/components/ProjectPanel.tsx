@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -21,6 +21,8 @@ interface ProjectPanelProps {
 
 type PanelMode = 'view' | 'submit';
 
+const MAX_PROJECT_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25MB
+
 export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   projectId,
   onSubmit,
@@ -35,6 +37,12 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const [textContent, setTextContent] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const formErrorRef = useRef<HTMLDivElement>(null);
+  const textAreaId = `project-text-${projectId}`;
+  const fileInputId = `project-file-${projectId}`;
+  const formErrorId = `project-error-${projectId}`;
 
   const loadProject = useCallback(async () => {
     try {
@@ -59,6 +67,13 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
     void loadProject();
   }, [loadProject]);
 
+  // Move focus to the inline error after a failed validation/submission
+  useEffect(() => {
+    if (formError) {
+      formErrorRef.current?.focus();
+    }
+  }, [formError]);
+
   const status = project?.submission_status;
   const isSubmitted = !!submission?.submitted_at || !!status?.submitted;
   const isGraded = status?.status === 'graded';
@@ -66,6 +81,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const canResubmit = !!project?.can_resubmit || needsRevision || !isSubmitted;
   const dueDate = project?.due_date ? new Date(project.due_date) : null;
   const isOverdue = dueDate ? dueDate.getTime() < Date.now() : false;
+  // Only trust an explicitly numeric grade — never fabricate a 0
+  const rawGrade = submission?.grade ?? status?.grade;
+  const numericGrade = typeof rawGrade === 'number' && Number.isFinite(rawGrade) ? rawGrade : null;
 
   const statusBadge = (() => {
     if (isGraded) return { label: 'Graded', className: 'bg-green-900/40 text-green-300 border-green-700/50' };
@@ -77,19 +95,40 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
-    setFile(selected);
+    if (selected && selected.size > MAX_PROJECT_FILE_SIZE_BYTES) {
+      const message = `${selected.name} is ${FileUploadService.formatFileSize(selected.size)} — the maximum allowed file size is ${FileUploadService.formatFileSize(MAX_PROJECT_FILE_SIZE_BYTES)}.`;
+      setFile(null);
+      setFormError(message);
+      toast.error(message);
+    } else {
+      setFile(selected);
+      setFormError(null);
+    }
+    event.target.value = '';
   };
 
   const handleSubmit = async () => {
+    if (submitting) return;
     if (!textContent.trim() && !file) {
-      toast.error('Add a written response or attach a file before submitting.');
+      const message = 'Add a written response or attach a file before submitting.';
+      setFormError(message);
+      toast.error(message);
       return;
     }
+    if (file && file.size > MAX_PROJECT_FILE_SIZE_BYTES) {
+      const message = `${file.name} is ${FileUploadService.formatFileSize(file.size)} — the maximum allowed file size is ${FileUploadService.formatFileSize(MAX_PROJECT_FILE_SIZE_BYTES)}.`;
+      setFormError(message);
+      toast.error(message);
+      return;
+    }
+    setFormError(null);
     try {
       setSubmitting(true);
       let fileUrl: string | undefined;
       if (file) {
-        const uploaded = await FileUploadService.uploadFile(file);
+        const uploaded = await FileUploadService.uploadFile(file, {
+          maxSize: MAX_PROJECT_FILE_SIZE_BYTES,
+        });
         fileUrl = uploaded?.url;
       }
       await StudentSubmissionService.submitProject(projectId, {
@@ -104,7 +143,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
       await loadProject();
       onSubmitComplete?.(projectId);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to submit project.');
+      const message = err?.message || 'Failed to submit project.';
+      setFormError(message);
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -146,23 +187,23 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             <div className="min-w-0">
               <h3 className="text-lg font-semibold text-white break-words">{project.title}</h3>
               <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                <Badge variant="outline" className={`text-[11px] ${statusBadge.className}`}>
+                <Badge variant="outline" className={`text-xs ${statusBadge.className}`}>
                   {statusBadge.label}
                 </Badge>
                 {project.points_possible > 0 && (
-                  <Badge variant="outline" className="text-[11px] bg-gray-800/60 text-gray-300 border-gray-700/50">
+                  <Badge variant="outline" className="text-xs bg-gray-800/60 text-gray-300 border-gray-700/50">
                     <Award className="h-3 w-3 mr-1" />
                     {project.points_possible} pts
                   </Badge>
                 )}
                 {dueDate && (
-                  <Badge variant="outline" className={`text-[11px] ${isOverdue && !isSubmitted ? 'bg-red-900/30 text-red-300 border-red-700/50' : 'bg-gray-800/60 text-gray-300 border-gray-700/50'}`}>
+                  <Badge variant="outline" className={`text-xs ${isOverdue && !isSubmitted ? 'bg-red-900/30 text-red-300 border-red-700/50' : 'bg-gray-800/60 text-gray-300 border-gray-700/50'}`}>
                     <Calendar className="h-3 w-3 mr-1" />
                     Due {dueDate.toLocaleDateString()}
                   </Badge>
                 )}
                 {project.collaboration_allowed && (
-                  <Badge variant="outline" className="text-[11px] bg-gray-800/60 text-gray-300 border-gray-700/50">
+                  <Badge variant="outline" className="text-xs bg-gray-800/60 text-gray-300 border-gray-700/50">
                     Team up to {project.max_team_size}
                   </Badge>
                 )}
@@ -172,7 +213,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           {canResubmit && (
             <Button
               size="sm"
-              onClick={() => setMode(mode === 'submit' ? 'view' : 'submit')}
+              onClick={() => {
+                setFormError(null);
+                setMode(mode === 'submit' ? 'view' : 'submit');
+              }}
               className="bg-orange-600 hover:bg-orange-700 text-white flex-shrink-0"
             >
               {mode === 'submit' ? 'Cancel' : isSubmitted ? 'Resubmit' : 'Start Project'}
@@ -207,7 +251,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   <div className="min-w-0">
                     <span className="break-words">{task.text}</span>
                     {task.is_optional && (
-                      <Badge variant="outline" className="ml-2 text-[10px] bg-gray-800/60 text-gray-400 border-gray-700/50">
+                      <Badge variant="outline" className="ml-2 text-xs bg-gray-800/60 text-gray-400 border-gray-700/50">
                         optional
                       </Badge>
                     )}
@@ -270,9 +314,14 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           )}
           {isGraded && (
             <div className="rounded-xl border border-green-800/40 bg-green-900/10 p-3 space-y-1.5">
-              <p className="text-sm text-green-300 font-semibold">
-                Grade: {submission.grade ?? status?.grade ?? 0} / {project.points_possible}
-              </p>
+              {numericGrade !== null ? (
+                <p className="text-sm text-green-300 font-semibold">
+                  Grade: {numericGrade}
+                  {project.points_possible > 0 ? ` / ${project.points_possible}` : ''}
+                </p>
+              ) : (
+                <p className="text-sm text-green-300 font-semibold">{statusBadge.label}</p>
+              )}
               {(submission.feedback || status?.feedback) && (
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{submission.feedback || status?.feedback}</p>
               )}
@@ -286,20 +335,27 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         <div className="rounded-2xl border border-gray-800/80 bg-gray-900/70 p-4 sm:p-5 space-y-4">
           <h4 className="text-sm font-semibold text-white">Submit your work</h4>
           <div className="space-y-1.5">
-            <label htmlFor={`project-text-${projectId}`} className="text-xs font-medium text-gray-300">
+            <label htmlFor={textAreaId} className="text-xs font-medium text-gray-300">
               Written response
             </label>
             <textarea
-              id={`project-text-${projectId}`}
+              id={textAreaId}
               value={textContent}
-              onChange={(e) => setTextContent(e.target.value)}
+              onChange={(e) => {
+                setTextContent(e.target.value);
+                setFormError(null);
+              }}
               rows={6}
+              aria-invalid={formError ? true : undefined}
+              aria-describedby={formError ? formErrorId : undefined}
               placeholder="Describe your project, link to your repository, or paste your write-up…"
-              className="w-full rounded-xl border border-gray-800 bg-gray-950/60 p-3 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-y"
+              className="w-full rounded-xl border border-gray-800 bg-gray-950/60 p-3 text-sm text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-y"
             />
           </div>
           <div className="space-y-1.5">
-            <span className="text-xs font-medium text-gray-300">Attach a file (optional)</span>
+            <label htmlFor={fileInputId} className="text-xs font-medium text-gray-300">
+              Attach a file (optional)
+            </label>
             {file ? (
               <div className="flex items-center justify-between gap-2 rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
                 <span className="text-sm text-gray-300 truncate flex items-center gap-2">
@@ -309,19 +365,30 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => setFile(null)}
-                  className="text-gray-500 hover:text-gray-300"
+                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-gray-200"
                   aria-label="Remove file"
                 >
                   <X className="h-4 w-4" />
                 </button>
+                <input
+                  type="file"
+                  id={fileInputId}
+                  className="sr-only"
+                  onChange={handleFileChange}
+                  disabled={submitting}
+                />
               </div>
             ) : (
-              <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-700 bg-gray-950/40 px-3 py-3 text-sm text-gray-400 hover:border-orange-600/60 hover:text-gray-200 transition-colors">
+              <label
+                htmlFor={fileInputId}
+                className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-700 bg-gray-950/40 px-3 py-3 text-sm text-gray-400 hover:border-orange-600/60 hover:text-gray-200 transition-colors focus-within:border-orange-600/60 focus-within:text-gray-200 focus-within:ring-2 focus-within:ring-orange-500/50"
+              >
                 <UploadCloud className="h-4 w-4" />
                 Choose a file
                 <input
                   type="file"
-                  className="hidden"
+                  id={fileInputId}
+                  className="sr-only"
                   onChange={handleFileChange}
                   disabled={submitting}
                 />
@@ -342,6 +409,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               'Submit Project'
             )}
           </Button>
+          {formError && (
+            <Alert
+              ref={formErrorRef}
+              tabIndex={-1}
+              role="alert"
+              id={formErrorId}
+              className="border-red-800/60 bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+            >
+              <AlertCircle className="h-4 w-4 text-red-400" />
+              <AlertTitle className="text-red-300">Submission problem</AlertTitle>
+              <AlertDescription className="text-red-200">{formError}</AlertDescription>
+            </Alert>
+          )}
         </div>
       )}
     </div>

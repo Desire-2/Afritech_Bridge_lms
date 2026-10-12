@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Video, CheckCircle, Lock, Loader2, Maximize2, Minimize2, AlertCircle } from "lucide-react";
+import { Video, CheckCircle, Lock, Loader2, Maximize2, Minimize2, AlertCircle, AlertTriangle, FileText, ExternalLink } from "lucide-react";
 import { VIDEO_WATCH_COMPLETE_THRESHOLD } from "@/constants/learningRules";
 import { VideoCoverageTracker } from "../../utils/videoCoverage";
 
@@ -170,6 +170,21 @@ const fmt = (s: number): string => {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 };
 
+const KNOWN_VIDEO_EXTENSIONS = new Set(["mp4", "webm", "ogg", "mov", "m4v"]);
+
+const SPEED_OPTIONS = [1, 1.25, 1.5, 2, 0.75];
+
+// While a shortcut is being handled globally, never steal the keypress from a
+// form control, link, or the progress slider itself.
+const INTERACTIVE_GUARD_SELECTOR =
+  'input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="slider"]';
+
+const isInteractiveTarget = (el: Element | null): boolean => {
+  if (!el) return false;
+  if (el instanceof HTMLElement && el.isContentEditable) return true;
+  return el.closest(INTERACTIVE_GUARD_SELECTOR) !== null;
+};
+
 // ── VideoProgressBar ───────────────────────────────────────────────
 const VideoProgressBar: React.FC<{
   progress: number; currentTime: number; duration: number;
@@ -188,7 +203,7 @@ const VideoProgressBar: React.FC<{
     <div className="relative">
       <div
         ref={barRef}
-        className={`relative h-2.5 rounded-full cursor-pointer group ${isWatched ? "bg-green-900/40" : "bg-gray-700/50"}`}
+        className="relative py-2 -my-2 cursor-pointer group"
         onClick={handleClick}
         onMouseMove={(e) => {
           if (!barRef.current) return;
@@ -198,27 +213,38 @@ const VideoProgressBar: React.FC<{
         onMouseLeave={() => setHoverFrac(null)}
         role="slider" aria-label="Video progress"
         aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}
+        aria-valuetext={`${fmt(currentTime)} of ${fmt(duration)}`}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "ArrowRight" || e.key === "ArrowUp") { e.preventDefault(); onSeek?.(Math.min(1, (progress + 5) / 100)); }
-          if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); onSeek?.(Math.max(0, (progress - 5) / 100)); }
+          else if (e.key === "ArrowLeft" || e.key === "ArrowDown") { e.preventDefault(); onSeek?.(Math.max(0, (progress - 5) / 100)); }
+          else if (e.key === "Home") { e.preventDefault(); onSeek?.(0); }
+          else if (e.key === "End") { e.preventDefault(); onSeek?.(1); }
+          else if (e.key === "PageUp") { e.preventDefault(); onSeek?.(Math.min(1, progress / 100 + 0.1)); }
+          else if (e.key === "PageDown") { e.preventDefault(); onSeek?.(Math.max(0, progress / 100 - 0.1)); }
         }}
       >
         <div
-          className={`h-full rounded-full transition-all duration-300 ease-out relative overflow-hidden ${
-            progress >= 100
-              ? "bg-gradient-to-r from-emerald-400 to-green-500"
-              : isWatched
-                ? "bg-gradient-to-r from-emerald-400 to-teal-500"
-                : "bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
+          className={`relative h-2.5 rounded-full ${
+            isWatched ? "bg-green-900/40" : "bg-gray-700/50"
           }`}
-          style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
         >
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out" />
+          <div
+            className={`h-full rounded-full transition-all duration-300 ease-out relative overflow-hidden ${
+              progress >= 100
+                ? "bg-gradient-to-r from-emerald-400 to-green-500"
+                : isWatched
+                  ? "bg-gradient-to-r from-emerald-400 to-teal-500"
+                  : "bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
+            }`}
+            style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out" />
+          </div>
+          {hoverFrac !== null && (
+            <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg shadow-black/40 border-2 border-blue-500 z-10" style={{ left: `calc(${hoverFrac * 100}% - 8px)` }} />
+          )}
         </div>
-        {hoverFrac !== null && (
-          <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg shadow-black/40 border-2 border-blue-500 z-10" style={{ left: `calc(${hoverFrac * 100}% - 8px)` }} />
-        )}
       </div>
       {hoverFrac !== null && (
         <div className="absolute -top-9 transform -translate-x-1/2 bg-gray-900 border border-gray-700 text-white text-xs font-mono px-2.5 py-1.5 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none" style={{ left: `${hoverFrac * 100}%` }}>
@@ -228,14 +254,21 @@ const VideoProgressBar: React.FC<{
         </div>
       )}
       <div className="flex items-center justify-between mt-1.5">
-        <span className="text-[11px] text-gray-500 font-mono">{fmt(currentTime)}</span>
-        <span className="text-[11px] text-gray-500 font-mono">{fmt(duration)}</span>
+        <span className="text-xs text-gray-500 font-mono">{fmt(currentTime)}</span>
+        <span className="text-xs text-gray-500 font-mono">{fmt(duration)}</span>
       </div>
     </div>
   );
 };
 
 // ── VideoPlayer Props ──────────────────────────────────────────────
+export interface VideoCaptionTrack {
+  src: string;
+  srclang: string;
+  label: string;
+  default?: boolean;
+}
+
 export interface VideoPlayerProps {
   videoUrl: string;
   lessonTitle: string;
@@ -248,6 +281,9 @@ export interface VideoPlayerProps {
   initialProgress?: number;
   initialCurrentTime?: number;
   initialCompleted?: boolean;
+  poster?: string;
+  captionTracks?: VideoCaptionTrack[];
+  transcript?: string;
 }
 
 // ── VideoPlayer Component ──────────────────────────────────────────
@@ -255,8 +291,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videoUrl, lessonTitle, isMainVideo, mixedContentIndex,
   onComplete, onProgress, onMixedContentVideoProgress, onMixedContentVideoComplete,
   initialProgress = 0, initialCurrentTime = 0, initialCompleted = false,
+  poster, captionTracks, transcript,
 }) => {
-  const [isPlaying, setIsPlaying] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoWatched, setVideoWatched] = useState(false);
@@ -270,6 +306,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [retryToken, setRetryToken] = useState(0);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  // Embed (YouTube/Vimeo) loading placeholder, hidden once the iframe loads.
+  const [embedLoading, setEmbedLoading] = useState(true);
+  const [showTranscript, setShowTranscript] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoWatchedRef = useRef(false);
@@ -288,18 +327,38 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // clobber a newer persisted snapshot (progress only rises; the resume
   // position never jumps back to zero after real playback telemetry).
   const lastReportedRef = useRef({ progress: 0, time: 0 });
+  // Kept in sync so the YouTube onReady handler can apply a speed chosen
+  // before the player finished initializing.
+  const playbackRateRef = useRef(playbackSpeed);
+
+  useEffect(() => {
+    playbackRateRef.current = playbackSpeed;
+  }, [playbackSpeed]);
 
   const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtube-nocookie.com") || videoUrl.includes("youtu.be");
   const isVimeo = videoUrl.includes("vimeo.com");
-  const directExtension = videoUrl.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
+  const lastPathSegment = videoUrl.split('?')[0].split('#')[0].split('/').pop() ?? '';
+  const directExtension = lastPathSegment.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  const isGoogleDrive = videoUrl.includes("drive.google.com");
+  // Google Drive previews and non-video files (PDF, ZIP, …) cannot be played
+  // by a <video> element — render an honest fallback instead of a black box.
+  const isUnsupportedMedia = !isYouTube && !isVimeo &&
+    (isGoogleDrive || (directExtension !== undefined && !KNOWN_VIDEO_EXTENSIONS.has(directExtension)));
   // CDN and signed media URLs often have no file extension. Anything that is
-  // not a supported provider URL is still a native video source.
-  const isDirect = !isYouTube && !isVimeo;
+  // not a provider URL or an unsupported file is still a native video source.
+  const isDirect = !isYouTube && !isVimeo && !isUnsupportedMedia;
   const directMimeType = directExtension === 'webm'
     ? 'video/webm'
     : directExtension === 'ogg'
       ? 'video/ogg'
       : 'video/mp4';
+
+  const hasCaptionTracks = (captionTracks?.length ?? 0) > 0;
+  const hasTranscript = Boolean(transcript && transcript.trim());
+  // Embeds surface their own caption UI (and YouTube is explicitly asked for
+  // captions via cc_load_policy), so the "no captions" note only applies to
+  // direct video without provided caption tracks.
+  const captionsAvailable = hasCaptionTracks || isYouTube || isVimeo;
 
   const reportProgress = useCallback((progress: number, time?: number, duration?: number) => {
     onProgress?.(progress, time, duration);
@@ -316,6 +375,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
    *   a remount must not wipe the persisted resume point.
    * - Skips the meaningless all-zero report emitted before any player is
    *   ready, which used to overwrite saved backend progress with zeros.
+   * - Only pushes real increases, so a transient zero (error teardown,
+   *   remount) can never overwrite the parent's persisted snapshot.
    */
   const flushProgressToParent = useCallback(() => {
     const tracker = trackerRef.current;
@@ -326,13 +387,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const last = lastReportedRef.current;
     const safeProgress = Math.max(last.progress, progress);
     const safeTime = time > 0 ? time : last.time;
+    const hadIncrease = safeProgress > last.progress || safeTime > last.time;
     lastReportedRef.current = { progress: safeProgress, time: safeTime };
     setVideoProgress(safeProgress);
     if (time > 0 || duration > 0) {
       setCurrentTime(safeTime);
       if (duration > 0) setVideoDuration(duration);
     }
-    reportProgress(safeProgress, safeTime, duration);
+    if (hadIncrease) {
+      reportProgress(safeProgress, safeTime, duration);
+    }
   }, [reportProgress]);
 
   const markWatched = useCallback(() => {
@@ -372,6 +436,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     } catch {}
   }, []);
+
+  const cyclePlaybackSpeed = () => {
+    const next = SPEED_OPTIONS[(SPEED_OPTIONS.indexOf(playbackSpeed) + 1) % SPEED_OPTIONS.length];
+    setPlaybackSpeed(next);
+    if (videoRef.current) videoRef.current.playbackRate = next;
+    youtubePlayerRef.current?.setPlaybackRate?.(next);
+    vimeoPlayerRef.current?.setPlaybackRate?.(next);
+  };
 
   // Keep the custom control in sync when the browser exits fullscreen via
   // Escape or its native controls.
@@ -518,6 +590,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             const duration = event.target.getDuration();
             setVideoDuration(duration);
             trackerRef.current.setDuration(duration);
+            event.target.setPlaybackRate?.(playbackRateRef.current);
             progressIntervalRef.current = setInterval(() => {
               const current = event.target.getCurrentTime();
               const total = event.target.getDuration();
@@ -526,7 +599,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               }
             }, 2000);
           },
-          onStateChange: (event: any) => setIsPlaying(event.data === 1),
         },
       });
 
@@ -587,9 +659,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       vimeoPlayerRef.current.on("timeupdate", (data: any) => {
         if (data.duration > 0) observePlayback(data.seconds, data.duration);
       });
-      vimeoPlayerRef.current.on("play", () => setIsPlaying(true));
       vimeoPlayerRef.current.on("pause", () => {
-        setIsPlaying(false);
         flushProgressToParent();
       });
     };
@@ -600,7 +670,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       cancelled = true;
       if (vimeoPlayerRef.current) {
         vimeoPlayerRef.current.off("timeupdate");
-        vimeoPlayerRef.current.off("play");
         vimeoPlayerRef.current.off("pause");
         vimeoPlayerRef.current.destroy?.();
         vimeoPlayerRef.current = null;
@@ -646,10 +715,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (!isDirect) return;
     const handler = (e: KeyboardEvent) => {
       const v = videoRef.current;
-      const activeElement = document.activeElement;
-      if (!v || activeElement?.tagName === "INPUT" || activeElement?.tagName === "TEXTAREA" ||
-        activeElement?.tagName === "SELECT" || activeElement?.tagName === "BUTTON" ||
-        activeElement?.tagName === "A" || (activeElement instanceof HTMLElement && activeElement.isContentEditable)) return;
+      if (!v) return;
+      const target = e.target instanceof Element ? e.target : null;
+      // Never steal keys from form controls, links, buttons, or the
+      // progress slider (which has its own arrow-key handling).
+      if (isInteractiveTarget(target) || isInteractiveTarget(document.activeElement)) return;
       switch (e.key) {
         case " ": case "k": e.preventDefault(); v.paused ? v.play() : v.pause(); break;
         case "ArrowLeft": case "j": e.preventDefault(); v.currentTime = Math.max(0, v.currentTime - 5); break;
@@ -661,6 +731,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [isDirect, handleFullscreenToggle]);
+
+  // Embed loading placeholder: hide when the iframe finishes loading, with a
+  // timeout backstop so a blocked embed never traps the placeholder forever.
+  useEffect(() => {
+    if (!isYouTube && !isVimeo) {
+      setEmbedLoading(false);
+      return;
+    }
+    setEmbedLoading(true);
+    const timer = setTimeout(() => setEmbedLoading(false), 8000);
+    return () => clearTimeout(timer);
+  }, [videoUrl, isYouTube, isVimeo]);
 
   // Cleanup
   useEffect(() => () => {
@@ -675,7 +757,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       <Alert className="bg-red-900/20 border-red-700">
         <AlertCircle className="h-5 w-5 text-red-400" />
         <AlertDescription className="text-red-200">
-          <p className="font-semibold">❌ Video URL Missing</p>
+          <p className="font-semibold flex items-center gap-1.5">
+            <AlertTriangle className="h-4 w-4 text-red-400" aria-hidden="true" />
+            Video URL Missing
+          </p>
         </AlertDescription>
       </Alert>
     );
@@ -746,9 +831,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const renderPlayer = () => {
     if (isYouTube || isVimeo) {
-      const src = isYouTube
+      let src = isYouTube
         ? `https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`
         : `https://player.vimeo.com/video/${videoUrl.match(/vimeo\.com\/(\d+)/)?.[1]}`;
+      if (isYouTube) {
+        // Ask YouTube to load the player with captions UI available, and keep
+        // related videos out of the end screen — without clobbering params.
+        if (!/[?&]cc_load_policy=/.test(src)) src += "&cc_load_policy=1";
+        if (!/[?&]rel=/.test(src)) src += "&rel=0";
+      }
       return (
         <iframe
           // Force a fresh DOM node per URL. YT.Player replaces the node it is
@@ -761,7 +852,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           allow="autoplay; fullscreen; picture-in-picture"
           allowFullScreen
           title={lessonTitle}
+          onLoad={() => setEmbedLoading(false)}
         />
+      );
+    }
+    if (isUnsupportedMedia) {
+      return (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gray-950 p-6 text-center">
+          <AlertTriangle className="h-8 w-8 text-amber-400" aria-hidden="true" />
+          <p className="text-sm font-medium text-gray-200">This media type can&apos;t be played here.</p>
+          <a
+            href={videoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+          >
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            Open in a new tab
+          </a>
+        </div>
       );
     }
     // Direct video
@@ -771,13 +880,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         controls
         controlsList="nodownload"
         className="w-full h-full"
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
+        poster={poster}
         onError={() => setVideoError("Failed to load video.")}
         onLoadStart={() => setVideoLoading(true)}
         onLoadedData={() => setVideoLoading(false)}
       >
         <source src={videoUrl} type={directMimeType} />
+        {captionTracks?.map((track) => (
+          <track
+            key={`${track.srclang}-${track.src}`}
+            kind="captions"
+            src={track.src}
+            srcLang={track.srclang}
+            label={track.label}
+            default={track.default}
+          />
+        ))}
         Your browser does not support the video tag.
       </video>
     );
@@ -787,6 +905,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     <div className="space-y-4">
       <div ref={containerRef} className="relative aspect-video rounded-lg overflow-hidden bg-black group shadow-2xl" role="region" aria-label="Video player">
         {renderPlayer()}
+        {(isYouTube || isVimeo) && embedLoading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 animate-pulse pointer-events-none">
+            <span className="text-sm text-gray-300">Loading video…</span>
+          </div>
+        )}
         {videoLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-20">
             <Loader2 className="h-10 w-10 text-blue-400 animate-spin" />
@@ -795,12 +918,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
         <button
           onClick={() => handleFullscreenToggle(containerRef.current)}
-          className="absolute bottom-4 right-4 bg-black/70 hover:bg-black/90 text-white p-2.5 rounded-lg opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all z-10"
+          className="absolute bottom-4 right-4 flex h-11 w-11 items-center justify-center rounded-lg bg-black/70 hover:bg-black/90 text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all z-10"
           aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
         >
           {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </button>
       </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {hasTranscript && (
+          <button
+            type="button"
+            onClick={() => setShowTranscript((v) => !v)}
+            aria-expanded={showTranscript}
+            className="inline-flex h-11 items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800/60 px-3 text-xs font-medium text-gray-200 hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
+            <FileText className="h-4 w-4" aria-hidden="true" />
+            Transcript
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={cyclePlaybackSpeed}
+          aria-label={`Playback speed, currently ${playbackSpeed}x`}
+          className="inline-flex h-11 items-center rounded-md border border-gray-700 bg-gray-800/60 px-3 text-xs font-medium text-gray-200 hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        >
+          {playbackSpeed}x
+        </button>
+        {!captionsAvailable && !hasTranscript && (
+          <p className="text-xs text-gray-400">Captions not available for this video</p>
+        )}
+      </div>
+
+      {hasTranscript && showTranscript && (
+        <div
+          role="region"
+          aria-label="Video transcript"
+          className="max-h-64 overflow-y-auto rounded-lg border border-gray-700 bg-gray-900/70 p-3 text-sm leading-relaxed text-gray-300 whitespace-pre-wrap"
+        >
+          {transcript}
+        </div>
+      )}
 
       {apiWarning && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-900/20 p-3">

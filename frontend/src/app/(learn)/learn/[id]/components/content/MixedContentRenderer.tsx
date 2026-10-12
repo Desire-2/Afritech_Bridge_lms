@@ -8,13 +8,17 @@ import type { StepSection } from "../InteractiveStepThroughViewer";
 
 // ── Types ──────────────────────────────────────────────────────────
 interface MixedSection {
-  type: "text" | "video" | "pdf" | "image" | "heading";
+  type: "text" | "video" | "pdf" | "image" | "heading" | string;
   content?: string;
   url?: string;
   title?: string;
   level?: number;
   alt?: string;
 }
+
+/** Section types the player can render natively. Anything else is preserved
+ *  and surfaced to the learner instead of being silently dropped. */
+const RENDERABLE_SECTION_TYPES = ["text", "video", "pdf", "image", "heading"];
 
 export interface MixedContentRendererProps {
   lesson: {
@@ -42,7 +46,7 @@ function parseMixedContent(raw: string): MixedSection[] {
       const validSections = parsed.filter((section): section is MixedSection => {
         if (!section || typeof section !== "object") return false;
         const typedSection = section as MixedSection;
-        return ["text", "video", "pdf", "image", "heading"].includes(typedSection.type) &&
+        return typeof typedSection.type === "string" &&
           Boolean(typedSection.content || typedSection.url || typedSection.title);
       });
       if (validSections.length > 0) return validSections;
@@ -156,30 +160,68 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
     let textIdx = 0;
 
     mixed.forEach((s, i) => {
-      if (s.type === "text" || s.type === "heading") {
+      if (s.type === "heading") {
+        // The step viewer already renders `heading` as an <h3>, so the body is
+        // intentionally empty — otherwise the same text shows up twice.
+        sections.push({
+          id: `step-${i}`,
+          type: "heading",
+          heading: s.title || s.content || `Section ${i + 1}`,
+          content: "",
+          metadata: { originalIndex: i, originalSection: s },
+        });
+        return;
+      }
+
+      if (s.type === "text") {
         const textSections = parseTextIntoSections(s.content || s.title || "");
-        textSections.forEach((ts) => {
+        textSections.forEach((ts, j) => {
+          const genericHeading = /^Section \d+$/.test(ts.heading || "");
           sections.push({
             ...ts,
             id: `step-${i}-${textIdx++}`,
-            heading: ts.heading || s.title || `Section ${i + 1}`,
-            metadata: { originalIndex: i },
+            // Instructor-provided titles win over the auto-generated
+            // "Section N" labels, including for the first parsed chunk.
+            heading:
+              (j === 0 && s.title) || (!genericHeading && ts.heading) || s.title || ts.heading || `Section ${i + 1}`,
+            metadata: { originalIndex: i, originalSection: s },
           });
         });
-      } else {
-        const heading =
-          s.title ||
-          (s.type === "video" ? "Video" : s.type === "pdf" ? "Document" : s.type === "image" ? "Image" : `Step ${i + 1}`);
+        return;
+      }
+
+      if (!RENDERABLE_SECTION_TYPES.includes(s.type)) {
+        // Unknown content type: never drop the section silently — show what
+        // we have and tell the learner the format isn't supported yet.
+        const detail = [
+          `This lesson contains a "${s.type}" section, which this player can't display yet.`,
+          s.content ? s.content : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         sections.push({
           id: `step-${i}`,
-          type: s.type as StepSection["type"],
-          heading,
-          content: s.content || s.url,
+          type: "text",
+          heading: s.title || `Unsupported section (${s.type})`,
+          content: detail,
           url: s.url,
-          alt: s.alt,
           metadata: { originalIndex: i, originalSection: s },
         });
+        return;
       }
+
+      const heading =
+        s.title ||
+        (s.type === "video" ? "Video" : s.type === "pdf" ? "Document" : s.type === "image" ? "Image" : `Step ${i + 1}`);
+      sections.push({
+        id: `step-${i}`,
+        type: s.type as StepSection["type"],
+        heading,
+        content: s.content || s.url,
+        url: s.url,
+        alt: s.alt,
+        metadata: { originalIndex: i, originalSection: s },
+      });
     });
 
     return sections.length > 0
@@ -194,36 +236,43 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
 
   // Last step button
   const lastStepButton = useMemo(() => {
-    if (isLessonCompleted) return null;
+    if (isLessonCompleted) {
+      if (!hasNextLesson || !onGoToNextLesson) return null;
+      return (
+        <button type="button" onClick={onGoToNextLesson}
+          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
+          Next Lesson <span aria-hidden="true">&rarr;</span>
+        </button >
+      );
+    }
     if (hasQuiz) {
       return (
-        <button onClick={onSwitchToQuiz}
+        <button type="button" onClick={onSwitchToQuiz}
           className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
-          Continue to Quiz →
+          Continue to Quiz <span aria-hidden="true">&rarr;</span>
         </button >
       );
     }
     if (hasAssignments) {
       return (
-        <button onClick={onSwitchToAssignment}
+        <button type="button" onClick={onSwitchToAssignment}
           className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
-          Continue to Assignment →
+          Continue to Assignment <span aria-hidden="true">&rarr;</span>
         </button >
       );
     }
-    if (!isLessonCompleted || !hasNextLesson || !onGoToNextLesson) return null;
-    return (
-      <button type="button" onClick={onGoToNextLesson}
-        className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
-        Next Lesson →
-      </button >
-    );
+    // Requirements still outstanding and no CTA to satisfy them: the parent
+    // owns navigation (and explains why the next lesson is locked).
+    return null;
   }, [hasQuiz, hasAssignments, isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson]);
 
   const renderSection = useCallback(
     (section: StepSection, index: number, isActive: boolean) => {
       const meta = section.metadata as { originalSection?: MixedSection } | undefined;
       const originalSection = meta?.originalSection;
+
+      // Headings are drawn by the step viewer itself (as an <h3>).
+      if (section.type === "heading") return null;
 
       if (originalSection?.type === "video") {
         const meta = section.metadata as { originalIndex?: number } | undefined;
@@ -287,7 +336,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       renderSection={renderSection}
       onAllSectionsViewed={handleAllSectionsViewed}
       onViewedSectionsUpdate={onSectionProgress}
-      lastStepButton={!isLessonCompleted ? lastStepButton : undefined}
+      lastStepButton={lastStepButton}
     />
   );
 };

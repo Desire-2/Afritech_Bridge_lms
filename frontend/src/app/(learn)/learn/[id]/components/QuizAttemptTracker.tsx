@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,13 +7,19 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { 
   Play,
   Clock,
   CheckCircle,
   XCircle,
   AlertCircle,
+  AlertTriangle,
+  ShieldAlert,
+  Lock,
+  Lightbulb,
+  BookOpen,
+  PartyPopper,
   Trophy,
   RefreshCw,
   FileText,
@@ -29,6 +35,59 @@ import ContentAssignmentService from '@/services/contentAssignmentApi';
 import { toast } from 'sonner';
 import { useSidebarSafe } from '@/contexts/SidebarContext';
 import { DEFAULT_QUIZ_PASSING_THRESHOLD } from '@/constants/learningRules';
+
+// Question types this player can actually render an input for. Anything else
+// must never block submission (the student has no way to answer it here).
+const SUPPORTED_QUESTION_TYPES = ['multiple_choice', 'single_choice', 'true_false', 'short_answer', 'essay'] as const;
+type SupportedQuestionType = (typeof SUPPORTED_QUESTION_TYPES)[number];
+
+const isSupportedType = (type?: string | null): type is SupportedQuestionType =>
+  (SUPPORTED_QUESTION_TYPES as readonly string[]).includes(type ?? '');
+
+interface BlockingQuestionLike {
+  question_type?: string | null;
+  required?: boolean;
+}
+
+// A question only blocks submission when we can render an input for it AND it
+// is required (questions are required unless explicitly marked optional).
+const isBlockingQuestion = (question?: BlockingQuestionLike | null): boolean => {
+  if (!question) return false;
+  if (question.required === false) return false;
+  return isSupportedType(question.question_type);
+};
+
+// Free-text answers are only graded when the backend explicitly returns a
+// correctness/grade field for the question (`is_correct`, `correct`,
+// `awarded_points`/`points_awarded`/`points_scored`, or a scored total).
+// `graded`/`instructor_feedback`/`feedback` alone never imply a verdict — they
+// say a review is happening, not what it concluded. Without an explicit field
+// the verdict is PENDING (null) — never fabricate "Correct" locally for an
+// ungraded text answer.
+const resolveTextBasedVerdict = (question: unknown): boolean | null => {
+  if (!question || typeof question !== 'object') return null;
+  const q = question as Record<string, unknown>;
+
+  // Explicit "not graded yet" markers beat any numeric fallback: the backend
+  // reports pending text answers as `is_correct: null` / `graded: false` while
+  // the instructor review is outstanding (score fields may be absent or 0).
+  if (q.graded === false || q.is_correct === null || q.correct === null) return null;
+
+  if (typeof q.is_correct === 'boolean') return q.is_correct;
+  if (typeof q.correct === 'boolean') return q.correct;
+  const awarded =
+    typeof q.awarded_points === 'number' ? q.awarded_points
+    : typeof q.points_awarded === 'number' ? q.points_awarded
+    : typeof q.points_scored === 'number' ? q.points_scored
+    : null;
+  const total = typeof q.points === 'number' && q.points > 0 ? q.points : null;
+  if (awarded !== null) {
+    return total !== null ? awarded >= total : awarded > 0;
+  }
+  if (typeof q.score === 'number' && total !== null) return q.score >= total;
+  return null;
+};
+
 
 interface ExtendedQuiz extends ContentQuiz {
   time_limit?: number;
@@ -76,6 +135,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   // Safe sidebar access - returns undefined if no SidebarProvider wraps this component
   const sidebarContext = useSidebarSafe();
   const closeSidebar = sidebarContext?.closeSidebar;
+
+  // Stable ids: dialog labelling + label/control pairing for text answers
+  const questionHeadingId = useId();
+  const answerFieldId = useId();
   
   const [quizState, setQuizState] = useState<QuizState>({
     status: 'not-started',
@@ -91,6 +154,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const [shuffledQuestions, setShuffledQuestions] = useState<any[]>([]);
   const [shuffledAnswersMap, setShuffledAnswersMap] = useState<Record<number, any[]>>({});
   const [showScoreModal, setShowScoreModal] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const [securityViolation, setSecurityViolation] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
@@ -106,13 +170,24 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const timeElapsedRef = useRef(0);
   const securityGraceRef = useRef(false); // grace period after fullscreen entry
   const isContentHiddenRef = useRef(false);
-  
+  // Authoritative violation counter — side effects (toasts, escalation) run
+  // outside of state updaters so StrictMode double-invocation cannot inflate it.
+  const tabSwitchCountRef = useRef(0);
+  // Ensures time-expired auto-submit fires exactly once per attempt.
+  const autoSubmittedRef = useRef(false);
+  const confirmOpenRef = useRef(false);
+  // Cancel is the safe default target when the submit dialog opens
+  const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
   // Keep refs in sync with state
   useEffect(() => { securityViolationRef.current = securityViolation; }, [securityViolation]);
   useEffect(() => { submittingRef.current = submitting; }, [submitting]);
   useEffect(() => { isQuizActiveRef.current = isQuizActive; }, [isQuizActive]);
   useEffect(() => { quizStateRef.current = quizState; }, [quizState]);
   useEffect(() => { timeElapsedRef.current = timeElapsed; }, [timeElapsed]);
+  useEffect(() => { confirmOpenRef.current = confirmOpen; }, [confirmOpen]);
   
   // Shuffle utility function
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -126,6 +201,11 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // Initialize shuffled questions and answers when quiz loads
   useEffect(() => {
+    // Never reshuffle underneath a live or finished attempt. The parent
+    // refetches the quiz after every submission, which changes the array
+    // identity of `questions` and would otherwise silently reorder the
+    // review list while the student is reading their results.
+    if (quizState.status !== 'not-started') return;
     if (quiz.questions && quiz.questions.length > 0) {
       // Sort questions by order field first
       const sortedQuestions = [...quiz.questions].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -157,42 +237,44 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   }, [quiz.questions, quiz.shuffle_questions, quiz.shuffle_answers]);
 
   // Timer effect with countdown and auto-submit
-  // Uses functional state updates to avoid stale closure on timeElapsed
+  // The state updater stays pure: the new value is derived from the ref,
+  // setState is called with it, and toasts/auto-submit run afterwards so a
+  // StrictMode double-invocation cannot fire side effects twice.
   useEffect(() => {
     if (quizState.status === 'in-progress') {
       const interval = setInterval(() => {
-        setTimeElapsed(prev => {
-          const newElapsed = prev + 1;
-          timeElapsedRef.current = newElapsed;
-          
-          // Update countdown timer
-          if (quiz.time_limit) {
-            const remaining = (quiz.time_limit * 60) - newElapsed;
-            setTimeRemaining(remaining);
-            
-            // Auto-submit when time expires
-            if (remaining <= 0) {
-              clearInterval(interval);
+        const newElapsed = timeElapsedRef.current + 1;
+        timeElapsedRef.current = newElapsed;
+        setTimeElapsed(newElapsed);
+
+        // Update countdown timer
+        if (quiz.time_limit) {
+          const remaining = (quiz.time_limit * 60) - newElapsed;
+          setTimeRemaining(remaining);
+
+          // Auto-submit when time expires (guarded so it fires only once)
+          if (remaining <= 0) {
+            clearInterval(interval);
+            if (!autoSubmittedRef.current) {
+              autoSubmittedRef.current = true;
               toast.error('Time Expired!', {
                 description: 'Your quiz has been automatically submitted.',
                 duration: 5000
               });
               handleTimeExpiredSubmit();
             }
-            
-            // Warning at 1 minute remaining
-            if (remaining === 60) {
-              toast.warning('1 Minute Remaining!', {
-                description: 'Please complete your quiz soon.',
-                duration: 5000
-              });
-            }
           }
-          
-          return newElapsed;
-        });
+
+          // Warning at 1 minute remaining
+          if (remaining === 60) {
+            toast.warning('1 Minute Remaining!', {
+              description: 'Please complete your quiz soon.',
+              duration: 5000
+            });
+          }
+        }
       }, 1000);
-      
+
       return () => clearInterval(interval);
     }
   }, [quizState.status]); // Only depend on status, not timeElapsed
@@ -215,23 +297,29 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       }, 2000); // 2 second grace period
 
       // === VIOLATION TRACKING HELPER ===
+      // Pure state update: count is derived from the ref and written outside
+      // any updater; toasts and escalation run afterwards (never inside).
+      const applyViolation = (label: string, description: string): number => {
+        const newCount = tabSwitchCountRef.current + 1;
+        tabSwitchCountRef.current = newCount;
+        setTabSwitchCount(newCount);
+        toast.error(`${label} (${newCount}/3)`, { description, duration: 5000 });
+
+        if (newCount >= 3 && !securityViolationRef.current) {
+          setSecurityViolation(true);
+          securityViolationRef.current = true;
+          toast.error('Maximum Violations Reached', {
+            description: 'Quiz will be submitted with 0 score due to multiple security violations.',
+            duration: 5000
+          });
+          schedule(() => { submitQuizWithViolation(); }, 2000);
+        }
+        return newCount;
+      };
+
       const recordViolation = (label: string, description: string) => {
         if (securityGraceRef.current || submittingRef.current) return;
-        setTabSwitchCount(prev => {
-          const newCount = prev + 1;
-          toast.error(`${label} (${newCount}/3)`, { description, duration: 5000 });
-
-          if (newCount >= 3 && !securityViolationRef.current) {
-            setSecurityViolation(true);
-            securityViolationRef.current = true;
-            toast.error('Maximum Violations Reached', {
-              description: 'Quiz will be submitted with 0 score due to multiple security violations.',
-              duration: 5000
-            });
-            schedule(() => { submitQuizWithViolation(); }, 2000);
-          }
-          return newCount;
-        });
+        applyViolation(label, description);
       };
 
       // === CONTENT BLUR HELPER (hides quiz content during screenshot attempts) ===
@@ -427,25 +515,11 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       const handleFullscreenChange = () => {
         if (!document.fullscreenElement && isQuizActiveRef.current && !securityViolationRef.current && !securityGraceRef.current) {
           setIsFullscreen(false);
-          setTabSwitchCount(prev => {
-            const newCount = prev + 1;
-            toast.error(`Fullscreen Exit Detected (${newCount}/3)`, {
-              description: 'Exiting fullscreen during the quiz is not allowed.',
-              duration: 5000
-            });
-            if (newCount >= 3 && !securityViolationRef.current) {
-              setSecurityViolation(true);
-              securityViolationRef.current = true;
-              toast.error('Maximum Violations Reached', {
-                description: 'Quiz will be submitted with 0 score due to multiple security violations.',
-                duration: 5000
-              });
-              schedule(() => { submitQuizWithViolation(); }, 2000);
-            } else {
-              enterFullscreen();
-            }
-            return newCount;
-          });
+          // Same pure pattern as recordViolation: count first, toast/escalate after.
+          const newCount = applyViolation('Fullscreen Exit Detected', 'Exiting fullscreen during the quiz is not allowed.');
+          if (newCount < 3) {
+            enterFullscreen();
+          }
         } else if (document.fullscreenElement) {
           setIsFullscreen(true);
         }
@@ -497,6 +571,78 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
   }, [quizState.status]); // Minimal dependencies - use refs for mutable values
 
+  // The in-quiz fullscreen overlay behaves as a modal dialog: move focus into
+  // it on mount, trap Tab inside it (re-querying focusables on every Tab, the
+  // same approach as LearningSidebar's drawer), and restore focus on unmount.
+  useEffect(() => {
+    if (quizState.status !== 'in-progress') return;
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+
+    if (document.activeElement instanceof HTMLElement) {
+      previousFocusRef.current = document.activeElement;
+    }
+
+    const getFocusableElements = () =>
+      Array.from(
+        overlay.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => element.offsetParent !== null);
+
+    // Initial focus → first interactive control (answer input / Next-Submit)
+    const firstFocusable = getFocusableElements()[0];
+    if (firstFocusable) firstFocusable.focus();
+    else overlay.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // While the submit-confirmation dialog is open, Radix owns focus + Escape.
+      if (confirmOpenRef.current) return;
+
+      if (event.key === 'Escape') {
+        // Escape is deliberately ignored: it must NOT abandon an in-progress
+        // attempt. There is no close handler for the overlay; we only explain
+        // why it stays open. The browser's native default (fullscreen exit) is
+        // intentionally left untouched so proctoring rules behave exactly as
+        // before — exiting fullscreen still counts as a violation.
+        toast.info("Can't close the quiz with Escape", {
+          description: 'Your attempt stays open until you submit it. Leaving fullscreen or this page counts as a security violation.',
+          duration: 5000
+        });
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+      // Re-query on every Tab so the trap stays correct while the question,
+      // answer options or validation error change what is focusable.
+      const focusable = getFocusableElements();
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (active && !overlay.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      const previous = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (previous && previous !== document.body && document.contains(previous)) {
+        previous.focus();
+      }
+    };
+  }, [quizState.status]);
+
   const startQuiz = () => {
     // Double-check violation status before starting
     if (quiz.blocked_due_to_violation) {
@@ -516,6 +662,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     setTimeElapsed(0);
     timeElapsedRef.current = 0;
     setTabSwitchCount(0);
+    tabSwitchCountRef.current = 0;
+    autoSubmittedRef.current = false;
     setSecurityViolation(false);
     securityViolationRef.current = false;
     setIsQuizActive(true);
@@ -592,6 +740,45 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         currentQuestionIndex: quizState.currentQuestionIndex - 1
       });
     }
+  };
+
+  // Roving-focus keyboard model for the answer radiogroups (choices + true/false).
+  // Arrow keys move selection AND focus, Home/End jump to first/last option.
+  const handleRadioGroupKeyDown = (
+    e: React.KeyboardEvent<HTMLElement>,
+    onSelect: (value: string) => void
+  ) => {
+    const radios = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    if (radios.length === 0) return;
+
+    const activeIndex = radios.findIndex((radio) => radio === document.activeElement);
+    const checkedIndex = radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true');
+    const baseIndex = activeIndex >= 0 ? activeIndex : checkedIndex;
+
+    let nextIndex: number;
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowRight':
+        nextIndex = baseIndex < 0 ? 0 : (baseIndex + 1) % radios.length;
+        break;
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        nextIndex = baseIndex < 0 ? radios.length - 1 : (baseIndex - 1 + radios.length) % radios.length;
+        break;
+      case 'Home':
+        nextIndex = 0;
+        break;
+      case 'End':
+        nextIndex = radios.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    const value = radios[nextIndex]?.dataset.value;
+    if (value !== undefined) onSelect(value);
+    radios[nextIndex]?.focus();
   };
 
   // Submit quiz with 0 score due to security violation and block all remaining attempts
@@ -718,11 +905,12 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
   };
 
-  const submitQuiz = async () => {
+  // Step 1: validate, then open the confirmation dialog (replaces window.confirm).
+  const submitQuiz = () => {
     // Guard against duplicate submissions using refs to avoid stale closures
     if (submittingRef.current || quizStateRef.current.status !== 'in-progress') return;
     
-    // Validate all questions are answered
+    // Validate all questions are answered — this must run BEFORE the dialog opens
     if (!allQuestionsAnswered) {
       const unanswered = questions.length - answeredCount;
       setError(`Please answer all questions. ${unanswered} question${unanswered > 1 ? 's' : ''} remaining.`);
@@ -733,10 +921,15 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       return;
     }
 
-    if (!window.confirm('Are you sure you want to submit your quiz? You cannot change your answers after submission.')) {
-      return;
-    }
+    setConfirmOpen(true);
+  };
 
+  // Step 2: actual submission, confirmed by the dialog's Submit action.
+  const performSubmit = async () => {
+    // Guard against duplicate submissions using refs to avoid stale closures
+    if (submittingRef.current || quizStateRef.current.status !== 'in-progress') return;
+
+    setConfirmOpen(false);
     setSubmitting(true);
     submittingRef.current = true;
     setError(null);
@@ -780,7 +973,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
       // Show success toast
       if (result.passed) {
-        toast.success('Quiz Passed! 🎉', {
+        toast.success('Quiz Passed!', {
           description: `Score: ${scoreRounded}% - Attempt ${result.attempt_number}/${maxAttempts === -1 ? '∞' : maxAttempts}`,
           duration: 6000
         });
@@ -811,20 +1004,52 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Shared reset for both "Retake Quiz" buttons on the results screen —
+  // behaviour per call site is kept identical via the mode-specific toast.
+  const handleRetakeQuiz = (mode: 'below-passing' | 'retake') => {
+    setQuizState({
+      status: 'not-started',
+      currentQuestionIndex: 0,
+      answers: {},
+      attemptNumber: (submissionResult?.attempt_number || 0) + 1
+    });
+    setSubmissionResult(null);
+    setTimeElapsed(0);
+    setError(null);
+    const attemptsLeft = submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts;
+    if (mode === 'below-passing') {
+      toast.warning('Retake Quiz', {
+        description: `You scored below passing. You have ${attemptsLeft} attempts remaining.`,
+        duration: 3000
+      });
+    } else {
+      toast.info('Ready to Retake', {
+        description: `Improve your score! You have ${attemptsLeft} attempts remaining.`,
+        duration: 3000
+      });
+    }
+  };
+
   // Use shuffled questions (already sorted/shuffled based on settings)
   const questions = shuffledQuestions.length > 0 ? shuffledQuestions : [];
   
   const currentQuestion = questions[quizState.currentQuestionIndex];
   const currentAnswers = currentQuestion ? shuffledAnswersMap[currentQuestion.id] || [] : [];
   
-  // Count answered questions (including text-based answers)
-  const answeredCount = Object.keys(quizState.answers).filter(key => {
-    const answer = quizState.answers[Number(key)];
-    return answer && (typeof answer === 'string' ? answer.trim().length > 0 : true);
+  // Count questions that are "handled": answered, or not blocking because this
+  // player cannot render an input for them (unsupported type / optional).
+  // Unsupported questions must never lock the Submit button.
+  const answeredCount = questions.filter((question) => {
+    const answer = quizState.answers[question.id];
+    const hasAnswer = Boolean(answer && (typeof answer === 'string' ? answer.trim().length > 0 : true));
+    return hasAnswer || !isBlockingQuestion(question);
   }).length;
   
   const progressPercentage = questions.length > 0 ? (answeredCount / questions.length) * 100 : 0;
   const allQuestionsAnswered = answeredCount === questions.length;
+
+  // Threshold actually used for pass/fail (mirrors every computation below)
+  const effectivePassingScore = quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
 
   // Check if max attempts reached
   const attemptsUsed = quiz.attempts_used || 0;
@@ -1039,7 +1264,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             <Alert className="bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-700">
               <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
               <AlertTitle className="text-orange-900 dark:text-orange-300 font-bold">
-                🔒 Security Policy
+                <Lock className="h-4 w-4 mr-1.5 inline-block align-[-3px]" aria-hidden="true" />
+                Security Policy
               </AlertTitle>
               <AlertDescription className="text-orange-800 dark:text-orange-300">
                 <p className="mb-2 font-semibold">This quiz is monitored for academic integrity:</p>
@@ -1050,7 +1276,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   <li><strong>Printing disabled</strong> — Cannot print quiz content</li>
                   <li><strong>Copy / paste disabled</strong> — Cannot copy text or images</li>
                   <li><strong>Works on mobile &amp; desktop</strong> — All devices are monitored equally</li>
-                  <li className="text-red-700 dark:text-red-400 font-bold">⚠️ 3 violations = Automatic 0 score &amp; all remaining attempts blocked</li>
+                  <li className="text-red-700 dark:text-red-400 font-bold">
+                    <AlertTriangle className="h-4 w-4 mr-1 inline-block align-[-3px]" aria-hidden="true" />
+                    3 violations = Automatic 0 score &amp; all remaining attempts blocked
+                  </li>
                 </ul>
               </AlertDescription>
             </Alert>
@@ -1163,7 +1392,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     <Alert className="border-red-400 bg-red-50 dark:bg-red-950/30">
                       <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
                       <AlertTitle className="text-red-900 dark:text-red-300 font-bold">
-                        ⚠️ Important Notice
+                        <AlertTriangle className="h-4 w-4 mr-1.5 inline-block align-[-3px]" aria-hidden="true" />
+                        Important Notice
                       </AlertTitle>
                       <AlertDescription className="text-red-800 dark:text-red-300 space-y-2">
                         <p className="font-semibold">
@@ -1172,8 +1402,9 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         <p>
                           Please review the lesson content carefully and ensure you fully understand the material before moving forward. Failing to pass required assessments may result in being dropped from this course.
                         </p>
-                        <p className="text-sm italic">
-                          💡 Tip: Re-read the lesson materials, take notes, and discuss any unclear topics with your instructor.
+                        <p className="text-sm italic flex items-start gap-1.5">
+                          <Lightbulb className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                          <span>Tip: Re-read the lesson materials, take notes, and discuss any unclear topics with your instructor.</span>
                         </p>
                       </AlertDescription>
                     </Alert>
@@ -1184,7 +1415,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     <Alert className="border-blue-300 bg-blue-50 dark:bg-blue-950/30">
                       <CheckCircle className="h-4 w-4 text-blue-600" />
                       <AlertTitle className="text-blue-900 dark:text-blue-300 font-semibold">
-                        📚 Study Recommendation
+                        <BookOpen className="h-4 w-4 mr-1.5 inline-block align-[-3px]" aria-hidden="true" />
+                        Study Recommendation
                       </AlertTitle>
                       <AlertDescription className="text-blue-800 dark:text-blue-300">
                         <p>Before retaking this quiz, we recommend:</p>
@@ -1254,8 +1486,23 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // In Progress State - Render as a fullscreen overlay via portal to escape tab container constraints
   if (quizState.status === 'in-progress' && currentQuestion) {
+    const selectedAnswerValue = quizState.answers[currentQuestion.id];
+    // Roving tabindex stop: the checked option, otherwise the first one
+    const rovingChoiceIndex = Math.max(
+      0,
+      currentAnswers.findIndex((answer) => String(answer.id) === selectedAnswerValue)
+    );
+    // True button renders first, False second — roving stop follows the checked option
+    const rovingTrueFalseIndex = selectedAnswerValue === 'false' ? 1 : 0;
+    // Display is capped at the limit: "N of 3" can never read "4 of 3"
+    const violationCountDisplay = Math.min(tabSwitchCount, 3);
     const quizContent = (
       <div
+        ref={overlayRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={questionHeadingId}
+        tabIndex={-1}
         className="fixed inset-0 z-[9999] bg-gray-900 overflow-y-auto"
         style={{
           userSelect: 'none',
@@ -1284,7 +1531,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         <div className="min-h-screen p-3 sm:p-4 md:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
         {/* Error Alert */}
         {error && (
-          <Alert className="border-red-700 bg-red-900/30">
+          <Alert role="alert" className="border-red-700 bg-red-900/30">
             <AlertCircle className="h-4 w-4 text-red-400" />
             <AlertTitle className="text-red-300">Error</AlertTitle>
             <AlertDescription className="text-red-200">{error}</AlertDescription>
@@ -1295,7 +1542,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         <Alert className="border-orange-400 bg-orange-50 dark:bg-orange-950/30">
           <AlertCircle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
           <AlertTitle className="text-orange-900 dark:text-orange-300 font-bold">
-            🔒 Security Monitoring Active
+            <ShieldAlert className="h-4 w-4 mr-1.5 inline-block align-[-3px]" aria-hidden="true" />
+            Security Monitoring Active
           </AlertTitle>
           <AlertDescription className="text-orange-800 dark:text-orange-300 text-sm">
             <ul className="list-disc ml-5 space-y-1">
@@ -1308,6 +1556,26 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           </AlertDescription>
         </Alert>
 
+        {/* Persistent violations counter — sits with the security banner so the
+            count and its consequence are visible BEFORE the threshold is hit */}
+        <div
+          aria-live="polite"
+          className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-4 py-2.5 text-sm ${
+            tabSwitchCount > 0
+              ? 'border-red-400 bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-300'
+              : 'border-orange-300 dark:border-orange-700 bg-orange-50/70 dark:bg-orange-950/20 text-orange-900 dark:text-orange-300'
+          }`}
+        >
+          <AlertTriangle
+            className={`h-4 w-4 flex-shrink-0 ${tabSwitchCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'}`}
+            aria-hidden="true"
+          />
+          <span className="font-semibold">Security violations: {violationCountDisplay} of 3</span>
+          <span className="text-gray-700 dark:text-gray-400">
+            — 3 violations = automatic 0 score and remaining attempts blocked
+          </span>
+        </div>
+
         {/* Quiz Header */}
         <Card className="border-2 border-blue-100 dark:border-blue-900 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 shadow-md">
           <CardContent className="p-4 sm:p-5">
@@ -1316,9 +1584,16 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 <Badge variant="outline" className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-sm">
                   Question {quizState.currentQuestionIndex + 1} of {questions.length}
                 </Badge>
-                <Badge variant={answeredCount === questions.length ? 'default' : 'secondary'} className="shadow-sm bg-blue-600 text-white">
-                  {answeredCount}/{questions.length} Answered
-                </Badge>
+                {allQuestionsAnswered ? (
+                  <Badge variant="default" className="shadow-sm bg-emerald-600 hover:bg-emerald-700 text-white">
+                    <CheckCircle className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+                    All answered
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="shadow-sm bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                    {answeredCount} of {questions.length} answered
+                  </Badge>
+                )}
               </div>
               
               <div className="flex items-center space-x-3 sm:space-x-4">
@@ -1364,7 +1639,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                       {currentQuestion.question_type?.replace('_', ' ').toUpperCase()}
                     </Badge>
                   </div>
-                  <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white leading-relaxed">
+                  <h3 id={questionHeadingId} className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white leading-relaxed">
                     {currentQuestion.text}
                   </h3>
                 </div>
@@ -1374,41 +1649,67 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             {/* Answer Options - Dynamic based on question type */}
             <div className="space-y-3">
               {/* Multiple Choice / Single Choice */}
-              {(currentQuestion.question_type === 'multiple_choice' || currentQuestion.question_type === 'single_choice') && currentAnswers.map((answer, index) => (
-                <button
-                  key={answer.id}
-                  onClick={() => handleAnswerSelect(currentQuestion.id, answer.id.toString())}
-                  className={`w-full text-left p-4 sm:p-5 rounded-xl border-2 transition-all duration-200 ${
-                    quizState.answers[currentQuestion.id] === answer.id.toString()
-                      ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30 shadow-md scale-[1.02]'
-                      : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 hover:shadow-md hover:scale-[1.01]'
-                  }`}
+              {(currentQuestion.question_type === 'multiple_choice' || currentQuestion.question_type === 'single_choice') && (
+                <div
+                  role="radiogroup"
+                  aria-label={currentQuestion.text}
+                  className="space-y-3"
+                  onKeyDown={(e) => handleRadioGroupKeyDown(e, (value) => handleAnswerSelect(currentQuestion.id, value))}
                 >
-                  <div className="flex items-start space-x-3">
-                    <div className={`min-w-[32px] h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-all duration-200 ${
-                      quizState.answers[currentQuestion.id] === answer.id.toString()
-                        ? 'border-blue-500 dark:border-blue-400 bg-blue-500 dark:bg-blue-600 text-white shadow-md'
-                        : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 bg-white dark:bg-gray-800'
-                    }`}>
-                      {quizState.answers[currentQuestion.id] === answer.id.toString() ? (
-                        <CheckCircle className="h-5 w-5" />
-                      ) : (
-                        String.fromCharCode(65 + index)
-                      )}
-                    </div>
-                    <span className="text-gray-900 dark:text-gray-100 flex-1 pt-0.5 text-sm sm:text-base">{answer.text}</span>
-                  </div>
-                </button>
-              ))}
+                  {currentAnswers.map((answer, index) => {
+                    const selected = selectedAnswerValue === answer.id.toString();
+                    return (
+                      <button
+                        key={answer.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        tabIndex={index === rovingChoiceIndex ? 0 : -1}
+                        data-value={answer.id.toString()}
+                        onClick={() => handleAnswerSelect(currentQuestion.id, answer.id.toString())}
+                        className={`w-full text-left p-4 sm:p-5 rounded-xl border-2 transition-all duration-200 ${
+                          selected
+                            ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30 shadow-md scale-[1.02]'
+                            : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 hover:shadow-md hover:scale-[1.01]'
+                        }`}
+                      >
+                        <div className="flex items-start space-x-3">
+                          <div className={`min-w-[32px] h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-all duration-200 ${
+                            selected
+                              ? 'border-blue-500 dark:border-blue-400 bg-blue-500 dark:bg-blue-600 text-white shadow-md'
+                              : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 bg-white dark:bg-gray-800'
+                          }`}>
+                            {selected ? (
+                              <CheckCircle className="h-5 w-5" />
+                            ) : (
+                              String.fromCharCode(65 + index)
+                            )}
+                          </div>
+                          <span className="text-gray-900 dark:text-gray-100 flex-1 pt-0.5 text-sm sm:text-base">{answer.text}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* True/False Question */}
               {currentQuestion.question_type === 'true_false' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                <div
+                  role="radiogroup"
+                  aria-label={currentQuestion.text}
+                  className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4"
+                  onKeyDown={(e) => handleRadioGroupKeyDown(e, (value) => handleAnswerSelect(currentQuestion.id, value))}
+                >
                   <Button
                     type="button"
-                    variant={quizState.answers[currentQuestion.id] === 'true' ? 'default' : 'outline'}
+                    role="radio"
+                    aria-checked={selectedAnswerValue === 'true'}
+                    tabIndex={rovingTrueFalseIndex === 0 ? 0 : -1}
+                    data-value="true"
+                    variant={selectedAnswerValue === 'true' ? 'default' : 'outline'}
                     className={`h-24 sm:h-28 text-base sm:text-lg font-bold transition-all duration-200 ${
-                      quizState.answers[currentQuestion.id] === 'true'
+                      selectedAnswerValue === 'true'
                         ? 'bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg scale-[1.02]'
                         : 'hover:border-green-400 dark:hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/20 hover:scale-[1.01]'
                     }`}
@@ -1421,9 +1722,13 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   </Button>
                   <Button
                     type="button"
-                    variant={quizState.answers[currentQuestion.id] === 'false' ? 'default' : 'outline'}
+                    role="radio"
+                    aria-checked={selectedAnswerValue === 'false'}
+                    tabIndex={rovingTrueFalseIndex === 1 ? 0 : -1}
+                    data-value="false"
+                    variant={selectedAnswerValue === 'false' ? 'default' : 'outline'}
                     className={`h-24 sm:h-28 text-base sm:text-lg font-bold transition-all duration-200 ${
-                      quizState.answers[currentQuestion.id] === 'false'
+                      selectedAnswerValue === 'false'
                         ? 'bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 shadow-lg scale-[1.02]'
                         : 'hover:border-red-400 dark:hover:border-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:scale-[1.01]'
                     }`}
@@ -1440,11 +1745,15 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               {/* Short Answer Question */}
               {currentQuestion.question_type === 'short_answer' && (
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
+                  <label
+                    htmlFor={`${answerFieldId}-short`}
+                    className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2"
+                  >
+                    <FileText className="h-4 w-4" aria-hidden="true" />
                     Your Answer:
                   </label>
                   <Input
+                    id={`${answerFieldId}-short`}
                     type="text"
                     placeholder="Type your answer here..."
                     value={quizState.answers[currentQuestion.id] || ''}
@@ -1452,7 +1761,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     className="w-full text-base h-12 border-2 focus:border-blue-400 dark:focus:border-blue-500 transition-all"
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
-                    <AlertCircle className="h-3 w-3" />
+                    <AlertCircle className="h-3 w-3" aria-hidden="true" />
                     Enter a concise answer to the question above.
                   </p>
                 </div>
@@ -1461,11 +1770,15 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               {/* Essay Question */}
               {currentQuestion.question_type === 'essay' && (
                 <div className="space-y-3">
-                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
+                  <label
+                    htmlFor={`${answerFieldId}-essay`}
+                    className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2"
+                  >
+                    <FileText className="h-4 w-4" aria-hidden="true" />
                     Your Answer:
                   </label>
                   <Textarea
+                    id={`${answerFieldId}-essay`}
                     placeholder="Write your detailed answer here..."
                     value={quizState.answers[currentQuestion.id] || ''}
                     onChange={(e) => handleAnswerSelect(currentQuestion.id, e.target.value)}
@@ -1474,7 +1787,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   />
                   <div className="flex flex-col sm:flex-row justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
                     <span className="flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3" />
+                      <AlertCircle className="h-3 w-3" aria-hidden="true" />
                       Provide a comprehensive, well-structured response.
                     </span>
                     <span className="font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{(quizState.answers[currentQuestion.id] || '').length} characters</span>
@@ -1482,12 +1795,17 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 </div>
               )}
 
-              {/* Unsupported question type fallback */}
-              {!['multiple_choice', 'single_choice', 'true_false', 'short_answer', 'essay'].includes(currentQuestion.question_type) && (
-                <Alert className="border-yellow-500 bg-yellow-50">
-                  <AlertCircle className="h-4 w-4 text-yellow-600" />
-                  <AlertDescription className="text-yellow-800">
-                    This question type ({currentQuestion.question_type}) is not yet supported.
+              {/* Unsupported question type fallback — informational only, never blocks submission */}
+              {!isSupportedType(currentQuestion.question_type) && (
+                <Alert className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950/30">
+                  <AlertCircle className="h-4 w-4 text-yellow-600" aria-hidden="true" />
+                  <AlertTitle className="text-yellow-900 dark:text-yellow-300 font-semibold">
+                    This question can't be answered in the player yet
+                  </AlertTitle>
+                  <AlertDescription className="text-yellow-800 dark:text-yellow-300">
+                    Question type &quot;{currentQuestion.question_type || 'unknown'}&quot; isn&apos;t supported here. It
+                    won&apos;t block your submission — your other answers will still be graded. If you believe this
+                    question is required, contact your instructor.
                   </AlertDescription>
                 </Alert>
               )}
@@ -1550,22 +1868,39 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               Question Navigator
             </h4>
             <div className="flex flex-wrap gap-2">
-              {questions.map((q, index) => (
-                <button
-                  key={q.id}
-                  onClick={() => setQuizState({ ...quizState, currentQuestionIndex: index })}
-                  className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg font-bold text-sm sm:text-base transition-all duration-200 ${
-                    index === quizState.currentQuestionIndex
-                      ? 'bg-blue-600 dark:bg-blue-500 text-white shadow-lg scale-110 ring-2 ring-blue-300 dark:ring-blue-700'
-                      : quizState.answers[q.id]
-                      ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border-2 border-green-400 dark:border-green-600 hover:shadow-md hover:scale-105'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:shadow-md hover:scale-105 border-2 border-gray-300 dark:border-gray-600'
-                  }`}
-                  title={`Question ${index + 1}${quizState.answers[q.id] ? ' (Answered)' : ' (Not answered)'}`}
-                >
-                  {index + 1}
-                </button>
-              ))}
+              {questions.map((q, index) => {
+                const isCurrent = index === quizState.currentQuestionIndex;
+                const isAnswered = Boolean(quizState.answers[q.id]);
+                return (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => setQuizState({ ...quizState, currentQuestionIndex: index })}
+                    aria-label={`Question ${index + 1} of ${questions.length}${isAnswered ? ', answered' : ', not answered'}${isCurrent ? ', current' : ''}`}
+                    aria-current={isCurrent || undefined}
+                    className={`relative h-11 w-11 sm:h-12 sm:w-12 flex items-center justify-center rounded-lg font-bold text-sm sm:text-base transition-all duration-200 ${
+                      isCurrent
+                        ? 'bg-blue-600 dark:bg-blue-500 text-white shadow-lg scale-110 ring-2 ring-blue-300 dark:ring-blue-700'
+                        : isAnswered
+                        ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border-2 border-green-400 dark:border-green-600 hover:shadow-md hover:scale-105'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:shadow-md hover:scale-105 border-2 border-gray-300 dark:border-gray-600'
+                    }`}
+                    title={`Question ${index + 1}${isAnswered ? ' (Answered)' : ' (Not answered)'}${isCurrent ? ' (Current)' : ''}`}
+                  >
+                    {index + 1}
+                    {isAnswered && (
+                      <span
+                        aria-hidden="true"
+                        className={`absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full ${
+                          isCurrent ? 'bg-white text-blue-600' : 'bg-green-600 text-white'
+                        }`}
+                      >
+                        <CheckCircle className="h-3.5 w-3.5" />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
             <div className="mt-4 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-400">
               <div className="flex items-center gap-2">
@@ -1583,6 +1918,52 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             </div>
           </CardContent>
         </Card>
+
+        {/* Submit confirmation — Radix Dialog replaces window.confirm.
+            The overlay sits at z-[9999], so both the scrim and the panel are
+            raised above it; Cancel is the first focusable element. */}
+        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <DialogPortal>
+            <DialogOverlay className="z-[10010]" />
+          </DialogPortal>
+          <DialogContent
+            className="z-[10010] sm:max-w-md"
+            onOpenAutoFocus={(event) => {
+              // Cancel is the default focus so a stray Enter can't submit
+              event.preventDefault();
+              confirmCancelRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Submit your quiz?</DialogTitle>
+              <DialogDescription>
+                Your answers will be sent for grading. You can't change your answers after submission.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button ref={confirmCancelRef} variant="outline" onClick={() => setConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={performSubmit}
+                disabled={submitting}
+                className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Submit
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
       </div>
     );
@@ -1595,7 +1976,11 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // Completed State
   if (quizState.status === 'completed') {
-    const passed = quizState.score && quizState.score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD);
+    // Pass/fail comes from the backend submission result; the local comparison
+    // (same threshold as everywhere else) is only a fallback.
+    const passed = submissionResult
+      ? submissionResult.passed
+      : quizState.score !== undefined && quizState.score >= effectivePassingScore;
     const hasRemainingAttempts = submissionResult && !securityViolation && !isBlockedByViolation && (submissionResult.remaining_attempts === -1 || submissionResult.remaining_attempts > 0);
     
     return (
@@ -1622,7 +2007,14 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 )}
               </div>
               <h3 className="text-3xl sm:text-4xl font-extrabold text-gray-900 dark:text-white mb-3">
-                {passed ? 'Congratulations! 🎉' : 'Quiz Completed'}
+                {passed ? (
+                  <>
+                    <PartyPopper className="h-8 w-8 sm:h-9 sm:w-9 mr-2 inline-block text-yellow-500" aria-hidden="true" />
+                    Congratulations!
+                  </>
+                ) : (
+                  'Quiz Completed'
+                )}
               </h3>
               <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg mb-6 max-w-2xl mx-auto">
                 {quizState.feedback || (passed ? 'You have successfully passed this quiz!' : 'Your answers have been submitted successfully.')}
@@ -1632,12 +2024,13 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   {Math.round(quizState.score)}%
                 </div>
               )}
-              {quiz.passing_score && (
-                <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mb-4 flex items-center justify-center gap-2">
-                  <Trophy className="h-4 w-4" />
-                  Passing Score: {quiz.passing_score}%
-                </p>
-              )}
+              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mb-4 flex items-center justify-center gap-2">
+                <Trophy className="h-4 w-4" aria-hidden="true" />
+                Passing score: {effectivePassingScore}%
+                {!quiz.passing_score && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">(default)</span>
+                )}
+              </p>
             </div>
             
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
@@ -1718,22 +2111,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               {!passed && hasRemainingAttempts && (
                 <Button 
                   className="flex-1 h-12 sm:h-14 text-base font-bold bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white shadow-md hover:shadow-lg transition-all"
-                  onClick={() => {
-                    // Reset quiz state for retake
-                    setQuizState({
-                      status: 'not-started',
-                      currentQuestionIndex: 0,
-                      answers: {},
-                      attemptNumber: (submissionResult?.attempt_number || 0) + 1
-                    });
-                    setSubmissionResult(null);
-                    setTimeElapsed(0);
-                    setError(null);
-                    toast.warning('Retake Quiz', {
-                      description: `You scored below passing. You have ${submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts} attempts remaining.`,
-                      duration: 3000
-                    });
-                  }}
+                  onClick={() => handleRetakeQuiz('below-passing')}
                 >
                   <RefreshCw className="h-5 w-5 mr-2" />
                   Retake Quiz (Below Passing)
@@ -1744,22 +2122,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               {passed && hasRemainingAttempts && (
                 <Button 
                   className="flex-1 h-12 sm:h-14 text-base font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md hover:shadow-lg transition-all"
-                  onClick={() => {
-                    // Reset quiz state for retake
-                    setQuizState({
-                      status: 'not-started',
-                      currentQuestionIndex: 0,
-                      answers: {},
-                      attemptNumber: (submissionResult?.attempt_number || 0) + 1
-                    });
-                    setSubmissionResult(null);
-                    setTimeElapsed(0);
-                    setError(null);
-                    toast.info('Ready to Retake', {
-                      description: `Improve your score! You have ${submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts} attempts remaining.`,
-                      duration: 3000
-                    });
-                  }}
+                  onClick={() => handleRetakeQuiz('retake')}
                 >
                   <RefreshCw className="h-5 w-5 mr-2" />
                   Retake Quiz
@@ -1784,7 +2147,9 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
   // Viewing Feedback State
   if (quizState.status === 'viewing-feedback') {
-    const passed = quizState.score && quizState.score >= (quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD);
+    const passed = submissionResult
+      ? submissionResult.passed
+      : quizState.score !== undefined && quizState.score >= effectivePassingScore;
     const totalPoints = questions.reduce((sum, q) => sum + (q.points || 10), 0);
     
     return (
@@ -1853,11 +2218,14 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             const correctAnswers = question.answers?.filter((a: any) => a.is_correct);
             const userAnswerObj = question.answers?.find((a: any) => String(a.id) === String(userAnswer));
             
-            // Determine if answer is correct
-            let isCorrect = false;
+            // Determine if answer is correct.
+            // Text-based answers have NO locally computable verdict: they are
+            // PENDING (null) unless the backend explicitly returned a grade/
+            // correctness field for this question. Never show "Correct" for an
+            // ungraded free-text answer.
+            let isCorrect: boolean | null = false;
             if (isTextBased) {
-              // Text-based answers are considered submitted (manual grading needed)
-              isCorrect = Boolean(userAnswer && String(userAnswer).trim().length > 0);
+              isCorrect = resolveTextBasedVerdict(question);
             } else if (isTrueFalse) {
               const truthy = ['true', 't', 'yes', '1'];
               const falsy = ['false', 'f', 'no', '0'];
@@ -1873,9 +2241,11 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             }
             
             const hasCorrectInfo = question.answers?.some((a: any) => a.is_correct !== undefined);
+            const hasVerdict = isCorrect !== null;
+            const canShowCorrectness = hasCorrectInfo || isTextBased;
 
             return (
-              <Card key={question.id} className={`border-2 ${isCorrect ? 'border-green-200 bg-green-50/30' : isTextBased ? 'border-blue-200 bg-blue-50/30' : hasCorrectInfo ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-gray-50/30'}`}>
+              <Card key={question.id} className={`border-2 ${isCorrect === true ? 'border-green-200 bg-green-50/30' : isCorrect === null ? 'border-blue-200 bg-blue-50/30' : canShowCorrectness ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-gray-50/30'}`}>
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
@@ -1884,12 +2254,12 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         <Badge variant="outline" className="text-xs">
                           {question.question_type?.replace('_', ' ').toUpperCase()}
                         </Badge>
-                        {isTextBased ? (
-                          <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-                            <FileText className="h-3 w-3 mr-1" />
-                            Requires Manual Grading
+                        {!hasVerdict ? (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-700">
+                            <Clock className="h-3 w-3 mr-1" aria-hidden="true" />
+                            Awaiting instructor review
                           </Badge>
-                        ) : hasCorrectInfo ? (
+                        ) : canShowCorrectness ? (
                           <Badge variant={isCorrect ? 'default' : 'destructive'} className={isCorrect ? 'bg-green-600' : 'bg-red-600'}>
                             {isCorrect ? (
                               <>
@@ -1914,13 +2284,20 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         </Badge>
                       </div>
                       <p className="text-gray-900 font-medium mb-4">{question.text}</p>
+
+                      {!hasVerdict && (
+                        <p className="text-sm text-blue-700 dark:text-blue-300 mb-3 flex items-center gap-1.5">
+                          <Clock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                          This answer will be graded by your instructor.
+                        </p>
+                      )}
                       
                       {/* User's Answer - Different display for text-based */}
                       <div className="mb-3">
                         <p className="text-sm font-semibold text-gray-700 mb-1">Your Answer:</p>
                         {isTextBased ? (
-                          <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
-                            <p className="text-blue-900 whitespace-pre-wrap">
+                          <div className={`p-3 rounded-lg ${isCorrect === null ? 'bg-blue-50 border border-blue-200' : isCorrect ? 'bg-green-100 border border-green-300' : 'bg-red-100 border border-red-300'}`}>
+                            <p className={`whitespace-pre-wrap ${isCorrect === null ? 'text-blue-900' : isCorrect ? 'text-green-900' : 'text-red-900'}`}>
                               {userAnswer || <span className="italic text-gray-500">No answer provided</span>}
                             </p>
                           </div>
@@ -1943,8 +2320,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         )}
                       </div>
 
-                      {/* Correct Answer (if wrong and available) */}
-                      {!isCorrect && hasCorrectInfo && correctAnswers && correctAnswers.length > 0 && (
+                      {/* Correct Answer (only once the answer is definitively graded wrong) */}
+                      {isCorrect === false && hasCorrectInfo && correctAnswers && correctAnswers.length > 0 && (
                         <div className="mb-3">
                           <p className="text-sm font-semibold text-gray-700 mb-1">Correct Answer:</p>
                           <div className="p-3 rounded-lg bg-blue-100 border border-blue-300">
@@ -1957,8 +2334,9 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         </div>
                       )}
                       
-                      {/* Note when correct answers are not shown */}
-                      {!hasCorrectInfo && (
+                      {/* Note when correct answers are not shown (skipped while a
+                          text answer is still awaiting review — its own notice covers it) */}
+                      {!hasCorrectInfo && hasVerdict && (
                         <Alert className="border-blue-200 bg-blue-50">
                           <AlertCircle className="h-4 w-4 text-blue-600" />
                           <AlertDescription className="text-blue-800 text-sm">

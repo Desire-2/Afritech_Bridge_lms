@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +21,15 @@ import {
   Star,
   Award
 } from 'lucide-react';
+
+// Cap the rendered dot count so a long lesson cannot blow up the header
+// layout; extra steps stay reachable via Previous/Next and the step counter.
+const MAX_VISIBLE_DOTS = 20;
+
+// Never intercept arrow-key navigation while the user is interacting with a
+// form control, link, button, or slider.
+const INTERACTIVE_GUARD_SELECTOR =
+  'input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="slider"]';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -80,6 +89,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
   // Has the celebration been dismissed?
   const [celebrationDismissed, setCelebrationDismissed] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement>(null);
 
   const sectionKey = useMemo(() => sections.map((section) => section.id).join('|'), [sections]);
@@ -136,16 +146,10 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture if user is typing in an input
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLButtonElement ||
-        e.target instanceof HTMLAnchorElement ||
-        (e.target instanceof HTMLElement && e.target.isContentEditable)
-      ) {
-        return;
+      // Don't capture if the user is typing or interacting with a control
+      if (e.target instanceof Element) {
+        if (e.target.closest(INTERACTIVE_GUARD_SELECTOR)) return;
+        if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
       }
 
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
@@ -164,8 +168,10 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   const progressPercent = totalSteps > 0 ? ((activeStep + 1) / totalSteps) * 100 : 0;
 
   // ── Confetti particles for celebration ──
+  // Random offsets are memoized once per celebration so re-renders never
+  // re-bake new Math.random() values into the motion keyframes.
   const confettiParticles = useMemo(() => {
-    if (!showCompletionCelebration || celebrationDismissed) return [];
+    if (!showCompletionCelebration || celebrationDismissed || prefersReducedMotion) return [];
     const colors = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#3b82f6'];
     return Array.from({ length: 30 }, (_, i) => ({
       id: i,
@@ -175,8 +181,9 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
       size: 4 + Math.random() * 8,
       rotation: Math.random() * 360,
       duration: 1.5 + Math.random() * 2,
+      drift: (i % 2 === 0 ? 1 : -1) * (20 + Math.random() * 40),
     }));
-  }, [showCompletionCelebration, celebrationDismissed]);
+  }, [showCompletionCelebration, celebrationDismissed, prefersReducedMotion]);
 
   return (
     <div className={`space-y-4 ${className}`} ref={containerRef}>
@@ -190,33 +197,47 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
             <p className="text-xs font-semibold text-gray-300 leading-tight">
               Step {activeStep + 1} of {totalSteps}
             </p>
-            <p className="text-[10px] text-gray-500 leading-tight mt-0.5">
+            <p className="text-xs text-gray-500 leading-tight mt-0.5">
               {Math.round(progressPercent)}% complete
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
           {/* Step dots */}
-          <div className="hidden sm:flex items-center gap-1">
-            {Array.from({ length: Math.min(totalSteps, 20) }).map((_, i) => (
+          <div
+            className="hidden sm:flex min-w-0 flex-wrap items-center justify-end gap-1"
+            title={
+              totalSteps > MAX_VISIBLE_DOTS
+                ? `Showing the first ${MAX_VISIBLE_DOTS} of ${totalSteps} steps — use Previous/Next to reach the rest`
+                : undefined
+            }
+          >
+            {Array.from({ length: Math.min(totalSteps, MAX_VISIBLE_DOTS) }).map((_, i) => (
               <button
                 key={i}
+                type="button"
                 onClick={() => goToStep(i)}
-                className={`h-2 rounded-full transition-all duration-300 ${
-                  i === activeStep
-                    ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
-                    : viewedSections.has(i)
-                    ? 'w-2 bg-emerald-500/60 hover:bg-emerald-400'
-                    : 'w-2 bg-gray-700 hover:bg-gray-600'
-                }`}
-                aria-label={`Go to section ${i + 1}`}
-              />
+                aria-label={`Go to step ${i + 1} of ${totalSteps}`}
+                aria-current={i === activeStep ? 'step' : undefined}
+                className="group relative -m-3 flex h-11 w-11 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                style={{ zIndex: Math.min(totalSteps, MAX_VISIBLE_DOTS) - i }}
+              >
+                <span
+                  className={`block h-2 rounded-full transition-all duration-300 ${
+                    i === activeStep
+                      ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
+                      : viewedSections.has(i)
+                      ? 'w-2 bg-emerald-500/60 group-hover:bg-emerald-400'
+                      : 'w-2 bg-gray-700 group-hover:bg-gray-600'
+                  }`}
+                />
+              </button>
             ))}
           </div>
 
           {/* Step count badge (mobile) */}
-          <Badge variant="outline" className="sm:hidden text-[10px] border-gray-700 text-gray-400 px-2">
+          <Badge variant="outline" className="sm:hidden text-xs border-gray-700 text-gray-400 px-2">
             {activeStep + 1}/{totalSteps}
           </Badge>
         </div>
@@ -255,7 +276,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           {/* Section index badge */}
           {sections[activeStep]?.heading && (
             <div className="flex items-center gap-2 mb-4">
-              <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-blue-500/15 text-blue-400 text-[10px] font-bold ring-1 ring-blue-500/30">
+              <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-blue-500/15 text-blue-400 text-xs font-bold ring-1 ring-blue-500/30">
                 {activeStep + 1}
               </span>
               <h3 className="text-lg font-semibold text-white">
@@ -298,7 +319,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 y: ['0vh', '110vh'],
                 opacity: [1, 0.8, 0.4, 0],
                 rotate: [0, particle.rotation * 2],
-                x: [0, (particle.id % 2 === 0 ? 1 : -1) * (20 + Math.random() * 40)],
+                x: [0, particle.drift],
               }}
               transition={{
                 duration: particle.duration,
@@ -419,7 +440,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium"
+                  className="inline-flex items-center gap-1 text-xs text-emerald-400 font-medium"
                 >
                   <CheckCircle className="h-3 w-3" />
                   <span className="hidden sm:inline">Viewed</span>
@@ -453,12 +474,12 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
           {/* ── Keyboard Hint ── */}
           <div className="text-center">
-            <span className="text-[10px] text-gray-600">
-              Use <kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px] text-gray-400 font-mono border border-gray-700">←</kbd>{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px] text-gray-400 font-mono border border-gray-700">→</kbd>{' '}
+            <span className="text-xs text-gray-400">
+              Use <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">←</kbd>{' '}
+              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">→</kbd>{' '}
               or{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px] text-gray-400 font-mono border border-gray-700">↑</kbd>{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-[9px] text-gray-400 font-mono border border-gray-700">↓</kbd>{' '}
+              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">↑</kbd>{' '}
+              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">↓</kbd>{' '}
               to navigate
             </span>
           </div>

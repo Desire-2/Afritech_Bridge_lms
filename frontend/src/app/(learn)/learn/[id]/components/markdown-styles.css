@@ -1,195 +1,154 @@
-/* Enhanced Markdown Styles for Learning Content */
+/* Lesson markdown typography (dark learning player).
+ *
+ * Scoped under `.prose` so these rules win over the globally imported
+ * highlight.js theme (single-class selectors) without needing !important.
+ * Duplicate/conflicting blocks from earlier iterations have been removed.
+ */
 
-/* Code block enhancements with VS Code-like styling */
+/* ── Code blocks ─────────────────────────────────────────────────────── */
+
 .prose pre {
-  @apply bg-[#0d1117] rounded-xl overflow-x-auto shadow-2xl;
+  @apply bg-[#0d1117] rounded-xl overflow-x-auto;
   background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
-}
-
-.prose code {
-  @apply font-mono text-sm;
-  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
-  line-height: 1.7;
 }
 
 .prose pre code {
   @apply bg-transparent p-0;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  text-shadow: none;
 }
 
-/* Inline code with better contrast and clear distinction */
+/* Inline code must wrap on narrow screens — never clip long identifiers. */
 .prose :not(pre) > code {
-  @apply bg-gray-800/80 text-blue-300 px-2.5 py-0.5 rounded-md text-[0.88em] border border-gray-700/50 shadow-sm;
+  @apply bg-gray-800/80 text-blue-300 px-1.5 py-0.5 rounded border border-gray-700/50;
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.875em;
   font-weight: 500;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  vertical-align: baseline;
-  max-width: fit-content;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-/* Ensure inline code doesn't break into blocks */
 .prose :not(pre) > code::before,
 .prose :not(pre) > code::after {
   content: none;
 }
 
-/* Hover effect for inline code */
-.prose :not(pre) > code:hover {
-  @apply bg-gray-700/80 border-gray-600/70;
-  transition: all 0.2s ease;
-}
+/* ── Syntax highlighting (overrides atom-one-dark via specificity) ───── */
 
-/* Enhanced syntax highlighting for dark theme (VS Code inspired) */
-.hljs {
+.prose .hljs {
   background: transparent !important;
   padding: 0 !important;
   color: #e6edf3;
 }
 
-/* Comments - muted gray with italic */
-.hljs-comment,
-.hljs-quote {
+.prose .hljs-comment,
+.prose .hljs-quote {
   color: #8b949e;
   font-style: italic;
 }
 
-/* Keywords - purple/violet */
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-literal,
-.hljs-section,
-.hljs-link {
+.prose .hljs-keyword,
+.prose .hljs-selector-tag,
+.prose .hljs-literal,
+.prose .hljs-section,
+.prose .hljs-link {
   color: #ff7b72;
   font-weight: 600;
 }
 
-/* Strings - green */
-.hljs-string {
+.prose .hljs-string {
   color: #a5d6ff;
 }
 
-/* Numbers - orange/yellow */
-.hljs-number,
-.hljs-regexp,
-.hljs-addition {
+.prose .hljs-number,
+.prose .hljs-regexp {
   color: #79c0ff;
 }
 
-/* Built-ins and class names - cyan */
-.hljs-built_in,
-.hljs-builtin-name,
-.hljs-class .hljs-title {
+.prose .hljs-built_in,
+.prose .hljs-builtin-name {
   color: #ffa657;
 }
 
-/* Functions - purple */
-.hljs-function,
-.hljs-title {
+.prose .hljs-title,
+.prose .hljs-function {
   color: #d2a8ff;
   font-weight: 600;
 }
 
-/* Attributes and variables - pink */
-.hljs-attribute,
-.hljs-variable,
-.hljs-template-variable {
+.prose .hljs-attribute,
+.prose .hljs-variable,
+.prose .hljs-template-variable {
   color: #ffa198;
 }
 
-/* Types and params - orange */
-.hljs-type,
-.hljs-params {
+.prose .hljs-type,
+.prose .hljs-params {
   color: #ff9b76;
 }
 
-/* HTML/XML tags - green */
-.hljs-tag {
+.prose .hljs-tag,
+.prose .hljs-name {
   color: #7ee787;
 }
 
-/* Tag names - green */
-.hljs-name {
-  color: #7ee787;
-}
-
-/* Attributes - purple */
-.hljs-attr {
+.prose .hljs-attr {
   color: #79c0ff;
 }
 
-/* Symbols and meta - magenta */
-.hljs-symbol,
-.hljs-bullet,
-.hljs-subst,
-.hljs-meta,
-.hljs-selector-attr,
-.hljs-selector-pseudo {
+.prose .hljs-symbol,
+.prose .hljs-bullet,
+.prose .hljs-subst,
+.prose .hljs-meta,
+.prose .hljs-selector-attr,
+.prose .hljs-selector-pseudo {
   color: #f69d50;
 }
 
-/* Deletions - red */
-.hljs-deletion {
+.prose .hljs-deletion {
   color: #ffa198;
   background-color: rgba(255, 129, 130, 0.15);
 }
 
-/* Additions - green */
-.hljs-addition {
+.prose .hljs-addition {
   color: #7ee787;
   background-color: rgba(87, 171, 90, 0.15);
 }
 
-/* Formula */
-.hljs-formula {
-  background: rgba(110, 118, 129, 0.4);
-  padding: 2px 4px;
-  border-radius: 3px;
-}
-
-/* Emphasis */
-.hljs-emphasis {
+.prose .hljs-emphasis {
   font-style: italic;
   color: #ffa657;
 }
 
-.hljs-strong {
+.prose .hljs-strong {
   font-weight: bold;
   color: #ff7b72;
 }
 
-/* Selector class, id, pseudo */
-.hljs-selector-class {
+.prose .hljs-selector-class {
   color: #ffa657;
 }
 
-.hljs-selector-id {
+.prose .hljs-selector-id {
   color: #79c0ff;
   font-weight: 700;
 }
 
-/* Doctag */
-.hljs-doctag {
+.prose .hljs-doctag {
   color: #8b949e;
   font-weight: 600;
 }
 
-/* Python decorators */
-.hljs-meta {
-  color: #79c0ff;
-}
-
-/* Operator */
-.hljs-operator {
+.prose .hljs-operator {
   color: #ff7b72;
 }
 
-/* Code block line highlighting on hover */
-.prose pre:hover {
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
-}
+/* ── Tables ──────────────────────────────────────────────────────────── */
 
-/* Table enhancements */
 .prose table {
   @apply w-full;
 }
@@ -214,7 +173,8 @@
   @apply px-4 py-3 text-gray-300;
 }
 
-/* Blockquote styling */
+/* ── Blockquote ──────────────────────────────────────────────────────── */
+
 .prose blockquote {
   @apply border-l-4 border-blue-500 bg-blue-900/20 pl-4 pr-4 py-3 my-4 italic text-gray-300 rounded-r-lg;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -224,7 +184,8 @@
   @apply mb-0;
 }
 
-/* List improvements */
+/* ── Lists ───────────────────────────────────────────────────────────── */
+
 .prose ul,
 .prose ol {
   @apply my-4 space-y-2;
@@ -238,14 +199,15 @@
 }
 
 .prose li {
-  @apply leading-relaxed;
+  @apply leading-relaxed text-gray-200;
 }
 
 .prose li > p {
   @apply mb-2;
 }
 
-/* Paragraph spacing */
+/* ── Paragraphs ──────────────────────────────────────────────────────── */
+
 .prose p + p {
   @apply mt-4;
 }
@@ -254,7 +216,8 @@
   display: none;
 }
 
-/* Link styling */
+/* ── Links (visible focus for keyboard users) ────────────────────────── */
+
 .prose a {
   @apply text-blue-400 hover:text-blue-300 underline decoration-blue-500/50 hover:decoration-blue-400 transition-colors;
   text-decoration-thickness: 1.5px;
@@ -265,50 +228,32 @@
   text-decoration-thickness: 2px;
 }
 
-/* Strong/Bold text */
+.prose a:focus-visible {
+  @apply outline-none ring-2 ring-blue-500 rounded;
+}
+
+/* ── Emphasis ────────────────────────────────────────────────────────── */
+
 .prose strong {
   @apply font-bold text-white;
 }
 
-/* Emphasis/Italic */
 .prose em {
   @apply italic text-gray-200;
 }
 
-/* Horizontal rule */
+/* ── Horizontal rule / images ────────────────────────────────────────── */
+
 .prose hr {
   @apply my-8 border-gray-700 border-t-2;
 }
-.prose blockquote {
-  @apply border-l-4 border-blue-500 bg-blue-900/20 pl-4 py-2 italic;
-}
 
-/* Link styling */
-.prose a {
-  @apply text-blue-400 hover:text-blue-300 underline decoration-blue-500/50 hover:decoration-blue-400;
-}
-
-/* List styling */
-.prose ul,
-.prose ol {
-  @apply space-y-2;
-}
-
-.prose li {
-  @apply text-gray-200;
-}
-
-/* Horizontal rule */
-.prose hr {
-  @apply border-gray-700 my-8;
-}
-
-/* Image styling */
 .prose img {
-  @apply rounded-lg shadow-lg;
+  @apply rounded-lg shadow-lg max-w-full h-auto;
 }
 
-/* Heading anchors (for linking) */
+/* ── Headings ────────────────────────────────────────────────────────── */
+
 .prose h1,
 .prose h2,
 .prose h3,
@@ -316,4 +261,9 @@
 .prose h5,
 .prose h6 {
   @apply scroll-mt-24;
+  text-wrap: balance;
+}
+
+.prose p {
+  text-wrap: pretty;
 }

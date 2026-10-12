@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import { MotionConfig } from 'framer-motion'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { MaintenanceModeWrapper } from '@/components/MaintenanceModeWrapper'
 import ErrorBoundary from '@/components/ErrorBoundary'
@@ -33,9 +34,13 @@ export default function ClientLayout({
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <MaintenanceModeWrapper>
-          {children}
-        </MaintenanceModeWrapper>
+        {/* Honour the OS "reduce motion" setting for every framer-motion
+            animation in the app instead of animating regardless. */}
+        <MotionConfig reducedMotion="user">
+          <MaintenanceModeWrapper>
+            {children}
+          </MaintenanceModeWrapper>
+        </MotionConfig>
         <Toaster 
           position="top-right"
           richColors

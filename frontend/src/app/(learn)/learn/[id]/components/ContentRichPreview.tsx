@@ -154,10 +154,10 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       {/* Keyboard shortcut hint for video lessons */}
       {lesson.content_type === "video" && (
         <div className="hidden md:flex items-center gap-2 text-xs text-gray-500 bg-gray-800/50 rounded-lg px-3 py-2">
-          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] font-mono">Space</kbd> Play/Pause
-          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] font-mono ml-2">←</kbd>
-          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] font-mono">→</kbd> Seek
-          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-[10px] font-mono ml-2">F</kbd> Fullscreen
+          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono">Space</kbd> Play/Pause
+          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono ml-2">←</kbd>
+          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono">→</kbd> Seek
+          <kbd className="px-1.5 py-0.5 bg-gray-700 rounded text-xs font-mono ml-2">F</kbd> Fullscreen
         </div>
       )}
 

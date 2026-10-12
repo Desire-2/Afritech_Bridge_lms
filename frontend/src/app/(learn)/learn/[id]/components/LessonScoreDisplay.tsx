@@ -120,7 +120,7 @@ function CircularProgress({
         >
           {Math.round(score)}
         </motion.span>
-        <span className="text-[9px] font-semibold text-gray-500 -mt-0.5">SCORE</span>
+        <span className="text-xs font-semibold text-gray-500 -mt-0.5">SCORE</span>
       </div>
     </div>
   );
@@ -161,20 +161,25 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   hasAssignment = false,
   variant = 'full',
 }) => {
-  const displayScore = Math.round(lessonScore);
+  // Guard against NaN/undefined weights producing a broken widget.
+  const rawScore = Number.isFinite(lessonScore) ? lessonScore : 0;
+  const displayScore = Math.max(0, Math.min(100, Math.round(rawScore)));
   const level = getLevel(displayScore);
   const stars = starRating(displayScore);
   const isCompleted = isLessonCompleted;
   const missing = Math.max(0, LESSON_PASSING_THRESHOLD - displayScore);
+  const meetsThreshold = displayScore >= LESSON_PASSING_THRESHOLD;
 
   // Build component list (same data as before, displayed compactly)
+  const toPct = (value?: number) =>
+    Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value as number))) : 0;
   const components = useMemo(() => {
     const items: { label: string; score: number; icon: React.ElementType; color: string }[] = [
-      { label: 'Reading',     score: Math.round(readingProgress),  icon: BookOpen,       color: '#60a5fa' },
-      { label: 'Engagement',  score: Math.round(engagementScore),  icon: Brain,          color: '#34d399' },
+      { label: 'Reading',     score: toPct(readingProgress),  icon: BookOpen,       color: '#60a5fa' },
+      { label: 'Engagement',  score: toPct(engagementScore),  icon: Brain,          color: '#34d399' },
     ];
-    if (hasQuiz)       items.push({ label: 'Quiz',       score: Math.round(quizScore ?? 0),       icon: ClipboardCheck, color: '#a78bfa' });
-    if (hasAssignment) items.push({ label: 'Assignment', score: Math.round(assignmentScore ?? 0), icon: FileText,       color: '#fb923c' });
+    if (hasQuiz)       items.push({ label: 'Quiz',       score: toPct(quizScore),       icon: ClipboardCheck, color: '#a78bfa' });
+    if (hasAssignment) items.push({ label: 'Assignment', score: toPct(assignmentScore), icon: FileText,       color: '#fb923c' });
     return items;
   }, [readingProgress, engagementScore, quizScore, assignmentScore, hasQuiz, hasAssignment]);
 
@@ -227,13 +232,17 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 300, delay: 0.3 }}
-              className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
+              className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-bold text-emerald-400 ring-1 ring-emerald-500/30"
             >
               <CheckCircle className="h-3 w-3" />
               COMPLETE
             </motion.div>
+          ) : meetsThreshold ? (
+            <span className="text-xs font-semibold text-emerald-400/90">
+              Passing
+            </span>
           ) : (
-            <span className="text-[11px] font-semibold text-yellow-400/80">
+            <span className="text-xs font-semibold text-yellow-400/80">
               {missing}% to go
             </span>
           )}
@@ -245,8 +254,8 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
         {components.map((comp) => (
           <div key={comp.label} className="flex items-center gap-1.5">
             <comp.icon className="h-3 w-3" style={{ color: comp.color }} />
-            <span className="text-[11px] font-medium text-gray-400">{comp.label}</span>
-            <span className="text-[11px] font-bold tabular-nums" style={{ color: comp.color }}>
+            <span className="text-xs font-medium text-gray-400">{comp.label}</span>
+            <span className="text-xs font-bold tabular-nums" style={{ color: comp.color }}>
               {comp.score}%
             </span>
             {/* Score color dot */}
@@ -265,7 +274,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
 
       {/* ── XP progress bar ── */}
       <div className="mt-3">
-        <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
           <div className="flex items-center gap-1">
             <Flame className="h-3 w-3 text-orange-400" />
             <span>XP</span>
@@ -291,7 +300,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
         <motion.div
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
-          className="mt-2 flex items-center gap-2 text-[11px] text-gray-500"
+          className="mt-2 flex items-center gap-2 text-xs text-gray-500"
         >
           <Target className="h-3 w-3 text-yellow-500" />
           <span>
@@ -318,7 +327,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
-          className="mt-2 flex items-center gap-2 text-[11px] text-emerald-400"
+          className="mt-2 flex items-center gap-2 text-xs text-emerald-400"
         >
           <CheckCircle className="h-3 w-3" />
           <span>Lesson mastered! All requirements met.</span>

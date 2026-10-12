@@ -1,11 +1,11 @@
 /**
- * Dependency-free HTML sanitizer for lesson content rendered client-side.
+ * Dependency-free DOM-based HTML sanitizer for surfaces that inject stored
+ * HTML via `dangerouslySetInnerHTML` (e.g. project descriptions).
  *
- * The npm registry has been unreachable in this environment (same failure
- * mode that blocked the vitest install), so we cannot add DOMPurify or
- * rehype-sanitize. This util uses the browser's DOMParser to strip
- * script/style/iframe/object/embed nodes, on* event handlers, and
- * javascript:/data: URLs while preserving ordinary markup.
+ * For markdown, do NOT use this file: markdown goes through the shared
+ * react-markdown pipeline in `src/lib/markdown.ts`, which sanitizes with
+ * `rehype-sanitize` after `rehype-raw`. Keeping one markdown policy avoids
+ * the divergent/regex-based sanitizers this module used to export.
  *
  * Only for use in client components (requires DOMParser).
  */
@@ -108,18 +108,4 @@ export function sanitizeHtml(html: string): string {
     sanitizeNode(child);
   }
   return doc.body.innerHTML;
-}
-
-/**
- * Sanitize plain-text lesson content before it is fed through a markdown
- * pipeline that enables raw HTML (rehype-raw). Strips the most dangerous
- * constructs while leaving ordinary markdown untouched.
- */
-export function stripDangerousHtml(content: string): string {
-  if (typeof content !== 'string' || content === '') return '';
-  return content
-    .replace(/<\s*(script|style|iframe|object|embed|form)\b[\s\S]*?(?:<\s*\/\s*\1\s*>|$)/gi, '')
-    .replace(/<\s*\/?\s*(script|style|iframe|object|embed|form)\b[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/(href|src)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]*)/gi, '$1="#"');
 }

@@ -54,35 +54,52 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
     }
   }, [controlledExpanded]);
 
+  const panelId = `collapsible-panel-${React.useId().replace(/:/g, '')}`;
+
   return (
     <div className={`rounded-xl border border-gray-800/60 bg-gray-900/40 backdrop-blur-sm overflow-hidden ${className}`}>
-      {/* Clickable header */}
-      <button
-        onClick={handleToggle}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-500"
-        aria-expanded={isExpanded}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {icon && <span className="shrink-0 text-gray-400">{icon}</span>}
+      {/* Header: the toggle button, badge, and actions are siblings so the
+          DOM never contains nested interactive controls. */}
+      <div className="flex w-full items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]">
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-500 rounded"
+          aria-expanded={isExpanded}
+          aria-controls={panelId}
+        >
+          {icon && <span className="shrink-0 text-gray-400" aria-hidden="true">{icon}</span>}
           <span className="text-sm font-semibold text-gray-200 truncate">{title}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
+        </button>
+
+        <div className="flex shrink-0 items-center gap-2">
           {badge}
           {actions}
-          <motion.div
-            animate={{ rotate: isExpanded ? 180 : 0 }}
-            transition={{ duration: 0.2 }}
+          {/* Decorative duplicate of the toggle for pointer users; keyboard
+              users operate the title button. */}
+          <button
+            type="button"
+            onClick={handleToggle}
+            tabIndex={-1}
+            aria-hidden="true"
+            className="rounded focus-visible:outline-none"
           >
-            <ChevronDown className="h-4 w-4 text-gray-500" />
-          </motion.div>
+            <motion.div
+              animate={{ rotate: isExpanded ? 180 : 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ChevronDown className="h-4 w-4 text-gray-500" />
+            </motion.div>
+          </button>
         </div>
-      </button>
+      </div>
 
       {/* Collapsible body */}
       <AnimatePresence initial={false}>
         {isExpanded && (
           <motion.div
             key="content"
+            id={panelId}
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
