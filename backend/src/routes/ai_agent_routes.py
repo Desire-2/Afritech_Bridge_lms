@@ -56,6 +56,56 @@ def instructor_required(f):
 ai_agent_bp = Blueprint("ai_agent_bp", __name__, url_prefix="/api/v1/ai-agent")
 
 
+def _course_for_generation(course_id, user_id):
+    """
+    Load a course the current user is allowed to run AI generation against.
+
+    Instructors may only act on their own courses; admins (allowed by
+    instructor_required) may act on any course. Returns (course, None) on
+    success or (None, (response, status_code)) on failure.
+    """
+    try:
+        course_id = int(course_id)
+    except (TypeError, ValueError):
+        return None, (jsonify({"message": "Invalid course ID"}), 400)
+
+    course = Course.query.filter_by(id=course_id).first()
+    if not course:
+        return None, (jsonify({"message": "Course not found"}), 404)
+
+    if str(course.instructor_id) != str(user_id):
+        user = User.query.get(user_id)
+        is_admin = bool(user and user.role and user.role.name == 'admin')
+        if not is_admin:
+            logger.warning(
+                f"AI generation denied: user {user_id} is not the instructor "
+                f"(owner={course.instructor_id}) of course {course_id}"
+            )
+            return None, (jsonify({
+                "message": "You do not have permission to generate content for this course"
+            }), 403)
+    return course, None
+
+
+def _lesson_for_generation(lesson_id, course_id):
+    """
+    Load a lesson that belongs to the given course.
+    Returns (lesson, None) on success or (None, (response, status_code)) on failure.
+    """
+    try:
+        lesson_id = int(lesson_id)
+    except (TypeError, ValueError):
+        return None, (jsonify({"message": "Invalid lesson ID"}), 400)
+
+    lesson = Lesson.query.get(lesson_id)
+    if not lesson or not lesson.module or lesson.module.course_id != course_id:
+        logger.warning(
+            f"AI generation denied: lesson {lesson_id} not found in course {course_id}"
+        )
+        return None, (jsonify({"message": "Lesson not found or access denied"}), 404)
+    return lesson, None
+
+
 def _gather_course_context(course_id: int, exclude_module_id: int = None) -> list:
     """
     Gather full course structure with all modules and their lessons for cross-reference.
@@ -509,10 +559,11 @@ def generate_multiple_modules():
         course_id = data['course_id']
         num_modules = data.get('num_modules', 5)
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Fetch existing modules for context
         existing_modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
@@ -600,10 +651,11 @@ def generate_module_content():
         
         course_id = data['course_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         module_title = data.get('module_title', '')
         
@@ -704,10 +756,11 @@ def generate_multiple_lessons():
         module_id = data['module_id']
         num_lessons = data.get('num_lessons', 5)
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -802,10 +855,11 @@ def generate_lesson_content():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -930,10 +984,11 @@ def generate_comprehensive_lesson():
         if difficulty_level not in ['beginner', 'intermediate', 'advanced']:
             return jsonify({"message": "Invalid difficulty_level. Must be 'beginner', 'intermediate', or 'advanced'"}), 400
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -1040,10 +1095,11 @@ def generate_quiz_questions():
         module_id = data['module_id']
         lesson_id = data.get('lesson_id')
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -1144,10 +1200,11 @@ def generate_assignment():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -1232,10 +1289,11 @@ def generate_final_project():
         
         course_id = data['course_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get modules summary
         modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
@@ -1320,13 +1378,19 @@ def generate_quiz_from_content():
         
         course_id = data['course_id']
         content_type = data.get('content_type', 'lesson')
-        num_questions = data.get('num_questions', 10)
+        try:
+            num_questions = max(1, min(int(data.get('num_questions', 10)), 50))
+        except (TypeError, ValueError):
+            num_questions = 10
         difficulty = data.get('difficulty', 'mixed')
+        if difficulty not in ('easy', 'medium', 'hard', 'mixed'):
+            difficulty = 'mixed'
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         content_text = ""
         content_title = ""
@@ -1336,9 +1400,9 @@ def generate_quiz_from_content():
             if not lesson_id:
                 return jsonify({"message": "Lesson ID is required for lesson-based quiz"}), 400
             
-            lesson = Lesson.query.get(lesson_id)
-            if not lesson or lesson.module.course_id != course_id:
-                return jsonify({"message": "Lesson not found or access denied"}), 404
+            lesson, lesson_error = _lesson_for_generation(lesson_id, course_id)
+            if lesson_error:
+                return lesson_error
             
             content_text = lesson.content_data or ""
             content_title = lesson.title
@@ -1432,11 +1496,14 @@ def generate_assignment_from_content():
         course_id = data['course_id']
         content_type = data.get('content_type', 'lesson')
         assignment_type = data.get('assignment_type', 'practical')
+        if assignment_type not in ('practical', 'theoretical', 'project', 'mixed'):
+            assignment_type = 'practical'
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         content_text = ""
         content_title = ""
@@ -1446,9 +1513,9 @@ def generate_assignment_from_content():
             if not lesson_id:
                 return jsonify({"message": "Lesson ID is required for lesson-based assignment"}), 400
             
-            lesson = Lesson.query.get(lesson_id)
-            if not lesson or lesson.module.course_id != course_id:
-                return jsonify({"message": "Lesson not found or access denied"}), 404
+            lesson, lesson_error = _lesson_for_generation(lesson_id, course_id)
+            if lesson_error:
+                return lesson_error
             
             content_text = lesson.content_data or ""
             content_title = lesson.title
@@ -1541,10 +1608,11 @@ def generate_project_from_content():
         if not module_ids and data.get('module_id'):
             module_ids = [data['module_id']]
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Gather course-wide context regardless, so AI can cross-reference
         course_context = _gather_course_context(course_id)
@@ -1965,10 +2033,11 @@ def create_task_session():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -2126,10 +2195,11 @@ def generate_lesson_with_tasks():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -2304,10 +2374,11 @@ def generate_deep_lesson():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -2384,10 +2455,11 @@ def create_chapter_session():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
@@ -2583,10 +2655,11 @@ def generate_lesson_by_chapters():
         course_id = data['course_id']
         module_id = data['module_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
-            return jsonify({"message": "Course not found or access denied"}), 404
+        # Verify the caller may act on this course (owns it, or is an admin)
+        course, course_error = _course_for_generation(course_id, current_user_id)
+        if course_error:
+            return course_error
+        course_id = course.id
         
         # Get module
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()

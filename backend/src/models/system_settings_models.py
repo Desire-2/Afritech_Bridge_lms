@@ -586,13 +586,13 @@ def initialize_default_settings():
         # Gemini Model Name (configurable via UI instead of .env)
         {
             'key': 'gemini_model_name',
-            'value': 'gemini-2.0-flash',
+            'value': 'gemini-3.8-flash',
             'data_type': 'string',
             'category': 'ai',
             'description': 'Gemini model name used for AI content generation (overrides GEMINI_MODEL env var)',
             'is_public': False,
             'is_editable': True,
-            'default_value': 'gemini-2.0-flash'
+            'default_value': 'gemini-3.8-flash'
         },
 
         # OpenRouter Model Name (configurable via UI)

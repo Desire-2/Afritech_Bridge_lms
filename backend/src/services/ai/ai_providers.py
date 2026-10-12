@@ -66,13 +66,20 @@ class AIProviderManager:
     # Mapping of stale/deprecated Gemini model names to their current replacements.
     # Any model name loaded from DB settings (global or per-user) that matches
     # a key here will be auto-upgraded to the replacement value.
+    # Verified against the live Gemini API: retired names return HTTP 404.
     STALE_GEMINI_MODELS = {
-        'gemini-2.5-flash-preview-09-2025': 'gemini-2.0-flash',
-        'gemini-2.5-pro-preview-03-2025': 'gemini-2.0-pro',
-        'gemini-2.0-flash-exp': 'gemini-2.0-flash',
+        'gemini-3.8-flash-lite': 'gemini-3.8-flash',
+        'gemini-2.5-flash-preview-09-2025': 'gemini-3.8-flash',
+        'gemini-2.5-pro-preview-03-2025': 'gemini-2.5-flash',
+        'gemini-2.5-pro': 'gemini-2.5-flash',
+        'gemini-2.0-flash-exp': 'gemini-3.8-flash',
+        'gemini-2.0-flash': 'gemini-3.8-flash',
+        'gemini-2.0-pro': 'gemini-2.5-flash',
+        'gemini-1.5-flash': 'gemini-3.8-flash',
+        'gemini-1.5-pro': 'gemini-2.5-flash',
     }
 
-    def _resolve_model_name(self, model_name: str, default: str = 'gemini-2.0-flash') -> str:
+    def _resolve_model_name(self, model_name: str, default: str = 'gemini-3.8-flash') -> str:
         """
         Check if a Gemini model name is stale/deprecated and return its replacement.
         If the model name is not in the stale list, return it unchanged.
@@ -202,7 +209,7 @@ class AIProviderManager:
             gemini_from_db if gemini_from_db
             else os.environ.get('GEMINI_API_KEY')
         )
-        raw_gemini_model = gemini_model_from_db if gemini_model_from_db else 'gemini-2.0-flash'
+        raw_gemini_model = gemini_model_from_db if gemini_model_from_db else 'gemini-3.8-flash'
         self.gemini_model_name = self._resolve_model_name(raw_gemini_model)
         raw_or_model = openrouter_model_from_db if openrouter_model_from_db else 'nvidia/nemotron-3-super-120b-a12b:free'
         self.openrouter_model_name = self._resolve_openrouter_model(raw_or_model)
@@ -805,6 +812,7 @@ class AIProviderManager:
         
         optimized_prompt = self._optimize_prompt(prompt, 30000)
         
+        last_error: Optional[Exception] = None
         for attempt in range(retry_count + 1):
             executor = None
             future = None
@@ -853,6 +861,7 @@ class AIProviderManager:
                 return response.text
                 
             except Exception as e:
+                last_error = e
                 error_msg = str(e)
                 
                 if '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
@@ -897,8 +906,14 @@ class AIProviderManager:
                 if executor:
                     executor.shutdown(wait=False)
                     
-        # If we get here, all retries exhausted on a rate limit — propagate
-        raise  # re-raise the last rate-limit exception
+        # Re-raise the last real error. A bare `raise` here would fail with
+        # RuntimeError("No active exception to reraise") because the exception
+        # was already handled inside the loop — masking the actual failure.
+        if last_error is not None:
+            raise last_error
+        # No exception captured (timeout/empty response on the final attempt):
+        # report no content so make_ai_request can fall back to the other provider.
+        return None
     
     def make_ai_request(self, prompt: str, temperature: float = 0.7, 
                         max_tokens: int = 4096, prefer_fast: bool = False,

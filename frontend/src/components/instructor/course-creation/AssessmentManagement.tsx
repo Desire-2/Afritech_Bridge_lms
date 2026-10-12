@@ -540,6 +540,12 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         handleAIGenerateProgress,
       );
 
+      // The background task finished but the AI call inside it failed —
+      // surface the real reason instead of misreading it as empty content.
+      if (response && response.success === false) {
+        throw new Error(response.message || 'AI generation failed. Please try again.');
+      }
+
       // Generate based on active tab
       if (activeTab === 'quiz') {
         console.log('Quiz generation response:', response);
@@ -866,19 +872,26 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     } catch (error: any) {
       console.error('AI generation error:', error);
       
-      // Provide more specific error messages
+      // Provide more specific error messages. Prefer the backend's message —
+      // it knows the real reason (permission, missing course/lesson, task lost…).
       let errorMsg = 'Failed to generate with AI';
-      
-      if (error.response?.status === 404) {
-        errorMsg = 'Content not found. Please ensure the lesson/module exists and has content.';
-      } else if (error.response?.status === 400) {
-        errorMsg = error.response?.data?.message || 'Invalid request. Please check your selections.';
-      } else if (error.response?.status === 429) {
+      const status = error.response?.status;
+      const serverMsg = typeof error.response?.data?.message === 'string'
+        ? error.response.data.message
+        : '';
+
+      if (status === 404) {
+        errorMsg = serverMsg || 'Generation request not found. Refresh the page and try again.';
+      } else if (status === 403) {
+        errorMsg = serverMsg || 'You do not have permission to generate content for this course.';
+      } else if (status === 400) {
+        errorMsg = serverMsg || 'Invalid request. Please check your selections.';
+      } else if (status === 429) {
         errorMsg = 'AI service rate limit reached. Please wait a moment and try again.';
       } else if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
         errorMsg = 'AI generation timed out. The content may be too long. Try selecting a shorter lesson or fewer questions.';
-      } else if (error.response?.data?.message) {
-        errorMsg = error.response.data.message;
+      } else if (serverMsg) {
+        errorMsg = serverMsg;
       } else if (error.message) {
         errorMsg = error.message;
       }
@@ -902,6 +915,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     try {
       if (lastAIGeneration.type === 'quiz') {
         const response = await aiAgentService.generateQuizFromContent(lastAIGeneration.params);
+        if (response.success === false) {
+          throw new Error(response.message || 'AI generation failed. Please try again.');
+        }
         const quizData = response.data || response.quiz || response;
         
         if (!quizData || !quizData.questions || quizData.questions.length === 0) {
@@ -947,6 +963,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         setSuccessMessage(`✅ Regenerated ${quizData.questions.length} new questions!`);
       } else if (lastAIGeneration.type === 'assignment') {
         const response = await aiAgentService.generateAssignmentFromContent(lastAIGeneration.params);
+        if (response.success === false) {
+          throw new Error(response.message || 'AI generation failed. Please try again.');
+        }
         const assignmentData = response.data || response.assignment || response;
         
         if (!assignmentData || !assignmentData.title) {
@@ -963,6 +982,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         setSuccessMessage('✅ Regenerated assignment!');
       } else if (lastAIGeneration.type === 'project') {
         const response = await aiAgentService.generateProjectFromContent(lastAIGeneration.params);
+        if (response.success === false) {
+          throw new Error(response.message || 'AI generation failed. Please try again.');
+        }
         const projectData = response.data || response.project || response;
         
         if (!projectData || !projectData.title) {

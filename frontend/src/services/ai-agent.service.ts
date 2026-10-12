@@ -312,9 +312,18 @@ class AIAgentService {
     pollIntervalMs: number = 3000,
   ): Promise<AIResponse> {
     return new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const maxPollMs = 10 * 60 * 1000;
+      let consecutiveFailures = 0;
+
       const poll = async () => {
+        if (Date.now() - startedAt > maxPollMs) {
+          reject(new Error('AI generation timed out after 10 minutes. Please try again.'));
+          return;
+        }
         try {
           const resp = await aiApiClient.get(`/ai-agent/task/${taskId}/status`);
+          consecutiveFailures = 0;
           const status: TaskStatus = resp.data?.data;
 
           if (!status) {
@@ -332,8 +341,11 @@ class AIAgentService {
             try {
               const resultResp = await aiApiClient.get(`/ai-agent/task/${taskId}/result`);
               resolve(resultResp.data);
-            } catch {
-              resolve({ success: true, message: 'Task completed but result unavailable' });
+            } catch (resultError: any) {
+              const resultMsg = typeof resultError?.response?.data?.message === 'string'
+                ? resultError.response.data.message
+                : 'Task completed but the result could not be fetched. Please try again.';
+              resolve({ success: false, status: 'error', message: resultMsg });
             }
             return;
           }
@@ -365,7 +377,31 @@ class AIAgentService {
           // Still running — poll again
           setTimeout(poll, pollIntervalMs);
         } catch (error: any) {
-          // Network error during poll — retry a couple times
+          consecutiveFailures += 1;
+          const failureStatus = error.response?.status;
+          const failureMsg = typeof error.response?.data?.message === 'string'
+            ? error.response.data.message
+            : '';
+
+          // Auth/permission problems won't fix themselves — fail fast with the real reason
+          if (failureStatus === 401 || failureStatus === 403) {
+            reject(new Error(failureMsg || 'You are not allowed to view this generation task. Sign in again and retry.'));
+            return;
+          }
+
+          // The server has no record of this task (restart / different worker) —
+          // retry once to absorb a benign race, then give up with a clear message.
+          if (failureStatus === 404 && consecutiveFailures >= 2) {
+            reject(new Error(failureMsg || 'Generation task not found. It may have expired — please try again.'));
+            return;
+          }
+
+          // Network/server hiccups — retry a few times, but never spin forever
+          if (consecutiveFailures >= 8) {
+            reject(new Error(failureMsg || error.message || 'Lost connection to the generation server.'));
+            return;
+          }
+
           console.error('Poll error:', error);
           setTimeout(poll, pollIntervalMs * 2);
         }

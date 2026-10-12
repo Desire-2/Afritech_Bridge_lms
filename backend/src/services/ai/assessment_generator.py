@@ -603,11 +603,11 @@ Format as JSON:
             "resources": "Use module materials",
             "submission_format": "Submit as zip file with all deliverables",
             "tasks": [
-                {"text": "Research and plan your approach", "description": "Review the module materials and outline your project plan", "is_optional": false},
-                {"text": "Set up your development environment", "description": "Prepare all necessary tools and resources", "is_optional": false},
-                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": false},
-                {"text": "Test and refine", "description": "Test your implementation and fix any issues", "is_optional": false},
-                {"text": "Prepare documentation", "description": "Write documentation for your project", "is_optional": false}
+                {"text": "Research and plan your approach", "description": "Review the module materials and outline your project plan", "is_optional": False},
+                {"text": "Set up your development environment", "description": "Prepare all necessary tools and resources", "is_optional": False},
+                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": False},
+                {"text": "Test and refine", "description": "Test your implementation and fix any issues", "is_optional": False},
+                {"text": "Prepare documentation", "description": "Write documentation for your project", "is_optional": False}
             ]
         }
     
@@ -720,11 +720,11 @@ Format as JSON:
             "resources": "Use module materials and external references",
             "submission_format": "Submit as zip file with all deliverables",
             "tasks": [
-                {"text": "Research and plan your approach", "description": "Review the course materials and outline your project plan", "is_optional": false},
-                {"text": "Design the solution architecture", "description": "Plan the structure and components of your project", "is_optional": false},
-                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": false},
-                {"text": "Test and debug", "description": "Test your implementation thoroughly and fix issues", "is_optional": false},
-                {"text": "Prepare final submission", "description": "Compile all deliverables and submit", "is_optional": false}
+                {"text": "Research and plan your approach", "description": "Review the course materials and outline your project plan", "is_optional": False},
+                {"text": "Design the solution architecture", "description": "Plan the structure and components of your project", "is_optional": False},
+                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": False},
+                {"text": "Test and debug", "description": "Test your implementation thoroughly and fix issues", "is_optional": False},
+                {"text": "Prepare final submission", "description": "Compile all deliverables and submit", "is_optional": False}
             ]
         }
         
