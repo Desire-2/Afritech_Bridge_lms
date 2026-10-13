@@ -5,6 +5,18 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import {
+  MIN_SECTION_VIEW_MS,
+  allSectionsViewed,
+  dwellViewed,
+  initialSectionViewState,
+  sectionCounts,
+  sectionProgressPercent,
+  stateMatchesSections,
+  withActiveSection,
+  withActiveViewed,
+  type SectionViewState,
+} from '@/lib/section-progress';
+import {
   ChevronLeft,
   ChevronRight,
   BookOpen,
@@ -31,16 +43,40 @@ const MAX_VISIBLE_DOTS = 20;
 const INTERACTIVE_GUARD_SELECTOR =
   'input, textarea, select, button, a, [contenteditable=""], [contenteditable="true"], [role="slider"]';
 
+// ── Cross-remount section-view store ───────────────────────────────────────
+// Fullscreen toggles remount the content tree, which used to reset the
+// learner's position and viewed state. The store keeps that state keyed by
+// lesson so a remount resumes exactly where the learner left off. It is
+// deliberately in-memory only: nothing per-section is ever sent to the
+// server, and state is discarded when the section ids no longer match.
+const sectionViewStateStore = new Map<string, SectionViewState>();
+
+function loadSectionViewState(key: string | undefined): SectionViewState | undefined {
+  if (!key) return undefined;
+  return sectionViewStateStore.get(key);
+}
+
+function saveSectionViewState(key: string | undefined, state: SectionViewState): void {
+  if (!key) return;
+  sectionViewStateStore.set(key, state);
+}
+
+/** Drop persisted view state for a lesson (e.g. after it is completed). */
+export function clearSectionViewState(key: string | undefined): void {
+  if (key) sectionViewStateStore.delete(key);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface StepSection {
   id: string;
-  type: 'text' | 'video' | 'pdf' | 'image' | 'heading';
+  type: 'text' | 'video' | 'pdf' | 'image' | 'heading' | 'composite';
   heading?: string;
   content?: string;
   url?: string;
   alt?: string;
   level?: number;
+  blocks?: unknown[];
   metadata?: Record<string, any>;
 }
 
@@ -49,9 +85,11 @@ interface InteractiveStepThroughViewerProps {
   sections: StepSection[];
   /** Total section count (may differ from sections.length if some are collapsed) */
   totalSteps: number;
+  /** Stable lesson identity used to resume view state across remounts. */
+  lessonKey?: string;
   /** Called when the user advances to a new section */
   onStepChange?: (stepIndex: number, total: number) => void;
-  /** Called when all sections have been viewed */
+  /** Called once, the first time every section counts as viewed */
   onAllSectionsViewed?: () => void;
   /** Called whenever the set of viewed sections changes */
   onViewedSectionsUpdate?: (viewedCount: number, total: number) => void;
@@ -72,6 +110,7 @@ interface InteractiveStepThroughViewerProps {
 export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewerProps> = ({
   sections,
   totalSteps,
+  lessonKey,
   onStepChange,
   onAllSectionsViewed,
   onViewedSectionsUpdate,
@@ -79,69 +118,70 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   className = '',
   lastStepButton,
 }) => {
-  // Current active step
-  const [activeStep, setActiveStep] = useState(0);
-  // Set of viewed/completed section indices
-  const [viewedSections, setViewedSections] = useState<Set<number>>(new Set());
+  // Stable ids are the section identity; array indices are never used as keys.
+  const sectionIds = useMemo(() => sections.map((section) => section.id), [sections]);
+  const sectionKey = sectionIds.join('|');
+  const [state, setState] = useState<SectionViewState>(() => {
+    const restored = loadSectionViewState(lessonKey);
+    if (restored && stateMatchesSections(restored, sectionIds)) return restored;
+    return initialSectionViewState(sectionIds);
+  });
   // Direction for animation
   const [direction, setDirection] = useState(0); // 0 = initial, 1 = forward, -1 = backward
-  // Show completion celebration when all sections viewed
-  const [showCompletionCelebration, setShowCompletionCelebration] = useState(false);
-  // Has the celebration been dismissed?
+  // Has the completion celebration been dismissed?
   const [celebrationDismissed, setCelebrationDismissed] = useState(false);
+  const celebratedRef = useRef(false);
   const prefersReducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const sectionKey = useMemo(() => sections.map((section) => section.id).join('|'), [sections]);
-
   // Reset step state when a different lesson/content shape is rendered into
-  // this component instance.
+  // this component instance (restoring persisted state when it still applies).
   useEffect(() => {
-    setActiveStep(0);
-    setViewedSections(new Set());
-    setShowCompletionCelebration(false);
+    const restored = loadSectionViewState(lessonKey);
+    setState(restored && stateMatchesSections(restored, sectionIds)
+      ? restored
+      : initialSectionViewState(sectionIds));
+    setDirection(0);
     setCelebrationDismissed(false);
-  }, [sectionKey, totalSteps]);
+    celebratedRef.current = false;
+  }, [sectionKey, totalSteps, lessonKey]);
 
-  // Mark the active section as viewed using the next set, not stale state.
+  // Persist across remounts (fullscreen toggle unmounts the content tree).
   useEffect(() => {
-    if (totalSteps <= 0 || activeStep >= sections.length) {
-      onViewedSectionsUpdate?.(0, totalSteps);
-      return;
-    }
+    saveSectionViewState(lessonKey, state);
+  }, [lessonKey, state]);
 
-    const nextViewedSections = new Set(viewedSections);
-    nextViewedSections.add(activeStep);
-    const viewedCount = nextViewedSections.size;
+  const stepIndex = Math.min(state.activeIndex, Math.max(0, sectionIds.length - 1));
 
-    if (viewedCount !== viewedSections.size) {
-      setViewedSections(nextViewedSections);
-    }
-    onViewedSectionsUpdate?.(viewedCount, totalSteps);
-    onStepChange?.(activeStep, totalSteps);
-
-    if (viewedCount >= totalSteps && !showCompletionCelebration) {
-      setShowCompletionCelebration(true);
-      onAllSectionsViewed?.();
-    }
-  }, [activeStep, totalSteps, sections.length, viewedSections, showCompletionCelebration, onStepChange, onAllSectionsViewed, onViewedSectionsUpdate]);
+  // Dwell: a section only counts as viewed after it has been continuously on
+  // screen for MIN_SECTION_VIEW_MS, so opening a lesson or arrow-keying
+  // through steps never marks sections as viewed.
+  useEffect(() => {
+    const sectionId = sectionIds[stepIndex];
+    if (!sectionId) return undefined;
+    const timer = window.setTimeout(() => {
+      if (!dwellViewed(MIN_SECTION_VIEW_MS)) return;
+      setState((previous) => withActiveViewed(previous));
+    }, MIN_SECTION_VIEW_MS);
+    return () => window.clearTimeout(timer);
+  }, [sectionKey, sectionIds, stepIndex]);
 
   const goToStep = useCallback((step: number) => {
-    setDirection(step > activeStep ? 1 : -1);
-    setActiveStep(step);
-  }, [activeStep]);
+    setDirection(step > stepIndex ? 1 : -1);
+    setState((previous) => withActiveSection(previous, step));
+  }, [stepIndex]);
 
   const goNext = useCallback(() => {
-    if (activeStep < totalSteps - 1) {
-      goToStep(activeStep + 1);
+    if (stepIndex < totalSteps - 1) {
+      goToStep(stepIndex + 1);
     }
-  }, [activeStep, totalSteps, goToStep]);
+  }, [stepIndex, totalSteps, goToStep]);
 
   const goPrev = useCallback(() => {
-    if (activeStep > 0) {
-      goToStep(activeStep - 1);
+    if (stepIndex > 0) {
+      goToStep(stepIndex - 1);
     }
-  }, [activeStep, goToStep]);
+  }, [stepIndex, goToStep]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -165,7 +205,28 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [goNext, goPrev]);
 
-  const progressPercent = totalSteps > 0 ? ((activeStep + 1) / totalSteps) * 100 : 0;
+  // Report viewed progress upward (never a synthetic all-viewed burst).
+  const counts = sectionCounts(state);
+  const viewedPercent = sectionProgressPercent(state);
+  const finished = allSectionsViewed(state);
+  const reportedRef = useRef({ viewed: -1, total: -1 });
+  useEffect(() => {
+    if (reportedRef.current.viewed === counts.viewed && reportedRef.current.total === counts.total) return;
+    reportedRef.current = { viewed: counts.viewed, total: counts.total };
+    onViewedSectionsUpdate?.(counts.viewed, totalSteps);
+  }, [counts.viewed, counts.total, totalSteps, onViewedSectionsUpdate]);
+
+  useEffect(() => {
+    onStepChange?.(stepIndex, totalSteps);
+  }, [stepIndex, totalSteps, onStepChange]);
+
+  useEffect(() => {
+    if (!finished || celebratedRef.current) return;
+    celebratedRef.current = true;
+    onAllSectionsViewed?.();
+  }, [finished, onAllSectionsViewed]);
+
+  const showCompletionCelebration = finished && !celebrationDismissed;
 
   // ── Confetti particles for celebration ──
   // Random offsets are memoized once per celebration so re-renders never
@@ -195,10 +256,10 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           </div>
           <div className="min-w-0">
             <p className="text-xs font-semibold text-gray-300 leading-tight">
-              Step {activeStep + 1} of {totalSteps}
+              Step {stepIndex + 1} of {totalSteps}
             </p>
             <p className="text-xs text-gray-500 leading-tight mt-0.5">
-              {Math.round(progressPercent)}% complete
+              {Math.round(viewedPercent)}% viewed
             </p>
           </div>
         </div>
@@ -219,15 +280,15 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 type="button"
                 onClick={() => goToStep(i)}
                 aria-label={`Go to step ${i + 1} of ${totalSteps}`}
-                aria-current={i === activeStep ? 'step' : undefined}
+                aria-current={i === stepIndex ? 'step' : undefined}
                 className="group relative -m-3 flex h-11 w-11 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 style={{ zIndex: Math.min(totalSteps, MAX_VISIBLE_DOTS) - i }}
               >
                 <span
                   className={`block h-2 rounded-full transition-all duration-300 ${
-                    i === activeStep
+                    i === stepIndex
                       ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
-                      : viewedSections.has(i)
+                      : state.viewedIds.includes(sectionIds[i])
                       ? 'w-2 bg-emerald-500/60 group-hover:bg-emerald-400'
                       : 'w-2 bg-gray-700 group-hover:bg-gray-600'
                   }`}
@@ -238,7 +299,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
           {/* Step count badge (mobile) */}
           <Badge variant="outline" className="sm:hidden text-xs border-gray-700 text-gray-400 px-2">
-            {activeStep + 1}/{totalSteps}
+            {stepIndex + 1}/{totalSteps}
           </Badge>
         </div>
       </div>
@@ -248,14 +309,14 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         <motion.div
           className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
           initial={{ width: '0%' }}
-          animate={{ width: `${progressPercent}%` }}
+          animate={{ width: `${viewedPercent}%` }}
           transition={{ duration: 0.4, ease: 'easeOut' }}
         />
         {/* Glow */}
         <div
           className="absolute top-0 bottom-0 w-12 blur-md opacity-40"
           style={{
-            left: `${progressPercent}%`,
+            left: `${viewedPercent}%`,
             transform: 'translateX(-50%)',
             background: 'linear-gradient(90deg, transparent, #6366f1, transparent)',
           }}
@@ -265,7 +326,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
       {/* ── Current Section Content ── */}
       <AnimatePresence mode="wait" custom={direction}>
         <motion.div
-          key={activeStep}
+          key={stepIndex}
           custom={direction}
           initial={{ opacity: 0, x: direction > 0 ? 40 : -40, y: 8 }}
           animate={{ opacity: 1, x: 0, y: 0 }}
@@ -274,20 +335,20 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           className="min-h-[200px]"
         >
           {/* Section index badge */}
-          {sections[activeStep]?.heading && (
+          {sections[stepIndex]?.heading && (
             <div className="flex items-center gap-2 mb-4">
               <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-blue-500/15 text-blue-400 text-xs font-bold ring-1 ring-blue-500/30">
-                {activeStep + 1}
+                {stepIndex + 1}
               </span>
               <h3 className="text-lg font-semibold text-white">
-                {sections[activeStep].heading}
+                {sections[stepIndex].heading}
               </h3>
             </div>
           )}
 
           {/* Render the actual section content via the renderSection prop */}
-          {sections[activeStep]
-            ? renderSection(sections[activeStep], activeStep, true)
+          {sections[stepIndex]
+            ? renderSection(sections[stepIndex], stepIndex, true)
             : <p className="text-sm text-gray-400">No lesson content is available.</p>}
         </motion.div>
       </AnimatePresence>
@@ -427,7 +488,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               variant="outline"
               size="sm"
               onClick={goPrev}
-              disabled={activeStep === 0}
+              disabled={stepIndex === 0}
               className="flex items-center gap-1.5 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -436,7 +497,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
             {/* Section completion indicator */}
             <div className="flex items-center gap-2">
-              {viewedSections.has(activeStep) && (
+              {state.viewedIds.includes(sectionIds[stepIndex]) && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
@@ -448,7 +509,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               )}
             </div>
 
-            {activeStep < totalSteps - 1 ? (
+            {stepIndex < totalSteps - 1 ? (
               <Button
                 size="sm"
                 onClick={goNext}

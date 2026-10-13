@@ -9,7 +9,7 @@ import { AIContentGenerator } from '@/components/instructor/ai-agent';
 import { aiAgentService } from '@/services/ai-agent.service';
 import { AIContentButton } from './AIContentButton';
 import { AIMixedContentButton } from './AIMixedContentButton';
-import MixedContentBuilder from '@/components/instructor/content/MixedContentBuilder';
+import MixedContentBuilder, { builderItemsToContentData, type ContentSection } from '@/components/instructor/content/MixedContentBuilder';
 import { toast } from 'sonner';
 
 interface ModuleManagementProps {
@@ -1063,49 +1063,34 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       });
 
       if ((response.success || response.status === 'partial_success') && response.data?.sections) {
-        // Convert sections to the format MixedContentBuilder expects
-        const formattedSections = response.data.sections.map((section: any, index: number) => {
-          const baseSection: any = {
+        // Convert AI sections into editor items, then serialize through the
+        // shared section contract (heading becomes a section TITLE, not a step).
+        const builderItems: ContentSection[] = response.data.sections.map((section: any, index: number) => {
+          const type: ContentSection['type'] =
+            section.type === 'video' || section.type === 'pdf' || section.type === 'image' || section.type === 'heading'
+              ? section.type
+              : 'text';
+          const isMedia = type === 'video' || type === 'pdf' || type === 'image';
+          const content = isMedia
+            ? section.url || ''
+            : type === 'heading'
+              ? section.content || section.title || ''
+              : section.content || '';
+          return {
             id: `section-${Date.now()}-${index}`,
-            type: section.type || 'text',
-          };
-          
-          // Handle different section types correctly
-          if (section.type === 'video' || section.type === 'pdf' || section.type === 'image') {
-            // For media types, use 'url' field (NOT content)
-            baseSection.url = section.url || '';
-            baseSection.content = section.url || ''; // Keep for backward compatibility
-            baseSection.metadata = {
+            type,
+            content,
+            metadata: {
               title: section.title || '',
               caption: section.caption || '',
               url: section.url || ''
-            };
-          } else if (section.type === 'heading') {
-            // For headings, use content and title
-            baseSection.content = section.content || section.title || '';
-            baseSection.title = section.title || section.content || '';
-          } else {
-            // For text sections, use content
-            baseSection.content = section.content || '';
-          }
-          
-          // Add metadata if not already set
-          if (!baseSection.metadata && (section.title || section.caption)) {
-            baseSection.metadata = {
-              title: section.title || '',
-              caption: section.caption || ''
-            };
-          }
-          
-          return baseSection;
+            }
+          };
         });
-        
-        // Convert to JSON string for MixedContentBuilder
-        const sectionsJSON = JSON.stringify(formattedSections);
-        
+
         setLessonForm(prev => ({
           ...prev,
-          content_data: sectionsJSON
+          content_data: builderItemsToContentData(builderItems)
         }));
         
         toast.success('Mixed content generated successfully!');

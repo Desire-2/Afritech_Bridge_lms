@@ -383,6 +383,50 @@ OOP helps organize code into logical, reusable components that mirror real-world
 - ✅ Raw HTML (sanitized)
 - ✅ Emoji (via Unicode)
 
+## How markdown becomes lesson sections
+
+The student player navigates one step per **section**. These rules are implemented in
+`src/lib/lesson-content.ts` and apply to `content_type: "text"` lessons (and to the
+markdown fallback when mixed content is not valid JSON):
+
+| You write | The learner sees |
+| --- | --- |
+| A single `# H1` at the top | The lesson title (never its own step; dropped when it repeats the lesson title) |
+| `## H2` | A new section — one navigable step, titled with the H2 text |
+| `### H3` and deeper | Stays inside the current section's body |
+| A standalone `**bold**` line | A new section (legacy heading style, still supported) |
+| `**inline bold**` inside a paragraph | Emphasis only — never a new section |
+| A line inside a fenced code block | Never inspected — `## example` in a code sample cannot split a section |
+| A bare media URL or `![alt](src)` on its own line | An embedded video/image/PDF block inside the current section |
+
+Content before the first heading becomes an untitled "Introduction" section.
+
+## Mixed-content storage (`content_type: "mixed"`)
+
+Mixed lessons store JSON, not markdown. The canonical shape is an array of
+**section objects** — the title and its body live together, so a heading can
+never become a navigation step of its own:
+
+```json
+[
+  {
+    "id": "sec_intro",
+    "type": "section",
+    "title": "Introduction",
+    "blocks": [
+      { "type": "text", "content": "Welcome to this lesson." },
+      { "type": "video", "url": "https://example.com/lecture.mp4" }
+    ]
+  }
+]
+```
+
+The legacy flat form (`[{"type": "heading", ...}, {"type": "text", ...}]`) is still
+accepted everywhere and is normalized on read: a `heading` block becomes the title of
+the section that owns the blocks after it. Existing lessons therefore keep working
+without a database migration, and video-progress keys recorded before the change stay
+valid.
+
 ## Support
 
 If you encounter formatting issues not covered here, please contact the technical support team with:

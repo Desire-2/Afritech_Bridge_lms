@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 // ── Props ──────────────────────────────────────────────────────────
 interface LessonShape {
+  id?: string;
   title: string;
   content_type: "text" | "video" | "pdf" | "mixed";
   content_data: string;

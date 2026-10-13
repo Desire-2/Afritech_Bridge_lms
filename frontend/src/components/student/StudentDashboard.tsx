@@ -363,7 +363,7 @@ const StudentDashboard: React.FC = () => {
                   <BookOpen className="h-5 w-5 mr-2" />
                   Continue Learning
                 </CardTitle>
-                <Link href="/student/learn">
+                <Link href="/student/courses/myprogress">
                   <Button variant="outline" size="sm">
                     View All
                     <ChevronRight className="h-4 w-4 ml-1" />

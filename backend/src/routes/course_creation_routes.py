@@ -24,6 +24,7 @@ from ..models.student_models import (
 )
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..config.course_skill_profiles import get_skill_profile_for_course
+from ..utils.lesson_content import validate_lesson_content
 
 logger = logging.getLogger(__name__)
 
@@ -544,6 +545,16 @@ def create_lesson(course_id, module_id):
             if not data.get(field):
                 logger.debug(f"LESSON - Missing field: {field}")
                 return jsonify({"message": f"{field} is required"}), 400
+
+        # Same content contract the student player consumes (see
+        # frontend/src/lib/lesson-content.ts). Rejected here so malformed
+        # content never reaches the database.
+        content_ok, content_error = validate_lesson_content(
+            data.get('content_type'), data.get('content_data')
+        )
+        if not content_ok:
+            logger.debug(f"LESSON - Invalid content: {content_error}")
+            return jsonify({"message": content_error, "error": "INVALID_LESSON_CONTENT"}), 400
         
         # Get the next order number
         last_lesson = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order.desc()).first()
@@ -619,6 +630,19 @@ def update_lesson(course_id, module_id, lesson_id):
             lesson.duration_minutes = data['duration_minutes']
         if 'is_published' in data:
             lesson.is_published = data['is_published']
+
+        # Validate the resulting content pair, not just the incoming field,
+        # so changing only content_type is checked against the stored data.
+        if 'content_data' in data or 'content_type' in data:
+            content_ok, content_error = validate_lesson_content(
+                lesson.content_type, lesson.content_data
+            )
+            if not content_ok:
+                db.session.rollback()
+                return jsonify({
+                    "message": content_error,
+                    "error": "INVALID_LESSON_CONTENT"
+                }), 400
         
         db.session.commit()
 

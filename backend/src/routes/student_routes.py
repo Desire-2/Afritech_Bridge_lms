@@ -192,7 +192,17 @@ def _sanitize_mixed_video_progress(raw):
 
 
 def _mixed_video_section_indices(content_data):
-    """Return the original section indices of video entries in mixed content.
+    """Video coverage indices for mixed-content lessons.
+
+    Mirrors the frontend contract in ``frontend/src/lib/lesson-content.ts``:
+
+    - LEGACY FLAT: ``[{type: "video", ...}, ...]`` — the index is the position
+      in the flat array, unchanged.
+    - CANONICAL: ``[{id, type: "section", title, blocks: [...]}, ...]`` — a
+      section with a non-empty title contributes one phantom "heading" slot
+      first (exactly where its legacy ``heading`` block used to sit), then one
+      slot per block. Therefore the recorded indices for legacy content stay
+      valid after the storage format becomes canonical.
 
     None when the lesson is not mixed content or the payload cannot be
     parsed as a list of sections.
@@ -203,10 +213,30 @@ def _mixed_video_section_indices(content_data):
         return None
     if not isinstance(parsed, list):
         return None
-    indices = [
-        i for i, section in enumerate(parsed)
-        if isinstance(section, dict) and section.get('type') == 'video'
-    ]
+
+    indices = []
+    coverage = 0
+    for section in parsed:
+        if not isinstance(section, dict):
+            coverage += 1
+            continue
+
+        blocks = section.get('blocks')
+        if isinstance(blocks, list):
+            # Canonical section object: phantom heading slot + one per block.
+            title = section.get('title')
+            if isinstance(title, str) and title.strip():
+                coverage += 1
+            for block in blocks:
+                if isinstance(block, dict) and block.get('type') == 'video':
+                    indices.append(coverage)
+                coverage += 1
+            continue
+
+        if section.get('type') == 'video':
+            indices.append(coverage)
+        coverage += 1
+
     return indices
 
 

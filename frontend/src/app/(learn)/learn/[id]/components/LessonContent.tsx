@@ -789,6 +789,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 <ContentRichPreview
                   key={currentLesson.id ?? currentLessonIndex}
                   lesson={{
+                    id: currentLesson.id,
                     title: currentLesson.title,
                     content_type: currentLesson.content_type || 'text',
                     content_data: currentLesson.content_data || currentLesson.content || '',
@@ -1939,6 +1940,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               <ContentRichPreview
                 key={`fullscreen-${currentLesson.id ?? currentLessonIndex}`}
                 lesson={{
+                  id: currentLesson.id,
                   title: currentLesson.title,
                   content_type: currentLesson.content_type || 'text',
                   content_data: currentLesson.content_data || currentLesson.content || '',

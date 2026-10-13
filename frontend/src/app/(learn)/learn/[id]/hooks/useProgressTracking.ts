@@ -181,10 +181,11 @@ export const useProgressTracking = ({
     // Calculate section-based progress if sections are available
     let combinedProgress: number;
     if (totalSections > 0) {
-      // Section progress: percentage of sections viewed
+      // Section progress: percentage of sections actually viewed
       const sectionsProgress = (viewedSections / totalSections) * 100;
-      // Time-based minimum: ~30 seconds per section as safety net
-      const sectionTimeBuffer = Math.min(100, (timeSinceStart / (totalSections * 20)) * 100);
+      // Time-based reading buffer (~20s per section), capped at 60 so that
+      // elapsed time alone can never push reading progress to completion.
+      const sectionTimeBuffer = Math.min(60, (timeSinceStart / (totalSections * 20)) * 100);
       // Use max of section progress and time buffer
       combinedProgress = Math.max(sectionsProgress, sectionTimeBuffer);
     } else {

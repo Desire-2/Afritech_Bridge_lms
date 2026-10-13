@@ -309,7 +309,7 @@ const CourseProgressPage = () => {
             <div className="space-y-3">
               {progress.current_lesson_id ? (
                 <Link
-                  href={`/student/learn/${courseId}`}
+                  href={`/learn/${courseId}`}
                   className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
                 >
                   <Play className="w-5 h-5 text-indigo-600" />
@@ -317,7 +317,7 @@ const CourseProgressPage = () => {
                 </Link>
               ) : (
                 <Link
-                  href={`/student/learn/${courseId}`}
+                  href={`/learn/${courseId}`}
                   className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
                 >
                   <Play className="w-5 h-5 text-indigo-600" />
@@ -326,7 +326,7 @@ const CourseProgressPage = () => {
               )}
               
               <Link
-                href={`/student/learn/${courseId}`}
+                href={`/learn/${courseId}`}
                 className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
               >
                 <BookOpen className="w-5 h-5 text-gray-600" />

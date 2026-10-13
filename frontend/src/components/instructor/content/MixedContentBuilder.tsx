@@ -23,8 +23,15 @@ import { EnhancedMarkdownEditor } from '@/components/instructor/course-creation/
 import { parseImageDimensions, formatImageDimensions } from '@/lib/utils';
 import { toast } from 'sonner';
 import aiAgentService from '@/services/ai-agent.service';
+import {
+  builderItemsToContentData,
+  contentDataToBuilderItems,
+} from '@/lib/lesson-content';
 
-// Content Section Types
+// Re-exported so callers (ModuleManagement, tests) use the shared contract.
+export { builderItemsToContentData, contentDataToBuilderItems };
+
+// Content Section Types (the flat editing model; storage is canonical sections)
 export interface ContentSection {
   id: string;
   type: 'text' | 'video' | 'pdf' | 'image' | 'heading';
@@ -113,40 +120,11 @@ export default function MixedContentBuilder({
   courseId,
   moduleId
 }: MixedContentBuilderProps) {
-  const [sections, setSections] = useState<ContentSection[]>(() => {
-    try {
-      if (!value) return [];
-      
-      // Try to parse existing JSON
-      const parsed = JSON.parse(value);
-      
-      // Convert old format to new format
-      if (Array.isArray(parsed)) {
-        return parsed.map((section: any, index: number) => {
-          const mediaTypes = ['video', 'pdf', 'image'];
-          const isMediaType = mediaTypes.includes(section.type);
-          
-          return {
-            id: section.id || `section-${Date.now()}-${index}`,
-            type: section.type || 'text',
-            // For media types, prioritize url field; for text/heading, use content
-            content: isMediaType 
-              ? (section.url || section.metadata?.url || section.content || section.video_url || section.pdf_url || '')
-              : (section.content || section.text || ''),
-            metadata: {
-              title: section.metadata?.title || section.title || section.heading || '',
-              caption: section.metadata?.caption || section.caption || '',
-              url: section.url || section.metadata?.url || section.video_url || section.pdf_url || ''
-            }
-          };
-        });
-      }
-      
-      return [];
-    } catch {
-      return [];
-    }
-  });
+  // The shared contract accepts canonical sections, legacy flat blocks and
+  // markdown fallbacks, so an older lesson always loads into the editor.
+  const [sections, setSections] = useState<ContentSection[]>(() =>
+    value ? contentDataToBuilderItems(value) : []
+  );
 
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -166,80 +144,18 @@ export default function MixedContentBuilder({
     // Skip if this value was just emitted by us — prevents feedback loop that causes focus loss
     if (value === lastEmittedValueRef.current) return;
     
-    try {
-      const parsed = JSON.parse(value);
-      
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const newSections = parsed.map((section: any, index: number) => {
-          const mediaTypes = ['video', 'pdf', 'image'];
-          const isMediaType = mediaTypes.includes(section.type);
-          
-          return {
-            id: section.id || `section-${Date.now()}-${index}`,
-            type: section.type || 'text',
-            // For media types, prioritize url field; for text/heading, use content
-            content: isMediaType
-              ? (section.url || section.metadata?.url || section.content || section.video_url || section.pdf_url || '')
-              : (section.content || section.text || ''),
-            metadata: {
-              title: section.metadata?.title || section.title || section.heading || '',
-              caption: section.metadata?.caption || section.caption || '',
-              url: section.url || section.metadata?.url || section.video_url || section.pdf_url || ''
-            }
-          };
-        });
-        
-        setSections(newSections);
-        setShowTemplates(false); // Close template dialog if open
-      }
-    } catch (error) {
-      console.error('Error parsing value in MixedContentBuilder:', error);
+    const newSections = contentDataToBuilderItems(value);
+    if (newSections.length > 0) {
+      setSections(newSections);
+      setShowTemplates(false); // Close template dialog if open
     }
   }, [value]);
 
   // Update parent when sections change
   const updateParent = (newSections: ContentSection[]) => {
-    // Convert to format expected by backend
-    const formattedSections = newSections.map(section => {
-      switch (section.type) {
-        case 'heading':
-          return {
-            type: 'heading',
-            content: section.content,
-            title: section.metadata?.title || section.content
-          };
-        case 'text':
-          return {
-            type: 'text',
-            content: section.content
-          };
-        case 'video':
-          return {
-            type: 'video',
-            url: section.metadata?.url || section.content,
-            title: section.metadata?.title || '',
-            description: section.metadata?.caption || ''
-          };
-        case 'pdf':
-          return {
-            type: 'pdf',
-            url: section.metadata?.url || section.content,
-            title: section.metadata?.title || '',
-            description: section.metadata?.caption || ''
-          };
-        case 'image':
-          return {
-            type: 'image',
-            url: section.metadata?.url || section.content,
-            caption: section.metadata?.caption || '',
-            title: section.metadata?.title || ''
-          };
-        default:
-          return section;
-      }
-    });
-
-    const serialized = JSON.stringify(formattedSections, null, 2);
+    // Serialize through the shared section contract so the student player
+    // navigates the exact structure the instructor arranged here.
+    const serialized = builderItemsToContentData(newSections);
     lastEmittedValueRef.current = serialized;
     onChange(serialized);
   };

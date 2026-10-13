@@ -4,8 +4,9 @@ import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 
 /**
- * Redirect page for legacy URLs
- * Redirects /student/learn/courses/[courseId] to /student/learn/[courseId]
+ * Redirect page for legacy URLs.
+ * Redirects /learn/courses/[courseId] to /learn/[courseId] (the canonical
+ * student learning route; /student/learn/* does not exist).
  */
 export default function CourseLearningRedirect() {
   const params = useParams();
@@ -15,7 +16,7 @@ export default function CourseLearningRedirect() {
   useEffect(() => {
     if (courseId) {
       // Redirect to the correct learning page URL
-      router.replace(`/student/learn/${courseId}`);
+      router.replace(`/learn/${courseId}`);
     }
   }, [courseId, router]);
 

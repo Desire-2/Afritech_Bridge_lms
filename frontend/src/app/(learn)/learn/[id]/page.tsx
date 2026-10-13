@@ -28,6 +28,7 @@ import { UnlockAnimation } from './components/UnlockAnimation';
 import { LessonScoreDisplay } from './components/LessonScoreDisplay';
 import { ModuleUnlockErrorDialog } from '@/components/ui/ModuleUnlockErrorDialog';
 import { useProgressTracking } from './hooks/useProgressTracking';
+import { mixedVideoCount } from '@/lib/lesson-content';
 import { useNotesAutosave } from './hooks/useNotesAutosave';
 import * as NavUtils from './utils/navigationUtils';
 import {
@@ -262,17 +263,12 @@ const LearningPage = () => {
   const [mixedContentVideoProgress, setMixedContentVideoProgress] = useState<Record<number, number>>({});
   const [mixedContentVideosCompleted, setMixedContentVideosCompleted] = useState<Set<number>>(new Set());
 
-  // Total number of video sections in a mixed lesson (original array indices).
+  // Total number of video sections in a mixed lesson, keyed by the shared
+  // coverage-index contract (legacy flat blocks AND canonical sections).
   // Used so "video completed" only fires when EVERY video has been watched.
   const mixedTotalVideoCount = useMemo(() => {
     if (currentLesson?.content_type !== 'mixed') return 0;
-    try {
-      const parsed = JSON.parse(currentLesson?.content_data || '[]');
-      if (!Array.isArray(parsed)) return 0;
-      return parsed.filter((s: any) => s && s.type === 'video').length;
-    } catch {
-      return 0;
-    }
+    return mixedVideoCount(currentLesson?.content_data || '');
   }, [currentLesson?.content_type, currentLesson?.content_data]);
 
   // Section-based progress tracking
@@ -289,6 +285,8 @@ const LearningPage = () => {
     setVideoDuration(0);
     setMixedContentVideoProgress({});
     setMixedContentVideosCompleted(new Set());
+    setViewedSections(0);
+    setTotalSections(0);
   }, [currentLesson?.id]);
   
   // Module progress requirements modal state
