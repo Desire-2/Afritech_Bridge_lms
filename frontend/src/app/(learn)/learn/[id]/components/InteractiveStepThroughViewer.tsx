@@ -192,10 +192,9 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         if (e.target instanceof HTMLElement && e.target.isContentEditable) return;
       }
 
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        goNext();
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      // Forward progress is Next-button only; the left/up arrows still step
+      // back so a learner can re-read without skipping ahead.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         e.preventDefault();
         goPrev();
       }
@@ -203,7 +202,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goNext, goPrev]);
+  }, [goPrev]);
 
   // Report viewed progress upward (never a synthetic all-viewed burst).
   const counts = sectionCounts(state);
@@ -265,35 +264,30 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         </div>
 
         <div className="flex items-center gap-1.5 min-w-0">
-          {/* Step dots */}
+          {/* Step dots — non-interactive progress indicators.
+              Forward progress is driven by the Next button only, so these
+              never jump ahead; they simply show where you are and what you
+              have already viewed. */}
           <div
             className="hidden sm:flex min-w-0 flex-wrap items-center justify-end gap-1"
+            aria-hidden="true"
             title={
               totalSteps > MAX_VISIBLE_DOTS
-                ? `Showing the first ${MAX_VISIBLE_DOTS} of ${totalSteps} steps — use Previous/Next to reach the rest`
+                ? `Showing the first ${MAX_VISIBLE_DOTS} of ${totalSteps} steps`
                 : undefined
             }
           >
             {Array.from({ length: Math.min(totalSteps, MAX_VISIBLE_DOTS) }).map((_, i) => (
-              <button
+              <span
                 key={i}
-                type="button"
-                onClick={() => goToStep(i)}
-                aria-label={`Go to step ${i + 1} of ${totalSteps}`}
-                aria-current={i === stepIndex ? 'step' : undefined}
-                className="group relative -m-3 flex h-11 w-11 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                style={{ zIndex: Math.min(totalSteps, MAX_VISIBLE_DOTS) - i }}
-              >
-                <span
-                  className={`block h-2 rounded-full transition-all duration-300 ${
-                    i === stepIndex
-                      ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
-                      : state.viewedIds.includes(sectionIds[i])
-                      ? 'w-2 bg-emerald-500/60 group-hover:bg-emerald-400'
-                      : 'w-2 bg-gray-700 group-hover:bg-gray-600'
-                  }`}
-                />
-              </button>
+                className={`block h-2 rounded-full transition-all duration-300 ${
+                  i === stepIndex
+                    ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
+                    : state.viewedIds.includes(sectionIds[i])
+                    ? 'w-2 bg-emerald-500/60'
+                    : 'w-2 bg-gray-700'
+                }`}
+              />
             ))}
           </div>
 
@@ -323,7 +317,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         />
       </div>
 
-      {/* ── Current Section Content ── */}
+      {/* ── Current Section Workspace ── */}
       <AnimatePresence mode="wait" custom={direction}>
         <motion.div
           key={stepIndex}
@@ -334,22 +328,36 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
           className="min-h-[200px]"
         >
-          {/* Section index badge */}
-          {sections[stepIndex]?.heading && (
-            <div className="flex items-center gap-2 mb-4">
-              <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-blue-500/15 text-blue-400 text-xs font-bold ring-1 ring-blue-500/30">
-                {stepIndex + 1}
-              </span>
-              <h3 className="text-lg font-semibold text-white">
-                {sections[stepIndex].heading}
-              </h3>
-            </div>
-          )}
+          {sections[stepIndex] ? (
+            // One section = one workspace panel. The header and its body are
+            // rendered together inside a single card so a "section" always reads
+            // as one cohesive unit; the Next button is what advances to the next
+            // header+body pair. Video sections use the same shell with the player
+            // as the body.
+            <div className="overflow-hidden rounded-2xl border border-gray-700/60 bg-gray-900/40">
+              {/* Workspace header bar — the section's heading + position */}
+              {sections[stepIndex].heading && (
+                <div className="flex items-center gap-3 border-b border-gray-700/60 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-transparent px-5 py-3.5">
+                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-xs font-bold text-blue-400 ring-1 ring-blue-500/30">
+                    {stepIndex + 1}
+                  </span>
+                  <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-white sm:text-lg">
+                    {sections[stepIndex].heading}
+                  </h3>
+                  <span className="shrink-0 text-xs font-medium text-gray-500">
+                    {stepIndex + 1} of {totalSteps}
+                  </span>
+                </div>
+              )}
 
-          {/* Render the actual section content via the renderSection prop */}
-          {sections[stepIndex]
-            ? renderSection(sections[stepIndex], stepIndex, true)
-            : <p className="text-sm text-gray-400">No lesson content is available.</p>}
+              {/* Workspace body — the section's content */}
+              <div className="px-5 py-5">
+                {renderSection(sections[stepIndex], stepIndex, true)}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400">No lesson content is available.</p>
+          )}
         </motion.div>
       </AnimatePresence>
 
@@ -536,12 +544,11 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           {/* ── Keyboard Hint ── */}
           <div className="text-center">
             <span className="text-xs text-gray-400">
-              Use <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">←</kbd>{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">→</kbd>{' '}
-              or{' '}
+              Click{' '}
+              <span className="font-medium text-gray-300">Next</span> to continue ·{' '}
+              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">←</kbd>{' '}
               <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">↑</kbd>{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">↓</kbd>{' '}
-              to navigate
+              to go back
             </span>
           </div>
         </>
