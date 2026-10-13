@@ -249,7 +249,14 @@ def get_student_dashboard():
     
     for enrollment in enrollments:
         course_data = enrollment.course.to_dict()
-        course_data['progress'] = enrollment.progress * 100
+        # Live published-course progress — the cached enrollment.progress
+        # lags behind content changes and made the dashboard report
+        # "Course Completed!" while the certificate surfaces (which
+        # recompute live) reported the course as incomplete.
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        live = EnrollmentProgressService.live_completion(enrollment)
+        course_data['progress'] = round(live['progress'] * 100, 1)
+        course_data['course_completed'] = live['is_complete']
         course_data['enrollment_date'] = enrollment.enrollment_date.isoformat()
         course_data['enrollment_id'] = enrollment.id
         # Cohort fields
@@ -283,7 +290,7 @@ def get_student_dashboard():
     
     # Get statistics
     total_courses = len(enrolled_courses)
-    completed_courses = len([c for c in enrolled_courses if c['progress'] >= 100])
+    completed_courses = len([c for c in enrolled_courses if c.get('course_completed')])
     
     # Get total study time
     total_time = db.session.query(db.func.sum(UserProgress.total_time_spent)).filter_by(
@@ -349,7 +356,13 @@ def get_my_learning():
         cohort_id = enrollment.application_window_id if for_student else None
         course_data = course.to_dict(include_modules=True, for_student=for_student, cohort_id=cohort_id)
         course_data['enrollment_id'] = enrollment.id
-        course_data['progress'] = enrollment.progress * 100
+        # Live published-course progress (never the cached enrollment flag) —
+        # keeps the "Course Completed!" badge in step with the certificate
+        # surfaces, which always recompute completion from content.
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        live = EnrollmentProgressService.live_completion(enrollment)
+        course_data['progress'] = round(live['progress'] * 100, 1)
+        course_data['course_completed'] = live['is_complete']
         course_data['enrollment_date'] = enrollment.enrollment_date.isoformat()
         course_data['completed_at'] = enrollment.completed_at.isoformat() if enrollment.completed_at else None
         # Cohort fields

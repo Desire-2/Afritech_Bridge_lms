@@ -402,30 +402,60 @@ class CertificateService:
                         enrollment.student_id, enrollment.course_id, enrollment
                     )
                     completion_percentage = int((counts["progress"] or 0.0) * 100)
-                    
-                    # Determine completion status based on real progress
-                    if counts["is_complete"]:
-                        completion_status = "completed"
-                        is_locked = False
+                    content_complete = bool(counts["is_complete"])
+                    if content_complete:
                         completion_percentage = 100
+
+                    # Same authoritative evaluation the issuance path uses
+                    # (content + score + final assessment). The gallery must
+                    # state the REAL reason a certificate is locked — telling a
+                    # course-complete learner to "complete the course" is the
+                    # completion/certificate mismatch users report.
+                    from .course_progress_service import CourseProgressService
+                    state = CourseProgressService.evaluate(
+                        enrollment.student_id,
+                        enrollment.course_id,
+                        enrollment=enrollment,
+                    )
+                    eligible = bool(state.get("eligible"))
+                    # Preliminary rows are created at enrolment with score 0;
+                    # an issued certificate (incl. admin force) carries a score.
+                    issued = float(cert.overall_score or 0.0) > 0.0
+                    is_locked = not (eligible or issued)
+
+                    if content_complete:
+                        completion_status = "completed"
                     elif completion_percentage > 0:
                         completion_status = "in_progress"
-                        is_locked = True
                     else:
                         completion_status = "not_started"
-                        is_locked = True
-                    
-                    # Add completion data to response
+
                     cert_dict["completion_status"] = completion_status
                     cert_dict["completion_percentage"] = completion_percentage
                     cert_dict["is_locked"] = is_locked
-                    cert_dict["course_completed"] = completion_percentage == 100
+                    cert_dict["course_completed"] = content_complete
+                    cert_dict["certificate_eligible"] = eligible
+                    cert_dict["missing_requirements"] = list(
+                        state.get("missing_requirements") or []
+                    )
+                    cert_dict["lock_summary"] = (
+                        "" if not is_locked else (state.get("summary") or "")
+                    )
+                    cert_dict["lock_next_steps"] = (
+                        [] if not is_locked else list(state.get("next_steps") or [])
+                    )
                 else:
                     # No enrollment found - certificate data might be orphaned
                     cert_dict["completion_status"] = "unknown"
                     cert_dict["completion_percentage"] = 0
                     cert_dict["is_locked"] = True
                     cert_dict["course_completed"] = False
+                    cert_dict["certificate_eligible"] = False
+                    cert_dict["missing_requirements"] = ["enrollment"]
+                    cert_dict["lock_summary"] = (
+                        "Certificate record is not linked to an enrollment."
+                    )
+                    cert_dict["lock_next_steps"] = []
             
             cert_list.append(cert_dict)
         

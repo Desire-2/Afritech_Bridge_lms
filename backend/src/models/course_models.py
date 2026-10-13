@@ -1004,21 +1004,21 @@ class Enrollment(db.Model):
         contribute 0.0 so an unfinished course can never report a full score.
         Returns a score from 0-100.
         """
-        from ..models.student_models import ModuleProgress
+        from ..services.enrollment_progress_service import EnrollmentProgressService
         
         # Only modules that are actually part of the course (drafts excluded)
         course_modules = [m for m in self.course.modules.all() if m.is_published]
         if not course_modules:
             return 0.0
 
-        # One query for all of this enrollment's module progress rows.
-        progress_by_module = {
-            row.module_id: row
-            for row in ModuleProgress.query.filter_by(
-                student_id=self.student_id,
-                enrollment_id=self.id,
-            ).all()
-        }
+        # One query for all candidate rows, resolved to the SAME canonical
+        # row per module that content completion and certificate eligibility
+        # use — an enrollment-scoped-only read reported 0.0 whenever progress
+        # rows were attached to an older/duplicate enrollment, blocking the
+        # certificate while other surfaces said the course was complete.
+        progress_by_module = EnrollmentProgressService.get_module_progress_map(
+            self.student_id, [m.id for m in course_modules], self
+        )
 
         total_score = 0.0
         for module in course_modules:

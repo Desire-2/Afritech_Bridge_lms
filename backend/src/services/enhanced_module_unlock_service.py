@@ -964,59 +964,11 @@ class EnhancedModuleUnlockService:
             current_app.logger.error(f"Next module unlock error: {str(e)}")
             return {"success": False, "error": f"Next module unlock failed: {str(e)}"}
     
-    @staticmethod
-    def _check_course_completion(student_id: int, course_id: int, enrollment_id: int) -> Dict[str, Any]:
-        """Check if entire course is completed and handle course completion logic."""
-        try:
-            course = Course.query.get(course_id)
-            # Completion is judged over the published course only; draft or
-            # never-published modules must neither block nor inflate progress.
-            from .enrollment_progress_service import EnrollmentProgressService
-            published_modules = EnrollmentProgressService.get_published_modules(course)
-            modules = published_modules
-
-            completed_modules = ModuleProgress.query.filter_by(
-                student_id=student_id,
-                enrollment_id=enrollment_id,
-                status='completed'
-            ).filter(
-                ModuleProgress.module_id.in_([m.id for m in modules])
-            ).all() if modules else []
-            
-            is_completed = bool(modules) and len(completed_modules) == len(modules)
-            
-            if is_completed:
-                # Calculate overall course score
-                total_score = sum(mp.cumulative_score or 0 for mp in completed_modules) / len(completed_modules)
-                
-                # Update enrollment
-                enrollment = Enrollment.query.get(enrollment_id)
-                if enrollment:
-                    EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
-                    if not enrollment.completed_at:
-                        enrollment.completed_at = now_local()
-                    enrollment.status = 'completed'
-                    enrollment.progress = 1.0
-                
-                db.session.commit()
-                
-                return {
-                    "course_completed": True,
-                    "overall_score": total_score,
-                    "completed_modules": len(completed_modules),
-                    "total_modules": len(modules),
-                    "completion_date": enrollment.completed_at.isoformat() if enrollment and enrollment.completed_at else None
-                }
-            
-            return {
-                "course_completed": False,
-                "completed_modules": len(completed_modules),
-                "total_modules": len(modules)
-            }
-            
-        except Exception as e:
-            current_app.logger.error(f"Course completion check error: {str(e)}")
-            return {"course_completed": False, "error": str(e)}
+    # NOTE: an earlier _check_course_completion helper (uncalled) forced
+    # enrollment.status='completed'/progress=1.0 from module statuses alone,
+    # bypassing the lesson check EnrollmentProgressService.sync_enrollment
+    # performs. It could only ever disagree with the certificate surfaces, so
+    # it was removed — course completion is owned by sync_enrollment only.
     
     @staticmethod
     def _get_next_module_info(current_module: Module) -> Optional[Dict[str, Any]]:

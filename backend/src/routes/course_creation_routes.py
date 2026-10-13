@@ -40,6 +40,24 @@ def get_user_id():
         return None
 
 
+def _resync_course_progress(course_id: int) -> None:
+    """Re-sync cached enrollment progress after course content changed.
+
+    Adding, publishing or deleting a lesson changes the published-lesson
+    denominator. Without a resync an already-completed enrollment keeps
+    its cached ``completed_at``/``status='completed'`` while every live
+    surface (progress counts, the certificate gallery, eligibility) sees
+    the course as incomplete — the "course completed vs certificate says
+    not completed" split. Mirrors the resync module publish/unpublish
+    already performs.
+    """
+    try:
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        EnrollmentProgressService.sync_course(course_id, commit=True)
+    except Exception:
+        logger.exception("Failed to resync course progress for course %s", course_id)
+
+
 def parse_iso_datetime(value, field_name):
     """Parse ISO datetime strings, allowing Z suffix, returning None on blanks."""
     if value is None:
@@ -338,6 +356,10 @@ def create_module(course_id):
         
         db.session.add(module)
         db.session.commit()
+
+        # A newly published module changes the completion denominator.
+        if module.is_published:
+            _resync_course_progress(course_id)
         
         return jsonify({
             "message": "Module created successfully",
@@ -477,8 +499,13 @@ def delete_module(course_id, module_id):
         StudentSuspension.query.filter_by(failed_module_id=module_id).delete(synchronize_session=False)
 
         # Now delete the module (cascades to lessons, quizzes, assignments, etc.)
+        was_published = bool(module.is_published)
         db.session.delete(module)
         db.session.commit()
+
+        # Removing a published module changes the completion denominator.
+        if was_published:
+            _resync_course_progress(course_id)
 
         return jsonify({"message": "Module deleted successfully"}), 200
 
@@ -541,7 +568,12 @@ def create_lesson(course_id, module_id):
         logger.debug(f"LESSON - Committing...")
         db.session.commit()
         logger.debug(f"LESSON - Success!")
-        
+
+        # A published lesson changes the completion denominator — reopen
+        # stale "completed" enrollments so dashboards and certificates agree.
+        if lesson.is_published:
+            _resync_course_progress(course_id)
+
         return jsonify({
             "message": "Lesson created successfully",
             "lesson": lesson.to_dict()
@@ -568,6 +600,7 @@ def update_lesson(course_id, module_id, lesson_id):
         ).first_or_404()
         
         data = request.get_json()
+        previous_is_published = bool(lesson.is_published)
         
         # Update lesson fields
         if 'title' in data:
@@ -588,6 +621,12 @@ def update_lesson(course_id, module_id, lesson_id):
             lesson.is_published = data['is_published']
         
         db.session.commit()
+
+        # Publishing/unpublishing a lesson changes the completion
+        # denominator for every enrollment — same contract as module
+        # publish/unpublish: cached "completed" must not outlive the content.
+        if 'is_published' in data and bool(lesson.is_published) != previous_is_published:
+            _resync_course_progress(course_id)
         
         return jsonify({
             "message": "Lesson updated successfully",
@@ -710,6 +749,10 @@ def delete_lesson(course_id, module_id, lesson_id):
         db.session.delete(lesson)
         db.session.commit()
         logger.debug(f"DELETION - Lesson deleted successfully")
+
+        # Removing content changes the completion denominator — resync so
+        # cached enrollment state matches the live progress surfaces.
+        _resync_course_progress(course_id)
         
         return jsonify({"message": "Lesson deleted successfully"}), 200
         

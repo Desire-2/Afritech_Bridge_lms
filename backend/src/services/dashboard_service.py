@@ -85,6 +85,7 @@ class DashboardService:
                 "continue_learning": []
             }
             
+            from ..services.enrollment_progress_service import EnrollmentProgressService
             for enrollment in enrollments:
                 course_data = {
                     "course": enrollment.course.to_dict(),
@@ -97,7 +98,11 @@ class DashboardService:
                     )
                 }
                 
-                if enrollment.completed_at is not None:
+                # Live completion decides the bucket — the cached
+                # completed_at flag lags when content changed and made this
+                # page claim "Course Completed!" while the certificate
+                # gallery (recomputed live) still said incomplete.
+                if EnrollmentProgressService.live_completion(enrollment)["is_complete"]:
                     learning_data["completed_courses"].append(course_data)
                     learning_data["course_stats"]["completed"] += 1
                 else:
@@ -249,6 +254,16 @@ class DashboardService:
         certificates = Certificate.query.filter_by(student_id=student_id, is_active=True).count()
         badges = StudentSkillBadge.query.filter_by(student_id=student_id).count()
         
+        # Live completion, not the cached completed_at flag — the certificate
+        # gallery recomputes from content, and a stale cached flag showed
+        # "completed" courses that the certificate surface still called
+        # incomplete.
+        from ..services.enrollment_progress_service import EnrollmentProgressService
+        completed_courses = len([
+            e for e in enrollments
+            if EnrollmentProgressService.live_completion(e)["is_complete"]
+        ])
+
         # Calculate total learning time
         total_time = db.session.query(
             db.func.sum(LessonCompletion.time_spent)
@@ -259,7 +274,7 @@ class DashboardService:
         
         return {
             "total_courses": len(enrollments),
-            "completed_courses": len([e for e in enrollments if e.completed_at is not None]),
+            "completed_courses": completed_courses,
             "certificates_earned": certificates,
             "badges_earned": badges,
             "total_learning_hours": round(total_time / 3600, 1),  # Convert to hours
@@ -513,9 +528,15 @@ class DashboardService:
                     "last_accessed": None
                 }
             
-            modules = course.modules.order_by('order').all()
+            # Published modules only (drafts must not dilute progress), and
+            # the SAME canonical ModuleProgress row resolution that content
+            # completion / certificates use — an enrollment-scoped-only read
+            # reported 0% whenever progress rows were attached to an older
+            # or duplicate enrollment.
+            from ..services.enrollment_progress_service import EnrollmentProgressService
+            modules = EnrollmentProgressService.get_published_modules(course)
             
-            # Handle courses with no modules
+            # Handle courses with no published modules
             if not modules:
                 return {
                     "completion_percentage": 0,
@@ -526,17 +547,18 @@ class DashboardService:
                     "last_accessed": None
                 }
             
+            enrollment = Enrollment.query.get(enrollment_id) if enrollment_id else None
+            progress_map = EnrollmentProgressService.get_module_progress_map(
+                student_id, [m.id for m in modules], enrollment
+            )
+            
             completed_modules = 0
             current_module = None
             next_lesson = None
             last_accessed = None
             
             for module in modules:
-                module_progress = ModuleProgress.query.filter_by(
-                    student_id=student_id,
-                    module_id=module.id,
-                    enrollment_id=enrollment_id
-                ).first()
+                module_progress = progress_map.get(module.id)
                 
                 if module_progress:
                     if module_progress.status == 'completed':

@@ -213,6 +213,11 @@ export interface Certificate {
   completion_percentage?: number;
   is_locked?: boolean;
   course_completed?: boolean;
+  /** Canonical evaluation: content + score + final assessment. */
+  certificate_eligible?: boolean;
+  missing_requirements?: string[];
+  /** Human-readable reason the certificate is still locked. */
+  lock_summary?: string;
   /** True when this response represents a newly issued certificate. */
   created?: boolean;
 }

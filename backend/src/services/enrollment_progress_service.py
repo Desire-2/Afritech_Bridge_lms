@@ -31,6 +31,107 @@ class EnrollmentProgressService:
         return course.modules.filter_by(is_published=True).order_by(Module.order).all()
 
     @staticmethod
+    def get_module_progress_map(
+        student_id: int,
+        module_ids: List[int],
+        enrollment: Optional[Enrollment] = None,
+    ) -> Dict[int, ModuleProgress]:
+        """Resolve ONE canonical ModuleProgress row per module for a student.
+
+        Every consumer of module state (content counts, certificate
+        eligibility, overall course score, dashboard summaries) must read
+        rows through this method, otherwise a learner with rows attached to
+        an older/duplicate enrollment is reported complete by one surface and
+        incomplete — with a 0.0 score — by another.
+
+        Selection policy (deterministic, single query):
+        1. the row belonging to ``enrollment`` when present (the canonical
+           enrollment ``Enrollment.get_canonical`` already prefers),
+        2. otherwise any row for that module, preferring ``status ==
+           'completed'`` so legacy rows left behind by re-enrolment are never
+           silently dropped,
+        3. otherwise the newest row.
+        """
+        if not module_ids:
+            return {}
+
+        rows = (
+            ModuleProgress.query
+            .filter(
+                ModuleProgress.student_id == student_id,
+                ModuleProgress.module_id.in_(module_ids),
+            )
+            .order_by(ModuleProgress.id)
+            .all()
+        )
+        preferred_id = enrollment.id if enrollment is not None else None
+
+        chosen: Dict[int, ModuleProgress] = {}
+        for row in rows:
+            current = chosen.get(row.module_id)
+            if current is None:
+                chosen[row.module_id] = row
+                continue
+
+            if preferred_id is not None:
+                cur_preferred = current.enrollment_id == preferred_id
+                row_preferred = row.enrollment_id == preferred_id
+                if row_preferred != cur_preferred:
+                    if row_preferred:
+                        chosen[row.module_id] = row
+                    continue
+                if row_preferred and cur_preferred:
+                    # Both belong to the canonical enrollment (defensive:
+                    # unique constraint should prevent this) — keep newest.
+                    if row.id > current.id:
+                        chosen[row.module_id] = row
+                    continue
+
+            # Same enrollment (or no enrollment given): completed beats any
+            # other status, then the newest row wins.
+            cur_completed = current.status == "completed"
+            row_completed = row.status == "completed"
+            if row_completed != cur_completed:
+                if row_completed:
+                    chosen[row.module_id] = row
+            elif row.id > current.id:
+                chosen[row.module_id] = row
+
+        return chosen
+
+    @staticmethod
+    def live_completion(enrollment: Optional[Enrollment]) -> Dict:
+        """Authoritative completion snapshot for read surfaces.
+
+        Returns ``{"is_complete": bool, "progress": float 0.0-1.0}`` computed
+        from published content — never from the cached ``enrollment.progress``
+        / ``completed_at`` alone, which lag when content changes without a
+        resync and made dashboards say "Course Completed!" while certificate
+        surfaces (recomputed live) said otherwise.
+
+        Falls back to the cached flags only when counts cannot be computed
+        (e.g. a legacy course with no published modules), so such rows keep
+        their previously reported state.
+        """
+        if enrollment is None:
+            return {"is_complete": False, "progress": 0.0}
+
+        counts = EnrollmentProgressService.get_progress_counts(
+            enrollment.student_id, enrollment.course_id, enrollment
+        )
+        if counts.get("total_modules", 0) > 0:
+            return {
+                "is_complete": bool(counts["is_complete"]),
+                "progress": float(counts["progress"] or 0.0),
+            }
+
+        cached_complete = bool(enrollment.completed_at) or enrollment.status == "completed"
+        return {
+            "is_complete": cached_complete,
+            "progress": 1.0 if cached_complete else float(enrollment.progress or 0.0),
+        }
+
+    @staticmethod
     def get_progress_counts(
         student_id: int,
         course_id: int,
@@ -67,16 +168,16 @@ class EnrollmentProgressService:
             if not module_ids:
                 return empty
 
+            # Same canonical row resolution as certificate eligibility and
+            # the overall course score — completion must never be computed
+            # from a different row set than the surfaces that report it.
+            progress_map = EnrollmentProgressService.get_module_progress_map(
+                student_id, module_ids, enrollment
+            )
             completed_module_ids = {
-                row[0]
-                for row in db.session.query(ModuleProgress.module_id)
-                .filter(
-                    ModuleProgress.student_id == student_id,
-                    ModuleProgress.module_id.in_(module_ids),
-                    ModuleProgress.status == "completed",
-                )
-                .distinct()
-                .all()
+                module_id
+                for module_id, row in progress_map.items()
+                if row.status == "completed"
             }
 
             lesson_ids = [

@@ -1294,9 +1294,10 @@ const LearningPage = () => {
 
       // Certificate eligibility (score + content + final assessment) comes
       // from the SAME backend evaluation — generation only fires when the
-      // backend says eligible, never on content completion alone.
-      const eligible =
-        state.certificate_eligible ?? (state.course_completed && state.overall_score >= completion.passingThreshold);
+      // backend says eligible, never on content completion alone. The old
+      // client-side fallback inferred eligibility from score alone and
+      // skipped the final-assessment rule, so it must not reappear.
+      const eligible = state.certificate_eligible === true;
 
       if (state.course_completed && !eligible && !certificateIssuedRef.current) {
         certificateIssuedRef.current = true; // explain once, don't re-fire

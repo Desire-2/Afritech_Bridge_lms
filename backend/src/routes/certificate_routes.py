@@ -8,7 +8,7 @@ from functools import wraps
 from flask import Blueprint, request, jsonify, send_file, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from ..models.user_models import User
+from ..models.user_models import User, db
 from ..services.certificate_service import CertificateService
 
 # Helper decorator for student access
@@ -85,6 +85,59 @@ def _safe_certificate_filename(certificate, extension: str) -> str:
     title = certificate.course.title if certificate.course else None
     safe_title = re.sub(r'[^a-zA-Z0-9\s-]', '', title or 'Course').strip().replace(' ', '_')
     return f"{safe_title or 'Course'}_Certificate.{extension}"
+
+
+def _certificate_download_gate(certificate):
+    """Decide whether ``certificate`` may be downloaded and, if not, why.
+
+    Returns ``(allowed, error_message)``.
+
+    Allowed when the certificate is already issued (carries a score —
+    includes admin force), the canonical evaluation says the learner is
+    certificate-eligible, live content completion says the course is
+    complete, or the cached enrollment state says completed (legacy rows).
+
+    Blocked responses state the REAL missing requirement from the canonical
+    evaluation (score gap, failed final assessment, unfinished content) —
+    never a blanket "Complete the course to download." shown while every
+    other surface reports the course as completed.
+    """
+    if float(certificate.overall_score or 0.0) > 0.0:
+        return True, ""
+
+    enrollment = certificate.enrollment
+    if enrollment is None:
+        return False, "Certificate is locked: no enrollment is linked to this certificate."
+
+    from ..services.course_progress_service import CourseProgressService
+    state = CourseProgressService.evaluate(
+        enrollment.student_id, enrollment.course_id, enrollment=enrollment
+    )
+    cached_completed = bool(enrollment.completed_at) or enrollment.status == 'completed'
+    allowed = bool(
+        state.get('eligible') or state.get('course_completed') or cached_completed
+    )
+    if not allowed:
+        summary = state.get('summary') or 'Course requirements not met.'
+        return False, f"Certificate is locked. {summary}"
+
+    # An eligible-but-not-yet-issued row still carries its enrolment-time
+    # score of 0 — refresh it so the printed certificate and the gallery are
+    # truthful. The verification hash covers number + issue date only, so a
+    # score update cannot invalidate it.
+    if state.get('eligible'):
+        try:
+            fresh = float(enrollment.calculate_course_score() or 0.0)
+            if fresh > 0.0 and float(certificate.overall_score or 0.0) <= 0.0:
+                certificate.overall_score = fresh
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.warning(
+                f"Could not refresh score for certificate {certificate.id}",
+                exc_info=True,
+            )
+    return True, ""
 
 
 @certificate_bp.route("/eligibility/<int:course_id>", methods=["GET"])
@@ -456,12 +509,15 @@ def download_certificate(certificate_id):
                 "error": "Certificate not found"
             }), 404
 
-        # Check if certificate is unlocked (course completed)
-        if certificate.enrollment and not (certificate.enrollment.completed_at or certificate.enrollment.status == 'completed'):
+        # Live completion + canonical eligibility (not the cached enrollment
+        # flag) decide whether this can be downloaded — and a blocked answer
+        # must name the real missing requirement.
+        allowed, gate_error = _certificate_download_gate(certificate)
+        if not allowed:
             current_app.logger.warning(f"Attempted download of locked certificate: ID={certificate_id}")
             return jsonify({
                 "success": False,
-                "error": "Certificate is locked. Complete the course to download."
+                "error": gate_error
             }), 403
 
         pdf_buffer = CertificateService.generate_certificate_pdf(certificate)
@@ -511,12 +567,13 @@ def download_certificate_image(certificate_id):
                 "error": "Certificate not found"
             }), 404
 
-        # Check if certificate is unlocked (course completed)
-        if certificate.enrollment and not (certificate.enrollment.completed_at or certificate.enrollment.status == 'completed'):
+        # Same live gate as the PDF path — consistent reason on both.
+        allowed, gate_error = _certificate_download_gate(certificate)
+        if not allowed:
             current_app.logger.warning(f"Attempted download of locked certificate: ID={certificate_id}")
             return jsonify({
                 "success": False,
-                "error": "Certificate is locked. Complete the course to download."
+                "error": gate_error
             }), 403
 
         img_buffer = CertificateService.generate_certificate_image(certificate)

@@ -976,19 +976,41 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             </div>
                           ) : isModulePassing ? (
                             <div className="space-y-4">
-                              <div className="flex items-center justify-center space-x-2 text-yellow-300">
-                                <Trophy className="h-6 w-6 text-yellow-400" />
-                                <span className="font-bold text-lg">Course Complete</span>
-                                <Trophy className="h-6 w-6 text-yellow-400" />
-                              </div>
-                              <div className="text-center space-y-2">
-                                <p className="text-green-300">
-                                  Final Module Score: <span className="font-bold">{cumulativeScore.toFixed(1)}%</span>
-                                </p>
-                                <p className="text-gray-400 text-sm">
-                                  Congratulations! You have completed all modules in this course.
-                                </p>
-                              </div>
+                              {/* "Course Complete" is an authoritative claim —
+                                  only the backend completion state may make it.
+                                  The module-score heuristic alone used to shout
+                                  "Course Complete" while unfinished lessons kept
+                                  the certificate surface reporting incomplete. */}
+                              {certificateEligibility?.course_completed === true ? (
+                                <>
+                                  <div className="flex items-center justify-center space-x-2 text-yellow-300">
+                                    <Trophy className="h-6 w-6 text-yellow-400" />
+                                    <span className="font-bold text-lg">Course Complete</span>
+                                    <Trophy className="h-6 w-6 text-yellow-400" />
+                                  </div>
+                                  <div className="text-center space-y-2">
+                                    <p className="text-green-300">
+                                      Final Module Score: <span className="font-bold">{cumulativeScore.toFixed(1)}%</span>
+                                    </p>
+                                    <p className="text-gray-400 text-sm">
+                                      Congratulations! You have completed all modules in this course.
+                                    </p>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-center space-y-2">
+                                  <div className="flex items-center justify-center space-x-2 text-amber-300">
+                                    <Award className="h-6 w-6 text-amber-400" />
+                                    <span className="font-bold text-lg">Final module passed</span>
+                                  </div>
+                                  <p className="text-green-300">
+                                    Final Module Score: <span className="font-bold">{cumulativeScore.toFixed(1)}%</span>
+                                  </p>
+                                  <p className="text-gray-400 text-sm">
+                                    Finish the remaining lessons and modules to complete the course and unlock your certificate.
+                                  </p>
+                                </div>
+                              )}
                               
                               {/* Certificate Generation Section */}
                               <div className="mt-4 pt-4 border-t border-green-700/50">

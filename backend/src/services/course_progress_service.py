@@ -95,16 +95,14 @@ class CourseProgressService:
             #    published modules in the denominator ──────────────────
             progress_by_module: Dict[int, ModuleProgress] = {}
             if published_modules:
-                rows = (
-                    ModuleProgress.query
-                    .filter(
-                        ModuleProgress.student_id == student_id,
-                        ModuleProgress.module_id.in_([m.id for m in published_modules]),
-                        ModuleProgress.enrollment_id == enrollment.id,
+                # Canonical row per module (enrollment-preferred with a
+                # fallback to legacy rows) — identical resolution to the
+                # completion counts above and calculate_course_score below.
+                progress_by_module = (
+                    EnrollmentProgressService.get_module_progress_map(
+                        student_id, [m.id for m in published_modules], enrollment
                     )
-                    .all()
                 )
-                progress_by_module = {row.module_id: row for row in rows}
 
             module_breakdown: List[Dict] = []
             scores: List[float] = []

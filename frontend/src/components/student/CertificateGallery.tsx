@@ -41,6 +41,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { StudentApiService, Certificate, SkillBadge } from '@/services/studentApi';
+import { describeCertificateRequirement } from '@/constants/learningRules';
 import { CertificateGenerationService } from '@/services/certificate-generation.service';
 import TranscriptPanel from '@/components/student/TranscriptPanel';
 import Link from 'next/link';
@@ -122,6 +123,10 @@ interface CertificateCardProps {
     completion_percentage?: number;
     is_locked?: boolean;
     completion_status?: string;
+    course_completed?: boolean;
+    certificate_eligible?: boolean;
+    missing_requirements?: string[];
+    lock_summary?: string;
   };
   onView: (certificate: Certificate) => void;
   onShare: (certificate: Certificate) => void;
@@ -291,7 +296,23 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
             {/* Lock Status Message */}
             {isLocked && (
               <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-                🔒 Complete the course to unlock your certificate
+                <p>
+                  🔒 {certificate.lock_summary
+                    ? certificate.lock_summary
+                    : certificate.course_completed === false
+                      ? 'Complete the course to unlock your certificate'
+                      : 'Certificate requirements not met'}
+                </p>
+                {/* Requirement list only when there's no summary to avoid duplication. */}
+                {!certificate.lock_summary && (certificate.missing_requirements || []).length > 0 && (
+                  <ul className="mt-1 list-disc list-inside space-y-0.5">
+                    {(certificate.missing_requirements || []).map((code) => (
+                      <li key={code}>
+                        {describeCertificateRequirement(code)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </div>
