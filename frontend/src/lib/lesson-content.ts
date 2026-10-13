@@ -366,6 +366,11 @@ export function sectionsFromMarkdown(text: string): LessonSection[] {
  * following block belongs to that section until the next heading. A heading
  * with no usable text is kept in place as an ordinary block so item count and
  * order (and therefore video-coverage indices) never change.
+ *
+ * A `video` block always opens its OWN section (never merged into a
+ * preceding heading's section): the video is the section anchor, and any
+ * trailing non-heading blocks attach to it as its notes. This preserves the
+ * flat coverage-index order while keeping header+text as one step.
  */
 export function sectionsFromBlocks(items: unknown[]): LessonSection[] {
   const sections: LessonSection[] = [];
@@ -425,6 +430,21 @@ export function sectionsFromBlocks(items: unknown[]): LessonSection[] {
         current = { id, title: title.trim(), blocks: [] };
         continue;
       }
+    }
+
+    // A video is always its own section: close the open section and push a
+    // video-anchored one containing only the video (empty title so no phantom
+    // slot shifts coverage). The next block starts a fresh section.
+    if (type === 'video') {
+      finish();
+      const id = stableIdFor(
+        [String(item.url ?? ''), String(item.title ?? ''), 'video'],
+        taken
+      );
+      taken.add(id);
+      sections.push({ id, title: '', blocks: [toBlock(item)] });
+      current = null;
+      continue;
     }
 
     ensure().blocks.push(toBlock(item));
@@ -760,10 +780,20 @@ export function toStepSections(normalized: NormalizedLessonContent, lessonTitle 
 
     // Untitled leading section: call it "Introduction" only when other
     // sections do carry titles (avoids inventing labels for single-section
-    // lessons while keeping the historical introduction behaviour).
+    // lessons while keeping the historical introduction behaviour). An
+    // untitled video-anchored section is labelled with the video title (or
+    // "Video") so the step is identifiable.
     let heading = section.title;
-    if (!heading && sectionIndex === 0 && sections.some((s, i) => i > 0 && s.title.trim())) {
-      heading = 'Introduction';
+    if (!heading) {
+      const single = blocks.length === 1 ? blocks[0] : null;
+      if (single && single.type === 'video') {
+        heading =
+          typeof single.title === 'string' && single.title.trim()
+            ? single.title
+            : 'Video';
+      } else if (sectionIndex === 0 && sections.some((s, i) => i > 0 && s.title.trim())) {
+        heading = 'Introduction';
+      }
     }
 
     if (blocks.length === 0) {

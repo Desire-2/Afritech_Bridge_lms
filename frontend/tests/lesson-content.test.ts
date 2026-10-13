@@ -77,28 +77,66 @@ describe('legacy flat block content', () => {
     { type: 'text', content: '- Point 1' },
   ];
 
-  test('a heading becomes the title of the section that owns the following blocks', () => {
+  test('a heading becomes the title of the section that owns the following text', () => {
     const { sections, format } = normalizeMixedContent(JSON.stringify(legacy));
     assert.equal(format, 'blocks');
-    assert.equal(sections.length, 2);
+    assert.equal(sections.length, 3);
     assert.equal(sections[0].title, 'Introduction');
     assert.deepEqual(
       sections[0].blocks.map((b) => b.type),
-      ['text', 'video']
+      ['text']
     );
-    assert.equal(sections[1].title, 'Summary');
+    // The video is its own section (never merged into the heading's).
+    assert.equal(sections[1].title, '');
     assert.deepEqual(
       sections[1].blocks.map((b) => b.type),
+      ['video']
+    );
+    assert.equal(sections[2].title, 'Summary');
+    assert.deepEqual(
+      sections[2].blocks.map((b) => b.type),
       ['text']
     );
   });
 
-  test('heading + body render as one step, not two', () => {
+  test('heading + body render as one step; video renders as its own step', () => {
     const steps = toStepSections(normalizeMixedContent(JSON.stringify(legacy)), 'Lesson');
-    assert.equal(steps.length, 2);
+    assert.equal(steps.length, 3);
     assert.equal(steps[0].heading, 'Introduction');
-    assert.equal(steps[0].type, 'composite');
-    assert.equal(steps[0].blocks?.length, 2);
+    assert.equal(steps[0].type, 'text');
+    assert.equal(steps[0].blocks?.length, 1);
+    // Video step is identified by its title, not merged into the heading.
+    assert.equal(steps[1].heading, 'Main Video');
+    assert.equal(steps[1].type, 'video');
+    assert.equal(steps[2].heading, 'Summary');
+  });
+
+  test('a video is never merged into the preceding heading section', () => {
+    // The core contract: a main header + its text = ONE section; a video is
+    // ALWAYS its own section. Regression guard against grouping videos under
+    // the previous heading.
+    const flat = [
+      { type: 'heading', content: 'Concept' },
+      { type: 'text', content: 'Explanation of the concept.' },
+      { type: 'video', url: 'https://example.com/demo.mp4', title: 'Demo' },
+      { type: 'text', content: 'Notes that follow the video.' },
+      { type: 'heading', content: 'Recap' },
+      { type: 'text', content: 'Summary text.' },
+    ];
+    const steps = toStepSections(normalizeMixedContent(JSON.stringify(flat)), 'Lesson');
+    // Concept(text), Demo(video), untitled(text notes), Recap(text)
+    assert.deepEqual(
+      steps.map((s) => [s.heading, s.type]),
+      [
+        ['Concept', 'text'],
+        ['Demo', 'video'],
+        ['', 'text'], // trailing notes are their own (video's) step, not under Concept
+        ['Recap', 'text'],
+      ]
+    );
+    // Concept must contain only its text — no video leaked in.
+    assert.equal(steps[0].blocks?.length, 1);
+    assert.equal(steps[1].blocks?.length, 1);
   });
 
   test('video coverage indices are unchanged by normalization', () => {
@@ -120,14 +158,18 @@ describe('legacy flat block content', () => {
     assert.deepEqual(videoCoverageIndices(sections), [1]);
   });
 
-  test('consecutive headings keep their slots', () => {
+  test('consecutive headings keep their slots; video still breaks out', () => {
     const flat = [
       { type: 'heading', content: 'A' },
       { type: 'heading', content: 'B' },
       { type: 'video', url: 'https://example.com/c.mp4' },
     ];
     const { sections } = normalizeMixedContent(JSON.stringify(flat));
-    assert.equal(sections.length, 2);
+    // A (empty), B (empty), then the video as its own section.
+    assert.equal(sections.length, 3);
+    assert.equal(sections[0].title, 'A');
+    assert.equal(sections[1].title, 'B');
+    assert.equal(sections[2].blocks[0].type, 'video');
     assert.deepEqual(videoCoverageIndices(sections), [2]);
   });
 
@@ -179,8 +221,10 @@ describe('legacy flat block content', () => {
     const second = normalizeMixedContent(saved);
     assert.deepEqual(sectionSignature(second.sections), sectionSignature(first.sections));
     assert.deepEqual(videoCoverageIndices(second.sections), videoCoverageIndices(first.sections));
+    assert.equal(second.sections.length, first.sections.length);
     assert.equal(second.sections[0].title, 'Introduction');
-    assert.equal(second.sections[0].blocks.length, 2);
+    assert.equal(second.sections[0].blocks.length, 1);
+    assert.equal(second.sections[1].blocks[0].type, 'video');
   });
 });
 
@@ -454,14 +498,15 @@ describe('instructor editor adapter', () => {
     { id: 'i5', type: 'text', content: '- Point 1' },
   ];
 
-  test('a heading item becomes a section title, not its own step', () => {
+  test('a heading item becomes a section title; video is its own step', () => {
     const steps = toStepSections(normalizeMixedContent(builderItemsToContentData(items)), 'Lesson');
     assert.deepEqual(
       steps.map((s) => s.heading),
-      ['Introduction', 'Key Takeaways']
+      ['Introduction', 'Main Video', 'Key Takeaways']
     );
-    assert.equal(steps[0].blocks?.length, 2, 'heading + body share one step');
-    assert.equal(steps[1].blocks?.length, 1);
+    assert.equal(steps[0].blocks?.length, 1, 'heading title + text body share one step');
+    assert.equal(steps[1].type, 'video', 'video is its own section/step');
+    assert.equal(steps[2].blocks?.length, 1);
   });
 
   test('items before the first heading survive as an introduction step', () => {
@@ -475,6 +520,8 @@ describe('instructor editor adapter', () => {
     );
     assert.equal(steps[0].heading, 'Introduction');
     assert.ok((steps[0].blocks?.[0] as { content?: string })?.content?.includes('Preamble.'));
+    // The video after the preamble is still its own step.
+    assert.ok(steps.some((s) => s.type === 'video'), 'video remains its own step');
   });
 
   test('editor round-trip preserves titles, types and media urls', () => {
