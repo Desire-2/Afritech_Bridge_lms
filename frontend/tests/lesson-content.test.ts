@@ -303,7 +303,7 @@ Use \`def\` to define functions.
 - Parameters are optional
 `;
 
-  test('H2 lines become sections; H1 and H3+ stay in the body', () => {
+  test('H2 headers become sections; the leading H1 stays in the body', () => {
     const sections = sectionsFromMarkdown(markdown);
     assert.deepEqual(
       sections.map((s) => s.title),
@@ -311,6 +311,66 @@ Use \`def\` to define functions.
     );
     const first = sections[0].blocks[0].content ?? '';
     assert.ok(first.includes('Functions are reusable'));
+  });
+
+  test('H3-H6 headers each become their own section (no walls of text)', () => {
+    const sections = sectionsFromMarkdown(
+      [
+        '# Lesson Title',
+        '',
+        '## Parent',
+        '',
+        'Parent intro.',
+        '',
+        '### Child',
+        '',
+        'Child body.',
+        '',
+        '#### Topic',
+        '',
+        'Topic body.',
+        '',
+        '##### Subtopic',
+        '',
+        'Subtopic body.',
+        '',
+        '###### Detail',
+        '',
+        'Detail body.',
+      ].join('\n')
+    );
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ['Parent', 'Child', 'Topic', 'Subtopic', 'Detail']
+    );
+    // Every section holds only its own content — never the next header's body.
+    const child = sections.find((s) => s.title === 'Child');
+    const childBody = (child?.blocks ?? []).map((b) => String(b.content ?? '')).join('\n');
+    assert.ok(childBody.includes('Child body.'));
+    assert.ok(!childBody.includes('Parent intro.'));
+    assert.ok(!childBody.includes('Topic body.'));
+    // The leading H1 is folded into the first section, never its own step.
+    assert.ok((sections[0].blocks[0]?.content ?? '').includes('# Lesson Title'));
+  });
+
+  test('an H3 inside a fenced code block never splits a section', () => {
+    const sections = sectionsFromMarkdown(
+      '## Example\n\n```python\n### not a heading\n```\n\nafter the fence'
+    );
+    assert.deepEqual(sections.map((s) => s.title), ['Example']);
+    const body = String(sections[0].blocks[0]?.content ?? '');
+    assert.ok(body.includes('### not a heading'));
+    assert.ok(body.includes('after the fence'));
+  });
+
+  test('an H1 after content becomes its own section; only a leading H1 is the title', () => {
+    const sections = sectionsFromMarkdown('# Lesson\n\nIntro body.\n\n# Chapter Two\n\nChapter body.');
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ['', 'Chapter Two']
+    );
+    assert.ok((sections[0].blocks[0]?.content ?? '').includes('Intro body.'));
+    assert.ok((sections[1].blocks[0]?.content ?? '').includes('Chapter body.'));
   });
 
   test('a heading inside a fenced code block never splits a section', () => {

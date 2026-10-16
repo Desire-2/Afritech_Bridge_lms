@@ -22,8 +22,15 @@
  *    that contains the blocks following it. Nothing is discarded.
  *
  * 3. MARKDOWN (text lessons, or malformed mixed JSON):
- *    Raw markdown split on H2 / standalone `**bold**` lines (code-fence aware),
- *    per frontend/MARKDOWN_CONTENT_GUIDELINES.md.
+ *    Raw markdown split on every section header H2-H6 and standalone
+ *    `**bold**` lines (code-fence aware), per
+ *    frontend/MARKDOWN_CONTENT_GUIDELINES.md. Every header opens its own
+ *    section holding only the content up to the next header, so a long
+ *    lesson is read one header's worth of text at a time instead of as a
+ *    single wall. A leading H1 (before any other content) is the lesson
+ *    title: it stays inside the first section's body rather than becoming
+ *    its own step. Header lines are never discarded - each becomes its
+ *    section's title.
  *
  * ── Coverage-index invariant ───────────────────────────────────────────────
  *
@@ -182,6 +189,9 @@ interface MarkdownChunk {
 }
 
 const H2_RE = /^ {0,3}##[ \t]+(.*)$/;
+// Every section-header level (H2-H6): each opens its own section so learners
+// navigate one header's worth of content per step.
+const SECTION_HEADER_RE = /^ {0,3}#{2,6}[ \t]+(.*)$/;
 const BOLD_LINE_RE = /^[ \t]*\*\*([^*\n]+)\*\*[ \t]*$/;
 const FENCE_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const H1_RE = /^ {0,3}#[ \t]+(.*)$/;
@@ -209,11 +219,15 @@ function mediaBlockFor(line: string): LessonContentBlock | null {
 /**
  * Scan markdown into an ordered item list.
  *
- * Boundaries: H2 (the documented section-title level) and a standalone
- * `**bold**` line (the legacy poor-man's heading, kept for compatibility).
- * H1/H3-H6 are never boundaries and are never discarded - they stay in the
- * body so their content is preserved. Lines inside fenced code blocks are
- * never inspected, so `## example` in a code sample cannot split a section.
+ * Boundaries: every section header (H2-H6) and a standalone `**bold**` line
+ * (the legacy poor-man's heading, kept for compatibility). Each header opens
+ * its own section, so long content is consumed one header's worth at a time
+ * instead of as one wall of text. H1 is the lesson title: a leading H1 (before
+ * any other content) stays in the body so the player never shows the title as
+ * its own step, while an H1 after content is treated like any other header.
+ * Header text becomes the section title - it is never discarded. Lines inside
+ * fenced code blocks are never inspected, so `## example` in a code sample
+ * cannot split a section.
  *
  * Standalone media URLs / `![alt](src)` lines become their own blocks so the
  * player can embed them instead of rendering a bare link.
@@ -248,11 +262,18 @@ function scanMarkdown(text: string): MarkdownItem[] {
     }
 
     if (!inFence) {
-      const h2 = H2_RE.exec(line);
-      if (h2) {
-        flushBuffer();
-        items.push({ kind: 'title', title: h2[1].replace(/[ \t]+#+[ \t]*$/, '').trim() });
-        continue;
+      const h1 = H1_RE.exec(line);
+      const header = h1 ?? SECTION_HEADER_RE.exec(line);
+      if (header) {
+        // A leading H1 (before any other content) is the lesson title: it
+        // stays in the body so it never becomes its own navigation step.
+        const leadingTitleH1 =
+          h1 !== null && items.length === 0 && buffer.every((entry) => entry.trim() === '');
+        if (!leadingTitleH1) {
+          flushBuffer();
+          items.push({ kind: 'title', title: header[1].replace(/[ \t]+#+[ \t]*$/, '').trim() });
+          continue;
+        }
       }
       const bold = BOLD_LINE_RE.exec(line);
       if (bold) {

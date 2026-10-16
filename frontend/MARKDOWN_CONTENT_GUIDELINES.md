@@ -88,7 +88,8 @@ Use proper heading hierarchy:
 **Best Practices:**
 - Always include a space after the `#` symbols
 - Use H1 for lesson title only
-- Use H2-H4 for main sections
+- Use H2-H6 for sections — every header becomes its own learner step, so keep
+  each section to roughly one header's worth of content
 - Maintain logical hierarchy
 
 ### Paragraphs
@@ -391,9 +392,9 @@ markdown fallback when mixed content is not valid JSON):
 
 | You write | The learner sees |
 | --- | --- |
-| A single `# H1` at the top | The lesson title (never its own step; dropped when it repeats the lesson title) |
-| `## H2` | A new section — one navigable step, titled with the H2 text |
-| `### H3` and deeper | Stays inside the current section's body |
+| A single `# H1` at the top (before any other content) | The lesson title (never its own step; dropped when it repeats the lesson title) |
+| `## H2`, `### H3`, `#### H4`, `##### H5`, `###### H6` | A new section — one navigable step titled with the header text, holding only the content up to the next header (so long lessons are never read as one wall of text) |
+| A `# H1` after other content | A new section, like any other header |
 | A standalone `**bold**` line | A new section (legacy heading style, still supported) |
 | `**inline bold**` inside a paragraph | Emphasis only — never a new section |
 | A line inside a fenced code block | Never inspected — `## example` in a code sample cannot split a section |
@@ -436,5 +437,5 @@ If you encounter formatting issues not covered here, please contact the technica
 
 ---
 
-**Last Updated:** March 2026  
-**Version:** 2.0
+**Last Updated:** October 2026  
+**Version:** 2.1
