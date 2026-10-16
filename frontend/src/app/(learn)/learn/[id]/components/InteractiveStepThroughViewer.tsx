@@ -27,6 +27,16 @@ import {
 // stay reachable via Previous/Next and the step counter either way.
 const MAX_RAIL_SEGMENTS = 80;
 
+// Sparkle offsets (px) around the completion medallion — a small staggered
+// twinkle that only renders when motion is allowed.
+const MEDAL_SPARKLES = [
+  { left: -16, top: 6, color: '#fcd34d' },
+  { left: 26, top: -14, color: '#ffffff' },
+  { left: 66, top: 10, color: '#7dd3fc' },
+  { left: -10, top: 54, color: '#ffffff' },
+  { left: 60, top: 58, color: '#fcd34d' },
+];
+
 // Never intercept arrow-key navigation while the user is interacting with a
 // form control, link, button, or slider.
 const INTERACTIVE_GUARD_SELECTOR =
@@ -185,10 +195,15 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   }, [stepIndex, totalSteps, goToStep]);
 
   const goPrev = useCallback(() => {
+    // Stepping back from the completion celebration returns to the content
+    // (the celebration stands in for the final section once it is showing).
+    if (allSectionsViewed(state) && !celebrationDismissed) {
+      setCelebrationDismissed(true);
+    }
     if (stepIndex > 0) {
       goToStep(stepIndex - 1);
     }
-  }, [stepIndex, goToStep]);
+  }, [stepIndex, goToStep, state, celebrationDismissed]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -239,15 +254,18 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   // re-bake new Math.random() values into the motion keyframes.
   const confettiParticles = useMemo(() => {
     if (!showCompletionCelebration || celebrationDismissed || prefersReducedMotion) return [];
-    const colors = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#3b82f6'];
-    return Array.from({ length: 30 }, (_, i) => ({
+    const colors = ['#10b981', '#3b82f6', '#38bdf8', '#f59e0b', '#f43f5e', '#a78bfa', '#fbbf24'];
+    return Array.from({ length: 42 }, (_, i) => ({
       id: i,
+      // 0 = circle, 1 = square, 2 = streamer — three flat shapes keep the
+      // burst festive without any glow or gradient tricks.
+      shape: i % 3,
       color: colors[i % colors.length],
       x: Math.random() * 100,
-      delay: Math.random() * 0.5,
-      size: 4 + Math.random() * 8,
+      delay: Math.random() * 0.6,
+      size: 4 + Math.random() * 7,
       rotation: Math.random() * 360,
-      duration: 1.5 + Math.random() * 2,
+      duration: 1.6 + Math.random() * 2,
       drift: (i % 2 === 0 ? 1 : -1) * (20 + Math.random() * 40),
     }));
   }, [showCompletionCelebration, celebrationDismissed, prefersReducedMotion]);
@@ -309,7 +327,8 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         )}
       </div>
 
-      {/* ── Current Section Workspace ── */}
+      {/* ── Current Section Workspace (hidden while the celebration stands in) ── */}
+      {!showCompletionCelebration && (
       <AnimatePresence mode="wait" custom={direction}>
         <motion.div
           key={stepIndex}
@@ -443,15 +462,23 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           )}
         </motion.div>
       </AnimatePresence>
+      )}
 
-      {/* ── Completion Celebration ── */}
-      {showCompletionCelebration && !celebrationDismissed ? (
+      {/* ── Completion Celebration — stands in as the final section once
+          every section has been viewed ── */}
+      {showCompletionCelebration ? (
         <motion.div
           initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-emerald-950/40 px-6 py-8 text-center sm:py-9"
+          className="relative overflow-hidden rounded-2xl border border-emerald-500/30 bg-gray-900 px-6 py-9 text-center sm:py-11"
         >
+          {/* Completion hairline — the workspace signature, earned */}
+          <div
+            className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-emerald-500 via-emerald-400/40 to-transparent"
+            aria-hidden="true"
+          />
+
           {/* Confetti particles */}
           {confettiParticles.map((particle) => (
             <motion.div
@@ -460,16 +487,19 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               style={{
                 left: `${particle.x}%`,
                 top: '-10%',
-                width: particle.size,
-                height: particle.size,
+                width: particle.shape === 2 ? 3 : particle.size,
+                height:
+                  particle.shape === 2
+                    ? Math.round(particle.size * 1.8)
+                    : particle.size,
                 backgroundColor: particle.color,
-                borderRadius: particle.id % 3 === 0 ? '50%' : '2px',
+                borderRadius: particle.shape === 1 ? '1px' : '999px',
                 rotate: particle.rotation,
               }}
               initial={{ y: -20, opacity: 0, rotate: 0 }}
               animate={{
                 y: ['0vh', '110vh'],
-                opacity: [1, 0.8, 0.4, 0],
+                opacity: [1, 0.85, 0.5, 0],
                 rotate: [0, particle.rotation * 2],
                 x: [0, particle.drift],
               }}
@@ -478,47 +508,100 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 delay: particle.delay,
                 ease: 'easeIn',
                 repeat: Infinity,
-                repeatDelay: particle.duration * 0.5,
+                repeatDelay: particle.duration * 0.45,
               }}
             />
           ))}
 
           <div className="relative z-10 flex flex-col items-center">
-            {/* Trophy */}
-            <motion.div
-              initial={{ scale: prefersReducedMotion ? 1 : 0, rotate: prefersReducedMotion ? 0 : -180 }}
-              animate={{ scale: 1, rotate: 0 }}
-              transition={{ type: 'spring', stiffness: 200, damping: 14, delay: 0.1 }}
-              className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500 shadow-lg shadow-emerald-950/50 ring-1 ring-inset ring-white/15"
-            >
-              <Trophy className="h-7 w-7 text-white" aria-hidden="true" />
-            </motion.div>
+            {/* Trophy medallion with staggered sparkle burst */}
+            <div className="relative mb-5">
+              <motion.div
+                initial={{ scale: prefersReducedMotion ? 1 : 0, rotate: prefersReducedMotion ? 0 : -180 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ type: 'spring', stiffness: 200, damping: 14, delay: 0.1 }}
+                className="relative flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-950/50 ring-4 ring-emerald-500/20"
+              >
+                <Trophy className="h-8 w-8 text-white" aria-hidden="true" />
+                <span
+                  className="pointer-events-none absolute -inset-2.5 rounded-full border border-emerald-500/25"
+                  aria-hidden="true"
+                />
+              </motion.div>
+              {!prefersReducedMotion &&
+                MEDAL_SPARKLES.map((sparkle, i) => (
+                  <motion.span
+                    key={i}
+                    aria-hidden="true"
+                    className="absolute h-1.5 w-1.5 rounded-full"
+                    style={{
+                      left: sparkle.left,
+                      top: sparkle.top,
+                      backgroundColor: sparkle.color,
+                    }}
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: [0, 1, 0.7, 1], opacity: [0, 1, 0.7, 0] }}
+                    transition={{
+                      duration: 1.8,
+                      delay: 0.35 + i * 0.12,
+                      repeat: Infinity,
+                      repeatDelay: 1.6,
+                      ease: 'easeOut',
+                    }}
+                  />
+                ))}
+            </div>
 
             <motion.h3
               initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="mb-2 text-xl font-bold tracking-tight text-white sm:text-2xl"
+              transition={{ delay: 0.15 }}
+              className="mb-3 text-xl font-bold tracking-tight text-white sm:text-2xl"
             >
-              All Sections Viewed
+              All sections complete
             </motion.h3>
+
+            {/* Achievement chips */}
+            <motion.div
+              initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 }}
+              className="mb-4 flex flex-wrap items-center justify-center gap-2"
+            >
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
+                <CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                {counts.viewed} of {totalSteps} sections
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium tabular-nums text-emerald-300">
+                {viewedPercent}% viewed
+              </span>
+            </motion.div>
 
             <motion.p
               initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="mb-5 max-w-md text-sm leading-relaxed text-emerald-100/80"
+              transition={{ delay: 0.35 }}
+              className="mb-6 max-w-md text-sm leading-relaxed text-gray-400"
             >
-              You've reviewed all {totalSteps} {totalSteps === 1 ? 'section' : 'sections'} of this
-              lesson. Lesson completion may still require engagement or assessment checks.
+              Lesson completion may still require engagement or assessment checks.
             </motion.p>
 
             <motion.div
               initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="flex flex-col items-center justify-center gap-3 sm:flex-row"
+              transition={{ delay: 0.45 }}
+              className="flex flex-wrap items-center justify-center gap-3"
             >
+              <Button
+                onClick={() => {
+                  goToStep(0);
+                  setCelebrationDismissed(true);
+                }}
+                className="h-10 border border-white/10 bg-transparent text-gray-300 shadow-none hover:bg-white/[0.06] hover:text-white"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Review from start
+              </Button>
               <Button
                 onClick={() => setCelebrationDismissed(true)}
                 className="h-10 bg-emerald-600 px-5 text-white shadow-sm shadow-emerald-950/40 hover:bg-emerald-500"
