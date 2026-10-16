@@ -7,6 +7,7 @@ M-4  video_completed derives True once EVERY video reaches 90%
 M-5  video_watch_count increments once on the false->true transition
 M-6  GET lesson progress returns the stored mixed_video_progress
 M-7  Structured per-index entries are sanitized (progress/currentTime/completed)
+M-8  Lesson completion requires EVERY video to reach the watch threshold
 """
 
 import json
@@ -294,3 +295,62 @@ def test_structured_entries_sanitized_and_restored(env):
     raw = body["progress"]["mixed_video_progress"]
     parsed = json.loads(raw) if isinstance(raw, str) else raw
     assert parsed["1"]["progress"] == 95.5
+
+
+# ---------------------------------------------------------------------------
+# Completion gate
+# ---------------------------------------------------------------------------
+
+def _post_complete(env, payload):
+    client = env["app"].test_client()
+    return client.post(
+        f"/api/v1/student/lessons/{env['lesson_id']}/complete",
+        json=payload,
+        headers=_headers(env["student_id"], env["app"]),
+    )
+
+
+def test_completion_requires_every_video_watched(env):
+    """Mixed lessons complete only when EVERY video reaches the threshold.
+
+    Scores are pushed to the maximum first, so an incomplete watch history
+    is the only thing that can block completion.
+    """
+    # MIXED_CONTENT has videos at coverage indices 1 and 3.
+    resp = _post_progress(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "scroll_progress": 100.0,
+        "time_spent": 600,
+        "mixed_video_progress": {"1": 100.0, "3": 40.0},
+    })
+    assert resp.status_code == 200
+
+    blocked = _post_complete(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "time_spent": 600,
+    })
+    assert blocked.status_code == 202
+    body = blocked.get_json()
+    assert body["completed"] is False
+    assert body["requirements"]["video_requirements_met"] is False
+    rec = _completion(env["student_id"], env["lesson_id"])
+    assert rec is not None
+    assert rec.completed is False
+
+    # Watch the second video to the threshold: the gate opens.
+    assert _post_progress(env, {
+        "mixed_video_progress": {"1": 100.0, "3": 95.0},
+    }).status_code == 200
+    rec = _completion(env["student_id"], env["lesson_id"])
+    assert rec.video_completed is True
+
+    done = _post_complete(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "time_spent": 600,
+    })
+    assert done.status_code == 200
+    assert done.get_json()["completed"] is True
+    assert _completion(env["student_id"], env["lesson_id"]).completed is True

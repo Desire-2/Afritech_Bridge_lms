@@ -6,6 +6,7 @@ import { TextContentRenderer } from "./TextContentRenderer";
 import { VideoPlayer } from "./VideoPlayer";
 import {
   lessonContentToStepSections,
+  stepVideoWatchPct as computeStepVideoWatchPct,
   videoCoverageIndexFor,
   type LessonContentBlock,
   type NormalizedLessonContent,
@@ -24,6 +25,8 @@ export interface MixedContentRendererProps {
   onMixedContentVideoComplete?: (idx: number) => void;
   /** Reported as (viewed, total) whenever the set of viewed sections changes. */
   onSectionProgress?: (viewed: number, total: number) => void;
+  /** Per-coverage-index watch percentage used to gate video-step viewing. */
+  mixedContentVideoProgress?: Record<number, number>;
   hasQuiz?: boolean;
   hasAssignments?: boolean;
   isLessonCompleted?: boolean;
@@ -36,7 +39,8 @@ export interface MixedContentRendererProps {
 // ── Component ──────────────────────────────────────────────────────
 export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
   lesson, onMixedContentVideoProgress, onMixedContentVideoComplete,
-  onSectionProgress, isLessonCompleted, hasQuiz, hasAssignments,
+  onSectionProgress, mixedContentVideoProgress,
+  isLessonCompleted, hasQuiz, hasAssignments,
   onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson,
 }) => {
   // One shared parse: instructor editor, preview and player all derive the
@@ -55,6 +59,14 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       content: "This lesson does not have readable content yet. Please contact your instructor.",
     }];
   }, [steps]);
+
+  // Per-step video watch gate: null for video-less steps, otherwise the
+  // lowest coverage among the step's videos. Fed to the viewer so a video
+  // step is only marked viewed after ≥90% was actually watched.
+  const stepVideoWatchPct = useMemo(
+    () => computeStepVideoWatchPct(stepSections, normalized, mixedContentVideoProgress),
+    [stepSections, normalized, mixedContentVideoProgress]
+  );
 
   // Last step button
   const lastStepButton = useMemo(() => {
@@ -192,6 +204,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       totalSteps={stepSections.length}
       lessonKey={lesson.id}
       renderSection={renderSection}
+      stepVideoWatchPct={stepVideoWatchPct}
       onViewedSectionsUpdate={onSectionProgress}
       lastStepButton={lastStepButton}
     />

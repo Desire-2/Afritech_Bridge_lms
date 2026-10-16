@@ -793,6 +793,57 @@ export function videoCoverageIndexFor(
   return found?.coverageIndex;
 }
 
+/**
+ * Per-step video watch percentage for the step viewer's viewed-gate.
+ *
+ * Returns one entry per step:
+ *  - `null` — the step contains no video, so dwell alone can mark it viewed;
+ *  - 0-100 — the LOWEST coverage among the step's videos (a step only counts
+ *    as watched once every video inside it reached the completion threshold).
+ *
+ * Block addressing mirrors `MixedContentRenderer.renderSection`: the original
+ * section index plus the original block indices carried in the step metadata,
+ * so coverage lookups resolve against the same address space the backend
+ * persists (`mixed_video_progress`).
+ */
+export function stepVideoWatchPct(
+  steps: StepSection[],
+  normalized: NormalizedLessonContent,
+  progressByCoverage: Readonly<Record<number, number>> | undefined
+): (number | null)[] {
+  return steps.map((step, stepIndex) => {
+    const metadata = step.metadata as
+      | { sectionIndex?: number; blockIndices?: number[] }
+      | undefined;
+    const sectionIndex = metadata?.sectionIndex ?? stepIndex;
+    const blockIndices = metadata?.blockIndices;
+    // Mirror renderSection: real steps carry their blocks; single-block steps
+    // may instead flatten the block onto the step itself.
+    const addressed: { block: LessonContentBlock; blockIndex: number }[] =
+      step.blocks && step.blocks.length > 0
+        ? step.blocks.map((block, index) => ({
+            block,
+            blockIndex: blockIndices?.[index] ?? index,
+          }))
+        : [
+            {
+              block: { type: step.type, content: step.content, url: step.url },
+              blockIndex: blockIndices?.[0] ?? 0,
+            },
+          ];
+
+    let lowest: number | null = null;
+    for (const { block, blockIndex } of addressed) {
+      if (block.type !== 'video') continue;
+      const coverage = videoCoverageIndexFor(normalized.sections, sectionIndex, blockIndex);
+      if (coverage === undefined) continue;
+      const pct = progressByCoverage?.[coverage] ?? 0;
+      lowest = lowest === null ? pct : Math.min(lowest, pct);
+    }
+    return lowest;
+  });
+}
+
 // ── Step sections (what the student player navigates) ─────────────────────
 
 function stripLeadingH1(body: string, lessonTitle: string): string {

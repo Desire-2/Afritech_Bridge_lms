@@ -15,6 +15,7 @@ Covers the video-engagement pipeline end to end at the API + model layer:
   V-11 Video progress is scoped to the correct lesson + enrollment
   V-12 Module score / progression use the authoritative lesson score
   V-13 A suspended enrollment cannot mutate progress (403)
+  V-14 Lesson completion requires video coverage >= 90%
 """
 
 import uuid
@@ -445,3 +446,64 @@ def test_malformed_json_body_does_not_500(env):
         rec = _completion(env["student_id"], env["lesson_id"])
         assert rec.video_progress == 0.0
         assert rec.engagement_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Completion gate
+# ---------------------------------------------------------------------------
+
+def _post_complete(env, payload, user_id=None):
+    client = env["app"].test_client()
+    return client.post(
+        f"/api/v1/student/lessons/{env['lesson_id']}/complete",
+        json=payload,
+        headers=_headers(user_id or env["student_id"], env["app"]),
+    )
+
+
+def test_completion_requires_video_watched_to_90_percent(env):
+    """A video lesson never completes while coverage is below the threshold.
+
+    Reading/engagement/score requirements are fully satisfied first, so the
+    ONLY thing blocking completion is the unwatched video — proving the
+    video gate is real and not a side effect of low scores.
+    """
+    resp = _post_progress(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "scroll_progress": 100.0,
+        "time_spent": 600,
+        "video_progress": 50.0,
+    })
+    assert resp.status_code == 200
+
+    blocked = _post_complete(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "time_spent": 600,
+    })
+    assert blocked.status_code == 202
+    body = blocked.get_json()
+    assert body["completed"] is False
+    assert body["requirements"]["video_requirements_met"] is False
+    assert any(
+        "Watch at least 90%" in message
+        for message in body["requirements"]["missing_requirements"]
+    )
+    rec = _completion(env["student_id"], env["lesson_id"])
+    assert rec is not None
+    assert rec.completed is False
+
+    # Reaching the threshold derives video_completed server-side and opens the gate.
+    assert _post_progress(env, {"video_progress": 95.0}).status_code == 200
+    rec = _completion(env["student_id"], env["lesson_id"])
+    assert rec.video_completed is True
+
+    done = _post_complete(env, {
+        "reading_progress": 100.0,
+        "engagement_score": 100.0,
+        "time_spent": 600,
+    })
+    assert done.status_code == 200
+    assert done.get_json()["completed"] is True
+    assert _completion(env["student_id"], env["lesson_id"]).completed is True

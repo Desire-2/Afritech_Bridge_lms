@@ -30,6 +30,8 @@ export interface ContentRichPreviewProps {
   onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
   onMixedContentVideoComplete?: (videoIndex: number) => void;
   onSectionProgress?: (viewedSections: number, totalSections: number) => void;
+  /** Per-coverage-index video watch percentage for the viewed-gate. */
+  mixedContentVideoProgress?: Record<number, number>;
   hasQuiz?: boolean;
   hasAssignments?: boolean;
   isLessonCompleted?: boolean;
@@ -93,7 +95,8 @@ const typeConfig: Record<string, { icon: React.ReactNode; label: string; color: 
 // ── Main Component ─────────────────────────────────────────────────
 export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   lesson, onVideoComplete, onVideoProgress, onMixedContentVideoProgress,
-  onMixedContentVideoComplete, onSectionProgress, hasQuiz, hasAssignments,
+  onMixedContentVideoComplete, onSectionProgress, mixedContentVideoProgress,
+  hasQuiz, hasAssignments,
   isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson,
   resumeVideoProgress = 0, resumeVideoCurrentTime = 0, resumeVideoCompleted = false,
 }) => {
@@ -128,6 +131,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             onMixedContentVideoProgress={onMixedContentVideoProgress}
             onMixedContentVideoComplete={onMixedContentVideoComplete}
             onSectionProgress={onSectionProgress}
+            mixedContentVideoProgress={mixedContentVideoProgress}
             hasQuiz={hasQuiz}
             hasAssignments={hasAssignments}
             isLessonCompleted={isLessonCompleted}

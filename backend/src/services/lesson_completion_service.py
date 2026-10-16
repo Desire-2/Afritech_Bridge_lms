@@ -1,5 +1,6 @@
 from ..utils.time_utils import now_local
 # Lesson Completion Service - Handle lesson completion requirements and validation
+import json
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from flask import current_app
@@ -43,6 +44,7 @@ class LessonCompletionService:
                 'reading_requirements_met': False,
                 'quiz_requirements_met': True,  # Default to True if no quiz
                 'assignment_requirements_met': True,  # Default to True if no assignment
+                'video_requirements_met': True,  # Set False below when a video must be watched
                 'overall_score_met': False,
                 'has_quiz': lesson_quiz is not None,
                 'has_assignment': lesson_assignment is not None,
@@ -95,6 +97,18 @@ class LessonCompletionService:
                 lesson_score = lesson_completion.calculate_lesson_score()
                 requirements['lesson_score'] = lesson_score
                 
+                # Video requirement: every video in the lesson must be watched
+                # to the shared 90% coverage threshold before completion.
+                # Mirrors the frontend VIDEO_WATCH_COMPLETE_THRESHOLD gate.
+                video_met = LessonCompletionService._check_video_requirements(
+                    lesson, lesson_completion
+                )
+                requirements['video_requirements_met'] = video_met
+                if not video_met:
+                    requirements['missing_requirements'].append(
+                        "Watch at least 90% of the lesson video content"
+                    )
+                
                 # Check reading requirements (basic engagement)
                 reading_progress = lesson_completion.reading_progress or 0
                 engagement_score = lesson_completion.engagement_score or 0
@@ -125,6 +139,7 @@ class LessonCompletionService:
                 requirements['reading_requirements_met'] and 
                 requirements['quiz_requirements_met'] and 
                 requirements['assignment_requirements_met'] and
+                requirements['video_requirements_met'] and
                 requirements['overall_score_met']
             )
             
@@ -139,6 +154,40 @@ class LessonCompletionService:
             current_app.logger.error(f"Error checking lesson completion requirements: {str(e)}")
             return False, "Error checking requirements", {}
     
+    @staticmethod
+    def _check_video_requirements(lesson, lesson_completion) -> bool:
+        """True when every video in the lesson was watched to 90% coverage.
+
+        Content-addressed: video lessons use the shared ``video_progress``
+        coverage, mixed lessons require EVERY video coverage index in the
+        stored ``mixed_video_progress`` to reach the threshold (sparse index
+        space mirrors ``_mixed_video_section_indices``). Lessons without
+        video content always pass, and content that yields no video indices
+        (empty or unparseable) passes too — mirroring the frontend's
+        tolerant parse in ``videoWatchGate``.
+        """
+        from ..routes.student_routes import (
+            VIDEO_WATCH_COMPLETE_THRESHOLD,
+            _mixed_video_section_indices,
+            _mixed_video_coverage_at,
+        )
+        if lesson.content_type == 'video':
+            return (lesson_completion.video_progress or 0.0) >= VIDEO_WATCH_COMPLETE_THRESHOLD
+        if lesson.content_type == 'mixed':
+            indices = _mixed_video_section_indices(lesson.content_data)
+            if not indices:
+                return True
+            try:
+                stored = json.loads(lesson_completion.mixed_video_progress) \
+                    if lesson_completion.mixed_video_progress else {}
+            except (TypeError, ValueError):
+                stored = {}
+            return all(
+                _mixed_video_coverage_at(stored, index) >= VIDEO_WATCH_COMPLETE_THRESHOLD
+                for index in indices
+            )
+        return True
+
     @staticmethod
     def _check_quiz_requirements(student_id: int, quiz: Quiz) -> Tuple[bool, float, str]:
         """Check if student has met quiz requirements"""

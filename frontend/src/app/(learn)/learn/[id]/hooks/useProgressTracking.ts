@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { StudentApiService } from '@/services/studentApi';
 import { InteractionEvent } from '../types';
 import {
@@ -8,6 +8,7 @@ import {
   LESSON_PASSING_THRESHOLD,
   LESSON_READING_PROGRESS_THRESHOLD,
   calculateLessonScore,
+  videoWatchGate,
 } from '../utils/learningRules';
 
 interface UseProgressTrackingProps {
@@ -72,6 +73,28 @@ export const useProgressTracking = ({
   const progressRequestRef = useRef(0);
   const activeLessonIdRef = useRef<number | null>(null);
   const saveInFlightRef = useRef<Promise<any> | null>(null);
+
+  // Single source of truth for the video watch requirement: engagement
+  // weighting, section-view gating, and completion all read this one gate so
+  // they can never disagree about whether the videos were actually watched.
+  const videoGate = useMemo(
+    () =>
+      videoWatchGate({
+        contentType: currentLesson?.content_type,
+        contentData: currentLesson?.content_data ?? currentLesson?.content,
+        videoProgress,
+        videoCompleted,
+        mixedVideoProgress,
+      }),
+    [
+      currentLesson?.content_type,
+      currentLesson?.content_data,
+      currentLesson?.content,
+      videoProgress,
+      videoCompleted,
+      mixedVideoProgress,
+    ]
+  );
   
   // Completion threshold (80%)
   const COMPLETION_THRESHOLD = LESSON_PASSING_THRESHOLD;
@@ -211,15 +234,21 @@ export const useProgressTracking = ({
       // old event counter added two seconds on every call and inflated
       // engagement whenever a user scrolled or the timer re-rendered.
       consistency: Math.min(timeSinceStart / 300, 1),
-      videoWatchProgress: videoProgress / 100,  // Add video progress to engagement
+      // Honest watch ratio: the average across every video the lesson
+      // declares (unwatched videos weigh zero), not the max — watching one
+      // video of two must not read as "fully watched" engagement.
+      videoWatchProgress: videoGate.videoWatchRatio,
       sectionCompletion: sectionProgress,        // Add section navigation progress
     };
     
     // Dynamic engagement scoring based on content type
     let newEngagementScore: number;
     
-    if (videoProgress > 0) {
+    if (videoGate.hasVideoContent) {
       // For video content: video progress is major factor (40%), scroll (10%), time (15%), interactions (10%), consistency (5%), section (20%)
+      // Video-bearing lessons stay on this formula even before playback
+      // starts, so an unwatched video caps engagement at 60 instead of
+      // letting time/scroll alone carry it to 100.
       newEngagementScore = (
         engagementFactors.videoWatchProgress * 0.4 +
         engagementFactors.scrollProgress * 0.1 +
@@ -261,7 +290,7 @@ export const useProgressTracking = ({
       hasAssignment,
     });
     setLessonScore(prev => Math.max(prev, estimatedScore));
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, quizScore, assignmentScore, videoProgress, videoCurrentTime, videoDuration, viewedSections, totalSections]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, quizScore, assignmentScore, videoGate, videoCurrentTime, videoDuration, viewedSections, totalSections]);
 
   // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {
@@ -270,6 +299,14 @@ export const useProgressTracking = ({
     // - Completion already in progress
     // - Not loaded progress yet
     if (isLessonCompleted || completionInProgress || !progressLoaded) {
+      return false;
+    }
+
+    // Video gate: a lesson whose videos were not watched to 90% never
+    // auto-completes, no matter how high reading/engagement/assessment
+    // scores climb. The backend re-checks the same requirement.
+    if (videoGate.hasUnwatchedVideo) {
+      console.log('⏸️ Auto-completion waiting: watch the lesson videos to 90% first');
       return false;
     }
 
@@ -325,7 +362,7 @@ export const useProgressTracking = ({
       remaining: (COMPLETION_THRESHOLD - actualScore).toFixed(1)
     });
     return false;
-  }, [isLessonCompleted, completionInProgress, progressLoaded, readingProgress, engagementScore, quizScore, assignmentScore, hasQuiz, hasAssignment]);
+  }, [isLessonCompleted, completionInProgress, progressLoaded, videoGate, readingProgress, engagementScore, quizScore, assignmentScore, hasQuiz, hasAssignment]);
 
   // Auto-save progress and check for auto-completion
   // Always saves reading/engagement progress to prevent data loss
@@ -719,6 +756,8 @@ export const useProgressTracking = ({
     isLessonCompleted,
     completionInProgress,
     progressLoaded,
+    // True while any video in the lesson is below the 90% watch threshold.
+    hasUnwatchedVideo: videoGate.hasUnwatchedVideo,
     savedVideoProgress,
     savedVideoCurrentTime,
     savedVideoDuration,

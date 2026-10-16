@@ -7,6 +7,9 @@ import {
   sectionsFromMarkdown,
   sectionsFromBlocks,
   sectionsToContentData,
+  lessonContentToStepSections,
+  stepVideoWatchPct,
+  type StepSection,
   toStepSections,
   videoCoverageIndexFor,
   videoCoverageIndices,
@@ -754,5 +757,101 @@ describe('instructor editor adapter', () => {
       videoCoverageIndices(normalizeMixedContent(resaved).sections),
       videoCoverageIndices(normalizeMixedContent(stored).sections)
     );
+  });
+});
+
+// ── Video-step viewed gate ─────────────────────────────────────────────────
+
+describe('stepVideoWatchPct (video-step viewed gate)', () => {
+  const canonical = JSON.stringify([
+    {
+      id: 'sec_intro',
+      type: 'section',
+      title: 'Introduction to Python',
+      blocks: [
+        { type: 'text', content: 'Python is a general-purpose programming language...' },
+        { type: 'video', url: 'https://example.com/v.mp4', title: 'Main Video' },
+      ],
+    },
+    {
+      id: 'sec_takeaways',
+      type: 'section',
+      title: 'Key Takeaways',
+      blocks: [{ type: 'text', content: '- Point 1' }],
+    },
+  ]);
+
+  test('video steps report coverage while video-less steps stay ungated', () => {
+    const { normalized, steps } = lessonContentToStepSections(canonical, 'mixed', 'Py101');
+    // heading slot + text + video ⇒ the video sits at coverage index 2
+    assert.deepEqual(videoCoverageIndices(normalized.sections), [2]);
+    // missing progress entry counts as 0 (unwatched), undefined map too
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, {}), [0, null]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, undefined), [0, null]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 2: 95 }), [95, null]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 2: 89 }), [89, null]);
+  });
+
+  test('a step holding several videos uses the lowest coverage', () => {
+    const content = JSON.stringify([
+      {
+        id: 'sec_vids',
+        type: 'section',
+        title: 'Two Videos',
+        blocks: [
+          { type: 'video', url: 'https://example.com/a.mp4' },
+          { type: 'video', url: 'https://example.com/b.mp4' },
+        ],
+      },
+    ]);
+    const { normalized, steps } = lessonContentToStepSections(content, 'mixed', 'Py101');
+    assert.deepEqual(videoCoverageIndices(normalized.sections), [1, 2]);
+    assert.equal(steps.length, 1);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 1: 100, 2: 100 }), [100]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 1: 100, 2: 30 }), [30]);
+    // a video missing from the map counts as unwatched
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 1: 100 }), [0]);
+  });
+
+  test('split/stripped steps address video coverage by original block position', () => {
+    const content = JSON.stringify([
+      {
+        id: 's1',
+        type: 'section',
+        title: 'Guide',
+        blocks: [
+          // Duplicate of the section title: stripped during step building,
+          // shifting the video to LOCAL block index 0 but ORIGINAL index 1.
+          { type: 'text', content: '## Guide' },
+          { type: 'video', url: 'https://example.com/setup.mp4' },
+        ],
+      },
+    ]);
+    const { normalized, steps } = lessonContentToStepSections(content, 'mixed', 'Py101');
+    // heading slot + stripped text + video ⇒ coverage 2 (original positions)
+    assert.deepEqual(videoCoverageIndices(normalized.sections), [2]);
+    assert.equal(steps.length, 1);
+    // The stripped text block leaves the video at local index 0 / original 1
+    assert.deepEqual(steps[0].metadata?.blockIndices, [1]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, {}), [0]);
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 2: 95 }), [95]);
+    // The stripped text's slot (coverage 1) must not be mistaken for the video
+    assert.deepEqual(stepVideoWatchPct(steps, normalized, { 1: 100 }), [0]);
+  });
+
+  test('flattened single-video steps without a blocks array are still gated', () => {
+    const { normalized } = lessonContentToStepSections(
+      JSON.stringify([
+        { type: 'text', content: 'intro' },
+        { type: 'video', url: 'https://example.com/u.mp4' },
+      ]),
+      'mixed',
+      'Py101'
+    );
+    const flat: StepSection[] = [
+      { id: 'a', type: 'text', content: 'intro', metadata: { sectionIndex: 0, blockIndices: [0] } },
+      { id: 'b', type: 'video', url: 'https://example.com/u.mp4', metadata: { sectionIndex: 1, blockIndices: [0] } },
+    ];
+    assert.deepEqual(stepVideoWatchPct(flat, normalized, { 1: 70 }), [null, 70]);
   });
 });

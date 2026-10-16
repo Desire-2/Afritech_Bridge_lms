@@ -62,6 +62,10 @@ interface LessonContentProps {
   savedVideoProgress?: number;
   savedVideoCurrentTime?: number;
   savedVideoCompleted?: boolean;
+  /** Per-coverage-index video watch percentage for the viewed-gate. */
+  mixedContentVideoProgress?: Record<number, number>;
+  /** True while any lesson video is still below the 90% watch threshold. */
+  hasUnwatchedVideo?: boolean;
   moduleScoring: any;
   lessonScore: number;
   currentLessonQuizScore?: number;
@@ -123,6 +127,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   savedVideoProgress = 0,
   savedVideoCurrentTime = 0,
   savedVideoCompleted = false,
+  mixedContentVideoProgress,
+  hasUnwatchedVideo = false,
   moduleScoring,
   lessonScore,
   currentLessonQuizScore = 0,
@@ -809,6 +815,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onSwitchToAssignment={() => setCurrentViewMode('assignments')}
                   onGoToNextLesson={() => onNavigate('next')}
                   hasNextLesson={hasNextLesson}
+                  mixedContentVideoProgress={mixedContentVideoProgress}
                   resumeVideoProgress={savedVideoProgress}
                   resumeVideoCurrentTime={savedVideoCurrentTime}
                   resumeVideoCompleted={savedVideoCompleted}
@@ -1518,6 +1525,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               {lessonScore < LESSON_PASSING_THRESHOLD ? `Keep learning! Current score: ${Math.round(lessonScore)}% (need ${LESSON_PASSING_THRESHOLD}%)` : ''}
                               {lessonQuiz && (lessonQuiz.best_score ?? 0) < (lessonQuiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) ? ` • Complete the quiz with ${lessonQuiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%+` : ''}
                               {lessonAssignments && lessonAssignments.length > 0 && lessonAssignments.some((a: any) => !a.submission_status?.score) ? ' • Submit and get graded on all assignments' : ''}
+                              {hasUnwatchedVideo ? ' • Watch at least 90% of the lesson videos' : ''}
                             </p>
                           </div>
                         </div>
@@ -1959,6 +1967,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onSwitchToQuiz={() => setCurrentViewMode('quiz')}
                   onSwitchToAssignment={() => setCurrentViewMode('assignments')}
                   onGoToNextLesson={() => onNavigate('next')}
+                  mixedContentVideoProgress={mixedContentVideoProgress}
                   resumeVideoProgress={savedVideoProgress}
                   resumeVideoCurrentTime={savedVideoCurrentTime}
                   resumeVideoCompleted={savedVideoCompleted}

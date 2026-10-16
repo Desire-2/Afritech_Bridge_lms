@@ -468,6 +468,7 @@ const LearningPage = () => {
     isLessonCompleted,
     setIsLessonCompleted,
     progressLoaded,
+    hasUnwatchedVideo,
     savedVideoProgress,
     savedVideoCurrentTime,
     savedVideoDuration,
@@ -1000,7 +1001,12 @@ const LearningPage = () => {
   const canManuallyComplete = useCallback(() => {
     // Already completed
     if (isLessonCompleted) return false;
-    
+
+    // Video requirement: unwatched lesson videos block completion even when
+    // every score threshold is already satisfied (backend enforces the same
+    // rule, this keeps the button state honest).
+    if (hasUnwatchedVideo) return false;
+
     // The backend requires an overall lesson score of 80%.
     if (lessonScore < LESSON_PASSING_THRESHOLD) return false;
     
@@ -1024,7 +1030,7 @@ const LearningPage = () => {
     }
     
     return true;
-  }, [isLessonCompleted, lessonScore, lessonQuiz, lessonAssignments]);
+  }, [isLessonCompleted, hasUnwatchedVideo, lessonScore, lessonQuiz, lessonAssignments]);
 
   // Helper function to close celebration and check for module unlock
   const closeCelebration = useCallback(() => {
@@ -3089,6 +3095,8 @@ const LearningPage = () => {
             savedVideoProgress={progressLoaded ? savedVideoProgress : 0}
             savedVideoCurrentTime={progressLoaded ? savedVideoCurrentTime : 0}
             savedVideoCompleted={progressLoaded ? savedVideoCompleted : false}
+            mixedContentVideoProgress={mixedContentVideoProgress}
+            hasUnwatchedVideo={hasUnwatchedVideo}
             moduleScoring={moduleScoring}
             lessonScore={lessonScore}
             currentLessonQuizScore={currentLessonQuizScore}

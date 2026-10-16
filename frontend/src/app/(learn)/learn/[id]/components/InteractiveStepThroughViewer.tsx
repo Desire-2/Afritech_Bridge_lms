@@ -21,6 +21,7 @@ import {
   RotateCcw,
   Trophy,
 } from 'lucide-react';
+import { VIDEO_WATCH_COMPLETE_THRESHOLD } from '@/constants/learningRules';
 
 // Cap the segmented step rail so a pathological lesson cannot blow up the
 // header layout; beyond it a continuous progress bar stands in. Extra steps
@@ -98,6 +99,13 @@ interface InteractiveStepThroughViewerProps {
     index: number,
     isActive: boolean,
   ) => React.ReactNode;
+  /**
+   * Per-step video watch percentage (0-100), aligned with `sections`.
+   * `null`/missing means "no video in this step" (dwell alone marks it
+   * viewed); a number below VIDEO_WATCH_COMPLETE_THRESHOLD holds the step
+   * unviewed until the learner has actually watched the video.
+   */
+  stepVideoWatchPct?: (number | null)[];
   /** Optional class name */
   className?: string;
   /** Optional custom button to show instead of "Review Again" on the last step */
@@ -114,6 +122,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   onAllSectionsViewed,
   onViewedSectionsUpdate,
   renderSection,
+  stepVideoWatchPct,
   className = '',
   lastStepButton,
 }) => {
@@ -173,15 +182,25 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   // Dwell: a section only counts as viewed after it has been continuously on
   // screen for MIN_SECTION_VIEW_MS, so opening a lesson or arrow-keying
   // through steps never marks sections as viewed.
+  //
+  // Video steps are gated harder: dwell alone is never enough while the
+  // step's video is below the watch threshold (progress ticks re-run this
+  // effect through `stepWatchPct`, so crossing 90% starts the dwell timer).
+  // The scalar (not the array identity) is the dependency so ordinary
+  // progress re-renders cannot restart the timer for non-video steps.
+  const stepWatchPct = stepVideoWatchPct?.[stepIndex] ?? null;
   useEffect(() => {
     const sectionId = sectionIds[stepIndex];
     if (!sectionId) return undefined;
+    if (stepWatchPct !== null && stepWatchPct < VIDEO_WATCH_COMPLETE_THRESHOLD) {
+      return undefined;
+    }
     const timer = window.setTimeout(() => {
       if (!dwellViewed(MIN_SECTION_VIEW_MS)) return;
       setState((previous) => withActiveViewed(previous));
     }, MIN_SECTION_VIEW_MS);
     return () => window.clearTimeout(timer);
-  }, [sectionKey, sectionIds, stepIndex]);
+  }, [sectionKey, sectionIds, stepIndex, stepWatchPct]);
 
   const goToStep = useCallback((step: number) => {
     setDirection(step > stepIndex ? 1 : -1);
