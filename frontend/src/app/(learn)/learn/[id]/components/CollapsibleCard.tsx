@@ -57,19 +57,19 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
   const panelId = `collapsible-panel-${React.useId().replace(/:/g, '')}`;
 
   return (
-    <div className={`rounded-xl border border-gray-800/60 bg-gray-900/40 backdrop-blur-sm overflow-hidden ${className}`}>
+    <div className={`rounded-2xl border border-white/[0.06] bg-gray-900/50 overflow-hidden ${className}`}>
       {/* Header: the toggle button, badge, and actions are siblings so the
           DOM never contains nested interactive controls. */}
-      <div className="flex w-full items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]">
+      <div className="flex w-full items-center gap-3 px-4 py-3.5 transition-colors hover:bg-white/[0.03] sm:px-5">
         <button
           type="button"
           onClick={handleToggle}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-500 rounded"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-500 rounded"
           aria-expanded={isExpanded}
           aria-controls={panelId}
         >
           {icon && <span className="shrink-0 text-gray-400" aria-hidden="true">{icon}</span>}
-          <span className="text-sm font-semibold text-gray-200 truncate">{title}</span>
+          <span className="truncate text-sm font-semibold tracking-tight text-gray-100">{title}</span>
         </button>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -106,7 +106,7 @@ export const CollapsibleCard: React.FC<CollapsibleCardProps> = ({
             transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-4 pt-1">{children}</div>
+            <div className="px-4 pb-4 pt-1 sm:px-5 sm:pb-5">{children}</div>
           </motion.div>
         )}
       </AnimatePresence>

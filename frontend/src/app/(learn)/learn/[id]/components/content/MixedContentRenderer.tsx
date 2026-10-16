@@ -62,7 +62,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       if (!hasNextLesson || !onGoToNextLesson) return null;
       return (
         <button type="button" onClick={onGoToNextLesson}
-          className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
+          className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-md bg-blue-600 px-4 text-sm font-medium text-white shadow-sm shadow-blue-950/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" >
           Next Lesson <span aria-hidden="true">&rarr;</span>
         </button >
       );
@@ -70,7 +70,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
     if (hasQuiz) {
       return (
         <button type="button" onClick={onSwitchToQuiz}
-          className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
+          className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-md bg-blue-600 px-4 text-sm font-medium text-white shadow-sm shadow-blue-950/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" >
           Continue to Quiz <span aria-hidden="true">&rarr;</span>
         </button >
       );
@@ -78,7 +78,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
     if (hasAssignments) {
       return (
         <button type="button" onClick={onSwitchToAssignment}
-          className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
+          className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-md bg-blue-600 px-4 text-sm font-medium text-white shadow-sm shadow-blue-950/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" >
           Continue to Assignment <span aria-hidden="true">&rarr;</span>
         </button >
       );

@@ -191,18 +191,20 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           )}
 
           {lesson.learning_objectives && (
-            <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4">
-              <p className="text-xs font-semibold text-blue-300 uppercase tracking-wider mb-2">Learning Objectives</p>
+            <div className="rounded-xl border border-blue-500/15 bg-blue-500/[0.06] p-4">
+              <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-blue-300/90">
+                Learning Objectives
+              </p>
               <TextContentRenderer content={lesson.learning_objectives} showFontControls={false} />
             </div>
           )}
         </div>
       </CollapsibleCard>
 
-      {/* Main content area */}
-      <div className="bg-gray-800/30 rounded-xl p-4 sm:p-6 md:p-8 shadow-inner">
-        {renderContent()}
-      </div>
+      {/* Main content area — deliberately unframed: the step workspace, video
+          player and PDF viewer each bring their own panel, so an extra
+          wrapper card here would only nest cards. */}
+      <div className="w-full">{renderContent()}</div>
     </div>
   );
 };

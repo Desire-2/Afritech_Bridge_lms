@@ -1,9 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
   MIN_SECTION_VIEW_MS,
   allSectionsViewed,
@@ -19,24 +17,15 @@ import {
 import {
   ChevronLeft,
   ChevronRight,
-  BookOpen,
-  Target,
   CheckCircle,
-  Play,
-  FileText,
-  Video,
-  Image,
-  Sparkles,
-  ArrowRight,
   RotateCcw,
   Trophy,
-  Star,
-  Award
 } from 'lucide-react';
 
-// Cap the rendered dot count so a long lesson cannot blow up the header
-// layout; extra steps stay reachable via Previous/Next and the step counter.
-const MAX_VISIBLE_DOTS = 20;
+// Cap the segmented step rail so a pathological lesson cannot blow up the
+// header layout; beyond it a continuous progress bar stands in. Extra steps
+// stay reachable via Previous/Next and the step counter either way.
+const MAX_RAIL_SEGMENTS = 80;
 
 // Never intercept arrow-key navigation while the user is interacting with a
 // form control, link, button, or slider.
@@ -153,6 +142,24 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
   const stepIndex = Math.min(state.activeIndex, Math.max(0, sectionIds.length - 1));
 
+  // Heading-only steps (a header with no body) render as a section opener
+  // instead of an empty panel: they preview the headings that follow, so the
+  // "divider" still tells the learner what is coming.
+  const currentStep = sections[stepIndex];
+  const isDividerStep =
+    !!currentStep &&
+    (currentStep.blocks?.length ?? 0) === 0 &&
+    !currentStep.url &&
+    !currentStep.content?.trim();
+  const upcomingHeadings = useMemo(() => {
+    const list: string[] = [];
+    for (let i = stepIndex + 1; i < sections.length; i += 1) {
+      const heading = sections[i].heading;
+      if (heading) list.push(heading);
+    }
+    return list;
+  }, [sections, stepIndex]);
+
   // Dwell: a section only counts as viewed after it has been continuously on
   // screen for MIN_SECTION_VIEW_MS, so opening a lesson or arrow-keying
   // through steps never marks sections as viewed.
@@ -247,74 +254,59 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
 
   return (
     <div className={`space-y-4 ${className}`} ref={containerRef}>
-      {/* ── Progress Header ── */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-            <BookOpen className="h-4 w-4 text-blue-400" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-gray-300 leading-tight">
-              Step {stepIndex + 1} of {totalSteps}
-            </p>
-            <p className="text-xs text-gray-500 leading-tight mt-0.5">
-              {Math.round(viewedPercent)}% viewed
-            </p>
+      {/* ── Step toolbar + segmented rail ── */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-gray-400">
+            <span className="font-semibold tabular-nums text-white">Step {stepIndex + 1}</span>
+            <span className="text-gray-600"> / </span>
+            <span className="tabular-nums">{totalSteps}</span>
+          </p>
+
+          <div className="flex items-center gap-3">
+            {counts.viewed > 0 && (
+              <span className="hidden items-center gap-1.5 text-xs font-medium text-emerald-300/90 sm:inline-flex">
+                <CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                {counts.viewed} of {totalSteps} viewed
+              </span>
+            )}
+
+            {/* Step count badge (mobile) */}
+            <Badge
+              variant="outline"
+              className="border-white/10 bg-white/[0.03] px-2 py-0.5 text-xs text-gray-400 tabular-nums sm:hidden"
+            >
+              {stepIndex + 1}/{totalSteps}
+            </Badge>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 min-w-0">
-          {/* Step dots — non-interactive progress indicators.
-              Forward progress is driven by the Next button only, so these
-              never jump ahead; they simply show where you are and what you
-              have already viewed. */}
-          <div
-            className="hidden sm:flex min-w-0 flex-wrap items-center justify-end gap-1"
-            aria-hidden="true"
-            title={
-              totalSteps > MAX_VISIBLE_DOTS
-                ? `Showing the first ${MAX_VISIBLE_DOTS} of ${totalSteps} steps`
-                : undefined
-            }
-          >
-            {Array.from({ length: Math.min(totalSteps, MAX_VISIBLE_DOTS) }).map((_, i) => (
+        {/* Segmented rail — one segment per step, non-interactive. Forward
+            progress is driven by the Next button only; the rail simply shows
+            where you are and what you have already viewed. */}
+        {totalSteps <= MAX_RAIL_SEGMENTS ? (
+          <div className="flex gap-[3px]" aria-hidden="true">
+            {Array.from({ length: totalSteps }).map((_, i) => (
               <span
                 key={i}
-                className={`block h-2 rounded-full transition-all duration-300 ${
+                className={`h-1.5 min-w-0 flex-1 rounded-full transition-colors duration-300 ${
                   i === stepIndex
-                    ? 'w-5 bg-blue-400 shadow-sm shadow-blue-500/30'
+                    ? 'bg-blue-500'
                     : state.viewedIds.includes(sectionIds[i])
-                    ? 'w-2 bg-emerald-500/60'
-                    : 'w-2 bg-gray-700'
+                    ? 'bg-emerald-500/50'
+                    : 'bg-white/10'
                 }`}
               />
             ))}
           </div>
-
-          {/* Step count badge (mobile) */}
-          <Badge variant="outline" className="sm:hidden text-xs border-gray-700 text-gray-400 px-2">
-            {stepIndex + 1}/{totalSteps}
-          </Badge>
-        </div>
-      </div>
-
-      {/* ── Progress Bar ── */}
-      <div className="relative h-1.5 rounded-full bg-gray-800/70 overflow-hidden">
-        <motion.div
-          className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500"
-          initial={{ width: '0%' }}
-          animate={{ width: `${viewedPercent}%` }}
-          transition={{ duration: 0.4, ease: 'easeOut' }}
-        />
-        {/* Glow */}
-        <div
-          className="absolute top-0 bottom-0 w-12 blur-md opacity-40"
-          style={{
-            left: `${viewedPercent}%`,
-            transform: 'translateX(-50%)',
-            background: 'linear-gradient(90deg, transparent, #6366f1, transparent)',
-          }}
-        />
+        ) : (
+          <div className="h-1.5 overflow-hidden rounded-full bg-white/10" aria-hidden="true">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-[width] duration-500 ease-out"
+              style={{ width: `${viewedPercent}%` }}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── Current Section Workspace ── */}
@@ -322,38 +314,129 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         <motion.div
           key={stepIndex}
           custom={direction}
-          initial={{ opacity: 0, x: direction > 0 ? 40 : -40, y: 8 }}
+          initial={{ opacity: 0, x: prefersReducedMotion ? 0 : direction > 0 ? 24 : -24 }}
           animate={{ opacity: 1, x: 0, y: 0 }}
-          exit={{ opacity: 0, x: direction > 0 ? -40 : 40, y: -8 }}
-          transition={{ duration: 0.3, ease: [0.25, 0.1, 0.25, 1] }}
+          exit={{ opacity: 0, x: prefersReducedMotion ? 0 : direction > 0 ? -24 : 24 }}
+          transition={{ duration: prefersReducedMotion ? 0 : 0.3, ease: [0.25, 0.1, 0.25, 1] }}
           className="min-h-[200px]"
         >
           {sections[stepIndex] ? (
-            // One section = one workspace panel. The header and its body are
-            // rendered together inside a single card so a "section" always reads
-            // as one cohesive unit; the Next button is what advances to the next
-            // header+body pair. Video sections use the same shell with the player
-            // as the body.
-            <div className="overflow-hidden rounded-2xl border border-gray-700/60 bg-gray-900/40">
-              {/* Workspace header bar — the section's heading + position */}
+            // One section = one study page. The header, body and navigation
+            // live inside a single panel so a "section" always reads as one
+            // cohesive unit; the Next button in the footer is what advances to
+            // the next header+body pair. Video sections use the same shell with
+            // the player as the body.
+            <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-gray-900 shadow-[0_24px_48px_-32px_rgba(0,0,0,0.9)]">
+              {/* Accent hairline — the one brand signature on the page */}
+              <div
+                className="h-px bg-gradient-to-r from-blue-500 via-blue-400/30 to-transparent"
+                aria-hidden="true"
+              />
+
               {sections[stepIndex].heading && (
-                <div className="flex items-center gap-3 border-b border-gray-700/60 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-transparent px-5 py-3.5">
-                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/15 text-xs font-bold text-blue-400 ring-1 ring-blue-500/30">
-                    {stepIndex + 1}
-                  </span>
-                  <h3 className="min-w-0 flex-1 truncate text-base font-semibold text-white sm:text-lg">
+                <div className="flex items-center gap-3.5 border-b border-white/[0.05] px-5 pb-4 pt-5 sm:px-7">
+                  <span
+                    className="h-8 w-1 shrink-0 rounded-full bg-blue-500"
+                    aria-hidden="true"
+                  />
+                  <h3 className="min-w-0 flex-1 text-lg font-semibold tracking-tight text-white sm:text-xl">
                     {sections[stepIndex].heading}
                   </h3>
-                  <span className="shrink-0 text-xs font-medium text-gray-500">
-                    {stepIndex + 1} of {totalSteps}
-                  </span>
                 </div>
               )}
 
               {/* Workspace body — the section's content */}
-              <div className="px-5 py-5">
-                {renderSection(sections[stepIndex], stepIndex, true)}
+              <div className="px-5 py-6 sm:px-7 sm:py-7">
+                {isDividerStep ? (
+                  <div className="flex min-h-[240px] flex-col items-center justify-center gap-4 text-center">
+                    <span
+                      className="h-9 w-px bg-gradient-to-b from-blue-500/70 to-transparent"
+                      aria-hidden="true"
+                    />
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-300/85">
+                      {upcomingHeadings.length > 0 ? 'Coming up next' : 'Section overview'}
+                    </span>
+                    {upcomingHeadings.length > 0 ? (
+                      <ul className="flex max-w-md flex-col gap-2.5">
+                        {upcomingHeadings.slice(0, 4).map((heading, i) => (
+                          <li
+                            key={`${i}:${heading}`}
+                            className="flex items-center gap-2.5 text-sm text-gray-300"
+                          >
+                            <span
+                              className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400/75"
+                              aria-hidden="true"
+                            />
+                            {heading}
+                          </li>
+                        ))}
+                        {upcomingHeadings.length > 4 && (
+                          <li className="text-xs text-gray-500">
+                            +{upcomingHeadings.length - 4} more steps
+                          </li>
+                        )}
+                      </ul>
+                    ) : (
+                      <p className="max-w-sm text-sm leading-relaxed text-gray-500">
+                        No content was added under this heading.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  renderSection(sections[stepIndex], stepIndex, true)
+                )}
               </div>
+
+              {/* Footer navigation lives inside the panel so controls and
+                  content always read as one unit. */}
+              {!showCompletionCelebration && (
+                <div className="flex items-center justify-between gap-3 border-t border-white/[0.05] bg-white/[0.02] px-4 py-3 sm:px-5">
+                  <Button
+                    variant="ghost"
+                    onClick={goPrev}
+                    disabled={stepIndex === 0}
+                    className="h-9 shrink-0 border border-white/10 bg-transparent px-3 text-gray-300 hover:bg-white/[0.06] hover:text-white disabled:opacity-30"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    <span className="hidden sm:inline">Previous</span>
+                  </Button>
+
+                  {/* Section completion indicator */}
+                  <div className="hidden items-center gap-2 sm:flex">
+                    {state.viewedIds.includes(sectionIds[stepIndex]) && (
+                      <motion.span
+                        initial={{ scale: prefersReducedMotion ? 1 : 0 }}
+                        animate={{ scale: 1 }}
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300/90"
+                      >
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        Viewed
+                      </motion.span>
+                    )}
+                  </div>
+
+                  {stepIndex < totalSteps - 1 ? (
+                    <Button
+                      onClick={goNext}
+                      className="h-9 shrink-0 bg-blue-600 px-4 text-white shadow-sm shadow-blue-950/40 hover:bg-blue-500 sm:px-5"
+                    >
+                      <span>Next Step</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  ) : lastStepButton ? (
+                    lastStepButton
+                  ) : (
+                    <Button
+                      onClick={goPrev}
+                      className="h-9 shrink-0 bg-emerald-600 px-4 text-white shadow-sm shadow-emerald-950/40 hover:bg-emerald-500 sm:px-5"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      <span className="hidden sm:inline">Review Again</span>
+                      <span className="sm:hidden">Review</span>
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-gray-400">No lesson content is available.</p>
@@ -361,13 +444,13 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
         </motion.div>
       </AnimatePresence>
 
-      {/* ── Completion Celebration Overlay ── */}
+      {/* ── Completion Celebration ── */}
       {showCompletionCelebration && !celebrationDismissed ? (
         <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-          className="relative overflow-hidden rounded-2xl border border-emerald-700/60 bg-gradient-to-br from-emerald-900/50 via-emerald-800/30 to-teal-900/40 bg-gray-900/80 backdrop-blur-sm p-6 sm:p-8 text-center"
+          initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          className="relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-emerald-950/40 px-6 py-8 text-center sm:py-9"
         >
           {/* Confetti particles */}
           {confettiParticles.map((particle) => (
@@ -400,76 +483,47 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
             />
           ))}
 
-          {/* Glow effect */}
-          <div className="pointer-events-none absolute -inset-4 opacity-30 blur-3xl">
-            <div className="h-full w-full rounded-full bg-emerald-500/30" />
-          </div>
-
-          <div className="relative z-10">
-            {/* Animated trophy */}
+          <div className="relative z-10 flex flex-col items-center">
+            {/* Trophy */}
             <motion.div
-              initial={{ scale: 0, rotate: -180 }}
+              initial={{ scale: prefersReducedMotion ? 1 : 0, rotate: prefersReducedMotion ? 0 : -180 }}
               animate={{ scale: 1, rotate: 0 }}
-              transition={{ type: 'spring', stiffness: 200, damping: 12, delay: 0.1 }}
-              className="mx-auto mb-4 h-16 w-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-xl shadow-emerald-600/30"
+              transition={{ type: 'spring', stiffness: 200, damping: 14, delay: 0.1 }}
+              className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500 shadow-lg shadow-emerald-950/50 ring-1 ring-inset ring-white/15"
             >
-              <Trophy className="h-8 w-8 text-white" />
+              <Trophy className="h-7 w-7 text-white" aria-hidden="true" />
             </motion.div>
 
-            {/* Title */}
             <motion.h3
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
-              className="text-xl sm:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 via-green-200 to-teal-300 mb-2"
+              className="mb-2 text-xl font-bold tracking-tight text-white sm:text-2xl"
             >
               All Sections Viewed
             </motion.h3>
 
-            {/* Subtitle */}
             <motion.p
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="text-sm text-gray-300 mb-4"
+              className="mb-5 max-w-md text-sm leading-relaxed text-emerald-100/80"
             >
-              You've reviewed all {totalSteps} {totalSteps === 1 ? 'section' : 'sections'} of this lesson.
-              Lesson completion may still require engagement or assessment checks.
+              You've reviewed all {totalSteps} {totalSteps === 1 ? 'section' : 'sections'} of this
+              lesson. Lesson completion may still require engagement or assessment checks.
             </motion.p>
 
-            {/* Stats row */}
             <motion.div
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="flex items-center justify-center gap-4 sm:gap-6 mb-5"
-            >
-              <div className="flex items-center gap-1.5">
-                <CheckCircle className="h-4 w-4 text-emerald-400" />
-                <span className="text-sm font-medium text-emerald-300">{totalSteps} Viewed</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Star className="h-4 w-4 text-yellow-400" />
-                <span className="text-sm font-medium text-yellow-300">100% Progress</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Award className="h-4 w-4 text-purple-400" />
-                <span className="text-sm font-medium text-purple-300">Viewed</span>
-              </div>
-            </motion.div>
-
-            {/* Dismiss button */}
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="flex flex-col sm:flex-row items-center justify-center gap-3"
+              className="flex flex-col items-center justify-center gap-3 sm:flex-row"
             >
               <Button
                 onClick={() => setCelebrationDismissed(true)}
-                className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-600/20 hover:shadow-emerald-500/30 transition-all"
+                className="h-10 bg-emerald-600 px-5 text-white shadow-sm shadow-emerald-950/40 hover:bg-emerald-500"
               >
-                <CheckCircle className="h-4 w-4 mr-1.5" />
+                <CheckCircle className="h-4 w-4" />
                 Continue
               </Button>
               {lastStepButton && (
@@ -480,7 +534,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                   }}
                   animate={{ scale: [1, 1.04, 1] }}
                   transition={{ duration: 0.35, ease: 'easeOut' }}
-                  whileHover={{ scale: 1.08 }}
+                  whileHover={{ scale: 1.06 }}
                 >
                   {lastStepButton}
                 </motion.div>
@@ -489,69 +543,20 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           </div>
         </motion.div>
       ) : (
-        <>
-          {/* ── Navigation Controls ── */}
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={goPrev}
-              disabled={stepIndex === 0}
-              className="flex items-center gap-1.5 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">Previous</span>
-            </Button>
-
-            {/* Section completion indicator */}
-            <div className="flex items-center gap-2">
-              {state.viewedIds.includes(sectionIds[stepIndex]) && (
-                <motion.span
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  className="inline-flex items-center gap-1 text-xs text-emerald-400 font-medium"
-                >
-                  <CheckCircle className="h-3 w-3" />
-                  <span className="hidden sm:inline">Viewed</span>
-                </motion.span>
-              )}
-            </div>
-
-            {stepIndex < totalSteps - 1 ? (
-              <Button
-                size="sm"
-                onClick={goNext}
-                className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30 transition-all"
-              >
-                <span>Next Step</span>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            ) : lastStepButton ? (
-              lastStepButton
-            ) : (
-              <Button
-                size="sm"
-                onClick={goPrev}
-                className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-600/20"
-              >
-                <RotateCcw className="h-4 w-4" />
-                <span className="hidden sm:inline">Review Again</span>
-                <span className="sm:hidden">Review</span>
-              </Button>
-            )}
-          </div>
-
-          {/* ── Keyboard Hint ── */}
-          <div className="text-center">
-            <span className="text-xs text-gray-400">
-              Click{' '}
-              <span className="font-medium text-gray-300">Next</span> to continue ·{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">←</kbd>{' '}
-              <kbd className="px-1 py-0.5 bg-gray-800 rounded text-xs text-gray-400 font-mono border border-gray-700">↑</kbd>{' '}
-              to go back
-            </span>
-          </div>
-        </>
+        /* ── Keyboard hint (navigation lives in the panel footer above) ── */
+        <div className="flex items-center justify-center gap-1.5 text-[11px] text-gray-500">
+          <span>
+            Click <span className="font-medium text-gray-400">Next</span> to continue
+          </span>
+          <span className="text-gray-700">·</span>
+          <kbd className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-gray-400">
+            ←
+          </kbd>
+          <kbd className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-gray-400">
+            ↑
+          </kbd>
+          <span>to go back</span>
+        </div>
       )}
     </div>
   );
