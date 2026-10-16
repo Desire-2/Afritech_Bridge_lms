@@ -8,6 +8,7 @@ import {
   sectionsFromBlocks,
   sectionsToContentData,
   toStepSections,
+  videoCoverageIndexFor,
   videoCoverageIndices,
   mixedVideoCount,
   sectionSignature,
@@ -432,6 +433,137 @@ Use \`def\` to define functions.
 
   test('empty markdown yields no sections', () => {
     assert.equal(normalizeTextContent('   \n\n  ').sections.length, 0);
+  });
+});
+
+// ── HTML headings + header-driven step navigation ─────────────────────────
+
+describe('HTML headings and mixed step navigation', () => {
+  test('standalone HTML headings (h2-h6) become sections with isolated bodies', () => {
+    const sections = sectionsFromMarkdown(
+      [
+        '<h2>Getting Started</h2>',
+        '',
+        'Getting started body.',
+        '',
+        '<h3>Configuration</h3>',
+        '',
+        'Configuration body.',
+        '',
+        '<h4 detail>Deep detail</h4>',
+        '',
+        'Detail body.',
+      ].join('\n')
+    );
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ['Getting Started', 'Configuration', 'Deep detail']
+    );
+    const config = sections.find((s) => s.title === 'Configuration');
+    const body = (config?.blocks ?? []).map((b) => String(b.content ?? '')).join('\n');
+    assert.ok(body.includes('Configuration body.'));
+    assert.ok(!body.includes('Getting started body.'));
+    assert.ok(!body.includes('Detail body.'));
+  });
+
+  test('a leading HTML h1 is the lesson title: it never becomes its own section', () => {
+    const sections = sectionsFromMarkdown('<h1>Only Title</h1>\n\n## Real\n\nBody');
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ['Real']
+    );
+    assert.ok(String(sections[0].blocks[0]?.content ?? '').includes('<h1>Only Title</h1>'));
+    // ...and when it repeats the lesson title, the step body drops it.
+    const steps = toStepSections(
+      { format: 'text', sections: sectionsFromMarkdown('<h1>Only Title</h1>\n\nBody copy.'), diagnostics: [] },
+      'Only Title'
+    );
+    assert.ok(!String(steps[0].content ?? '').includes('<h1>'));
+    assert.ok(String(steps[0].content ?? '').includes('Body copy.'));
+  });
+
+  test('an HTML heading inside a fenced code block never splits a section', () => {
+    const sections = sectionsFromMarkdown(
+      '## Example\n\n```html\n<h2>not a heading</h2>\n<h3>also not</h3>\n```\n\nafter the fence'
+    );
+    assert.deepEqual(sections.map((s) => s.title), ['Example']);
+    const body = String(sections[0].blocks[0]?.content ?? '');
+    assert.ok(body.includes('<h2>not a heading</h2>'));
+    assert.ok(body.includes('after the fence'));
+  });
+
+  test('nested headers inside a mixed section become their own steps', () => {
+    const mixed = JSON.stringify([
+      {
+        id: 'sec_a',
+        type: 'section',
+        title: 'Topic',
+        blocks: [
+          {
+            type: 'text',
+            content: 'Intro line.\n\n## Selecting\n\nSelect body.\n\n<h3>Detail</h3>\n\nDetail body.',
+          },
+          { type: 'video', url: 'https://example.com/v.mp4' },
+        ],
+      },
+    ]);
+    const normalized = normalizeMixedContent(mixed);
+    const sectionsBefore = JSON.stringify(normalized.sections);
+    const steps = toStepSections(normalized, 'Lesson');
+
+    // Step-level splitting never rewrites the coverage/progress key space.
+    assert.equal(JSON.stringify(normalized.sections), sectionsBefore);
+    assert.deepEqual(
+      steps.map((s) => s.heading),
+      ['Topic', 'Selecting', 'Detail']
+    );
+    assert.deepEqual(
+      steps.map((s) => s.id),
+      ['sec_a::0', 'sec_a::1', 'sec_a::2']
+    );
+    assert.equal(new Set(steps.map((s) => s.id)).size, steps.length);
+
+    // The video stays a renderable block of its last group, and its
+    // metadata maps group blocks back to original section positions.
+    const last = steps[2];
+    assert.deepEqual(
+      (last.blocks ?? []).map((b) => b.type),
+      ['text', 'video']
+    );
+    const meta = last.metadata as { sectionIndex: number; blockIndices: number[] };
+    assert.equal(meta.sectionIndex, 0);
+    assert.deepEqual(meta.blockIndices, [0, 1]);
+    const coverage = videoCoverageIndexFor(normalized.sections, meta.sectionIndex, meta.blockIndices[1]);
+    assert.equal(coverage, videoCoverageIndices(normalized.sections)[0]);
+    assert.equal(mixedVideoCount(mixed), 1);
+  });
+
+  test('an unsplit section keeps its persisted section id', () => {
+    const mixed = JSON.stringify([
+      { id: 'sec_plain', type: 'section', title: 'Plain', blocks: [{ type: 'text', content: 'No headers here.' }] },
+    ]);
+    const steps = toStepSections(normalizeMixedContent(mixed), 'Lesson');
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].id, 'sec_plain');
+  });
+
+  test('content saved with literal \\n escapes still splits into sections', () => {
+    // Stored as one giant line: zero real newlines, four literal \n markers.
+    const escaped = '## Intro\\nIntro body.\\n\\n## Setup\\nSetup body.';
+    assert.ok(!escaped.includes('\n'));
+    const sections = sectionsFromMarkdown(escaped);
+    assert.deepEqual(
+      sections.map((s) => s.title),
+      ['Intro', 'Setup']
+    );
+  });
+
+  test('an inline \\n mention in single-line content is never rewritten', () => {
+    const single = 'Use \\n to print a newline from Python.';
+    assert.ok(!single.includes('\n'));
+    const sections = sectionsFromMarkdown(single);
+    assert.equal(sections.length, 1);
+    assert.ok(String(sections[0].blocks[0]?.content ?? '').includes('\\n'));
   });
 });
 

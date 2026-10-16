@@ -200,6 +200,34 @@ const VIDEO_HOST_RE = /^https?:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com|pl
 const DRIVE_FILE_RE = /^https?:\/\/drive\.google\.com\/file\/d\/\S+$/i;
 const PDF_FILE_RE = /^https?:\/\/\S+\.pdf(\?\S*)?$/i;
 const IMAGE_MD_RE = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/;
+// Standalone HTML heading line (`<h2>Title</h2>`, optional attributes). The
+// anchor forces the whole line to be the heading, so prose containing an
+// inline `<h2>` never becomes a boundary. Level 1 mirrors `# H1` title rules;
+// levels 2-6 are section boundaries just like `##`-`######`.
+const HTML_HEADING_RE = /^ {0,3}<h([1-6])(?:\s[^>]*)?>([\s\S]*?)<\/h\1>[ \t]*$/i;
+
+/** Decode the handful of entities that appear in authored heading text. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&#x27;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
+}
+
+/** Visible text of an HTML heading's inner markup (tags removed, entities decoded). */
+function headingTextFromHtml(inner: string): string {
+  return decodeEntities(inner.replace(/<[^>]*>/g, '').trim());
+}
+
+/** True for an H1 title line in either syntax: `# Title` or `<h1>Title</h1>`. */
+function isTitleH1Line(line: string): boolean {
+  if (H1_RE.test(line)) return true;
+  const match = HTML_HEADING_RE.exec(line);
+  return match !== null && Number(match[1]) === 1;
+}
 
 /** Detect a standalone media line (never corrupts URLs or Markdown). */
 function mediaBlockFor(line: string): LessonContentBlock | null {
@@ -219,14 +247,16 @@ function mediaBlockFor(line: string): LessonContentBlock | null {
 /**
  * Scan markdown into an ordered item list.
  *
- * Boundaries: every section header (H2-H6) and a standalone `**bold**` line
- * (the legacy poor-man's heading, kept for compatibility). Each header opens
- * its own section, so long content is consumed one header's worth at a time
- * instead of as one wall of text. H1 is the lesson title: a leading H1 (before
- * any other content) stays in the body so the player never shows the title as
- * its own step, while an H1 after content is treated like any other header.
- * Header text becomes the section title - it is never discarded. Lines inside
- * fenced code blocks are never inspected, so `## example` in a code sample
+ * Boundaries: every section header (markdown H2-H6, a standalone HTML
+ * `<h2>`-`<h6>` line, and a standalone `**bold**` line — the legacy
+ * poor-man's heading, kept for compatibility). Each header opens its own
+ * section, so long content is consumed one header's worth at a time instead
+ * of as one wall of text. H1 is the lesson title: a leading H1 (before any
+ * other content, in either `# Title` or `<h1>Title</h1>` syntax) stays in the
+ * body so the player never shows the title as its own step, while an H1 after
+ * content is treated like any other header. Header text becomes the section
+ * title - it is never discarded. Lines inside fenced code blocks are never
+ * inspected, so `## example` (or a literal `<h2>` sample) in a code sample
  * cannot split a section.
  *
  * Standalone media URLs / `![alt](src)` lines become their own blocks so the
@@ -262,16 +292,26 @@ function scanMarkdown(text: string): MarkdownItem[] {
     }
 
     if (!inFence) {
-      const h1 = H1_RE.exec(line);
-      const header = h1 ?? SECTION_HEADER_RE.exec(line);
+      const markdownH1 = H1_RE.exec(line);
+      const htmlHeading = HTML_HEADING_RE.exec(line);
+      const htmlLevel = htmlHeading ? Number(htmlHeading[1]) : 0;
+      // Markdown H2-H6 and standalone HTML <h2>-<h6> both open a section;
+      // `# Title` / `<h1>Title</h1>` are lesson-title level.
+      const sectionHeader =
+        SECTION_HEADER_RE.exec(line) ?? (htmlLevel >= 2 ? htmlHeading : null);
+      const titleH1 = markdownH1 ?? (htmlLevel === 1 ? htmlHeading : null);
+      const header = titleH1 ?? sectionHeader;
       if (header) {
         // A leading H1 (before any other content) is the lesson title: it
         // stays in the body so it never becomes its own navigation step.
         const leadingTitleH1 =
-          h1 !== null && items.length === 0 && buffer.every((entry) => entry.trim() === '');
+          titleH1 !== null && items.length === 0 && buffer.every((entry) => entry.trim() === '');
         if (!leadingTitleH1) {
           flushBuffer();
-          items.push({ kind: 'title', title: header[1].replace(/[ \t]+#+[ \t]*$/, '').trim() });
+          const title = htmlHeading
+            ? headingTextFromHtml(htmlHeading[2])
+            : header[1].replace(/[ \t]+#+[ \t]*$/, '').trim();
+          items.push({ kind: 'title', title });
           continue;
         }
       }
@@ -329,7 +369,7 @@ export function splitMarkdownChunks(text: string): MarkdownChunk[] {
     const lead = chunks[0].blocks[0];
     if (lead.type === 'text') {
       const lines = String(lead.content ?? '').split('\n');
-      const meaningful = lines.filter((line) => line.trim() !== '' && !H1_RE.test(line));
+      const meaningful = lines.filter((line) => line.trim() !== '' && !isTitleH1Line(line));
       if (meaningful.length === 0 && lines.join('').trim()) {
         const h1 = lines.join('\n').trim();
         const target = chunks[1];
@@ -353,11 +393,25 @@ export function splitMarkdownChunks(text: string): MarkdownChunk[] {
 
 
 /**
+ * Repair content that was saved fully escaped: literal `\n` sequences with
+ * zero real line breaks. Such content is one giant line, so header-based
+ * splitting sees one wall of text (and it renders with visible `\n` junk).
+ * The guard is strict — any real newline leaves the content untouched, so an
+ * inline `\n` mention (a code sample, a regex note) is never rewritten.
+ */
+function repairLiteralNewlines(text: string): string {
+  if (text.includes('\n')) return text;
+  const literal = text.match(/\\n/g);
+  if (!literal || literal.length < 3) return text;
+  return text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+}
+
+/**
  * Markdown → sections. Used for `content_type === "text"` lessons and as the
  * fallback when mixed-content JSON cannot be parsed.
  */
 export function sectionsFromMarkdown(text: string): LessonSection[] {
-  const chunks = splitMarkdownChunks(text);
+  const chunks = splitMarkdownChunks(repairLiteralNewlines(text));
   const taken = new Set<string>();
   const sections: LessonSection[] = [];
 
@@ -748,6 +802,11 @@ function stripLeadingH1(body: string, lessonTitle: string): string {
   let i = 0;
   while (i < lines.length && lines[i].trim() === '') i++;
   if (i >= lines.length) return body;
+  const html = HTML_HEADING_RE.exec(lines[i]);
+  if (html !== null && Number(html[1]) === 1) {
+    if (headingTextFromHtml(html[2]).toLowerCase() !== title) return body;
+    return [...lines.slice(0, i), ...lines.slice(i + 1)].join('\n').replace(/^\n+/, '');
+  }
   const match = H1_RE.exec(lines[i]);
   if (!match) return body;
   if (match[1].replace(/[ \t]+#+[ \t]*$/, '').trim().toLowerCase() !== title) return body;
@@ -769,15 +828,29 @@ function stripDuplicateTitleLead(body: string, title: string): string {
 /**
  * Convert normalized sections into the navigable step list.
  *
- * One section ⇒ one step. A section title is never emitted as its own step,
- * and a section title is never duplicated as an H2 inside its own body.
+ * Each section expands to one or more steps: headers nested inside a section's
+ * text (markdown `##`-`######` or standalone HTML `<h2>`-`<h6>`) split it so a
+ * learner advances one header's worth of content at a time — mixed content
+ * gets the same one-step-per-header navigation as plain markdown lessons.
+ * Splitting is step-level only: `normalized.sections` (the video coverage and
+ * progress key space) is never touched. A section title is never emitted as
+ * its own step, and a section title is never duplicated as an H2 inside its
+ * own body.
  */
 export function toStepSections(normalized: NormalizedLessonContent, lessonTitle = ''): StepSection[] {
   const { sections } = normalized;
   const steps: StepSection[] = [];
 
   sections.forEach((section, sectionIndex) => {
-    const blocks = section.blocks.map((block) => ({ ...block }));
+    const blocks: LessonContentBlock[] = section.blocks.map((block) => ({ ...block }));
+    // Position of each block within the ORIGINAL section; the title strips
+    // below can remove a block, and progress/coverage lookups address the
+    // original positions.
+    const sourceOf: number[] = section.blocks.map((_, index) => index);
+    const removeBlockAt = (index: number) => {
+      blocks.splice(index, 1);
+      sourceOf.splice(index, 1);
+    };
 
     // Drop a leading H2 that merely repeats the section title (the AI
     // generator historically emitted `heading` + `## Heading` text pairs).
@@ -786,7 +859,7 @@ export function toStepSections(normalized: NormalizedLessonContent, lessonTitle 
       const content = stripDuplicateTitleLead(String(blocks[firstText].content ?? ''), section.title);
       if (content !== blocks[firstText].content) {
         if (content.trim()) blocks[firstText].content = content;
-        else blocks.splice(firstText, 1);
+        else removeBlockAt(firstText);
       }
     }
 
@@ -795,8 +868,61 @@ export function toStepSections(normalized: NormalizedLessonContent, lessonTitle 
       const content = stripLeadingH1(String(blocks[firstTextAfter].content ?? ''), lessonTitle);
       if (content !== blocks[firstTextAfter].content) {
         if (content.trim()) blocks[firstTextAfter].content = content;
-        else blocks.splice(firstTextAfter, 1);
+        else removeBlockAt(firstTextAfter);
       }
+    }
+
+    // ── Expand the section into step groups (one per inner header) ────────
+    // Only text blocks are re-split: they went through the markdown scanner
+    // (fence-protected, media-aware). Code blocks stay atomic — raw code is
+    // not fenced, so its `#` comments and `<h2>` samples are not headers —
+    // and video/image/pdf blocks are single units that never split.
+    type Piece =
+      | { kind: 'title'; title: string }
+      | { kind: 'block'; block: LessonContentBlock; source: number };
+
+    const pieces: Piece[] = [];
+    blocks.forEach((block, index) => {
+      const source = sourceOf[index] ?? index;
+      if (block.type !== 'text') {
+        pieces.push({ kind: 'block', block, source });
+        return;
+      }
+      for (const chunk of splitMarkdownChunks(String(block.content ?? ''))) {
+        if (chunk.title) pieces.push({ kind: 'title', title: chunk.title });
+        for (const inner of chunk.blocks) pieces.push({ kind: 'block', block: inner, source });
+      }
+    });
+
+    interface StepGroup {
+      title: string;
+      blocks: LessonContentBlock[];
+      /** Original section index of each block in this group, in order. */
+      blockIndices: number[];
+    }
+    const groups: StepGroup[] = [];
+    let current: StepGroup = { title: '', blocks: [], blockIndices: [] };
+    const closeGroup = () => {
+      // An empty untitled group is a splitting artifact, never a step; a
+      // titled one is a divider and stays (mirrors `## A` / `## B`).
+      if (current.blocks.length > 0 || current.title !== '') groups.push(current);
+      current = { title: '', blocks: [], blockIndices: [] };
+    };
+
+    for (const piece of pieces) {
+      if (piece.kind === 'title') {
+        closeGroup();
+        current.title = piece.title;
+        continue;
+      }
+      current.blocks.push(piece.block);
+      current.blockIndices.push(piece.source);
+    }
+    closeGroup();
+
+    // A section that lost every block still deserves its heading step.
+    if (groups.length === 0) {
+      groups.push({ title: '', blocks: [], blockIndices: [] });
     }
 
     // Untitled leading section: call it "Introduction" only when other
@@ -804,46 +930,66 @@ export function toStepSections(normalized: NormalizedLessonContent, lessonTitle 
     // lessons while keeping the historical introduction behaviour). An
     // untitled video-anchored section is labelled with the video title (or
     // "Video") so the step is identifiable.
-    let heading = section.title;
-    if (!heading) {
+    let sectionFallback = section.title;
+    if (!sectionFallback) {
       const single = blocks.length === 1 ? blocks[0] : null;
       if (single && single.type === 'video') {
-        heading =
+        sectionFallback =
           typeof single.title === 'string' && single.title.trim()
             ? single.title
             : 'Video';
       } else if (sectionIndex === 0 && sections.some((s, i) => i > 0 && s.title.trim())) {
-        heading = 'Introduction';
+        sectionFallback = 'Introduction';
       }
     }
 
-    if (blocks.length === 0) {
+    const split = groups.length > 1;
+    groups.forEach((group, groupIndex) => {
+      // Unsplit sections keep their persisted section id; split ones get a
+      // deterministic suffix so every step has a unique, stable identity.
+      const stepId = split ? `${section.id}::${groupIndex}` : section.id;
+
+      // The header that owns this step: its own nested header first, then the
+      // section title for the first group, then the legacy fallbacks.
+      let heading = group.title || (groupIndex === 0 ? sectionFallback : '');
+      if (!heading) {
+        const single = group.blocks.length === 1 ? group.blocks[0] : null;
+        if (single && single.type === 'video') {
+          heading =
+            typeof single.title === 'string' && single.title.trim()
+              ? single.title
+              : 'Video';
+        }
+      }
+
+      if (group.blocks.length === 0) {
+        steps.push({
+          id: stepId,
+          type: 'heading',
+          heading: heading || section.title,
+          content: '',
+          metadata: { sectionIndex, blockIndices: [] },
+        });
+        return;
+      }
+
+      const single = group.blocks.length === 1 ? group.blocks[0] : null;
+      const type: StepSection['type'] = single
+        ? (RENDERABLE_BLOCK_TYPES as readonly string[]).includes(single.type)
+          ? (single.type as StepSection['type'])
+          : 'text'
+        : 'composite';
+
       steps.push({
-        id: section.id,
-        type: 'heading',
-        heading: heading || section.title,
-        content: '',
-        metadata: { sectionIndex },
+        id: stepId,
+        type,
+        heading,
+        content: single?.content,
+        url: single?.url,
+        alt: single?.alt,
+        blocks: group.blocks,
+        metadata: { sectionIndex, blockIndices: group.blockIndices },
       });
-      return;
-    }
-
-    const single = blocks.length === 1 ? blocks[0] : null;
-    const type: StepSection['type'] = single
-      ? (RENDERABLE_BLOCK_TYPES as readonly string[]).includes(single.type)
-        ? (single.type as StepSection['type'])
-        : 'text'
-      : 'composite';
-
-    steps.push({
-      id: section.id,
-      type,
-      heading,
-      content: single?.content,
-      url: single?.url,
-      alt: single?.alt,
-      blocks,
-      metadata: { sectionIndex },
     });
   });
 

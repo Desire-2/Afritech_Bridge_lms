@@ -394,13 +394,20 @@ markdown fallback when mixed content is not valid JSON):
 | --- | --- |
 | A single `# H1` at the top (before any other content) | The lesson title (never its own step; dropped when it repeats the lesson title) |
 | `## H2`, `### H3`, `#### H4`, `##### H5`, `###### H6` | A new section — one navigable step titled with the header text, holding only the content up to the next header (so long lessons are never read as one wall of text) |
-| A `# H1` after other content | A new section, like any other header |
+| A standalone `<h2>` … `<h6>` HTML line | Same as the equivalent markdown header — one step per header, with only that header's content (HTML-authored lessons navigate step by step too) |
+| A `# H1` (or `<h1>`) after other content | A new section, like any other header |
 | A standalone `**bold**` line | A new section (legacy heading style, still supported) |
 | `**inline bold**` inside a paragraph | Emphasis only — never a new section |
-| A line inside a fenced code block | Never inspected — `## example` in a code sample cannot split a section |
+| A line inside a fenced code block | Never inspected — `## example` or a literal `<h2>` sample in a code block cannot split a section |
 | A bare media URL or `![alt](src)` on its own line | An embedded video/image/PDF block inside the current section |
 
 Content before the first heading becomes an untitled "Introduction" section.
+
+In mixed-content lessons the same rule applies inside every section: headers
+nested in a section's text (markdown or HTML) split it into their own steps,
+while the stored sections — and every video-progress key — stay exactly as
+they were. Lessons with no header at all are a single step by design; add
+`##` headers (or standalone `**bold**` lines) whenever a body runs long.
 
 ## Mixed-content storage (`content_type: "mixed"`)
 
@@ -438,4 +445,4 @@ If you encounter formatting issues not covered here, please contact the technica
 ---
 
 **Last Updated:** October 2026  
-**Version:** 2.1
+**Version:** 2.2

@@ -158,13 +158,21 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
 
   const renderSection = useCallback(
     (section: StepSection, index: number, _isActive: boolean) => {
-      const metadata = section.metadata as { sectionIndex?: number } | undefined;
+      // Steps may be a slice of a section (nested headers split it into
+      // groups), so block positions must map back to the original section —
+      // that is the address space of the video coverage index.
+      const metadata = section.metadata as
+        | { sectionIndex?: number; blockIndices?: number[] }
+        | undefined;
       const sectionIndex = metadata?.sectionIndex ?? index;
+      const blockIndices = metadata?.blockIndices;
       const blocks = section.blocks as LessonContentBlock[] | undefined;
       if (blocks && blocks.length > 0) {
         return (
           <div className="space-y-4">
-            {blocks.map((block, blockIndex) => renderBlock(block, sectionIndex, blockIndex))}
+            {blocks.map((block, blockIndex) =>
+              renderBlock(block, sectionIndex, blockIndices?.[blockIndex] ?? blockIndex)
+            )}
           </div>
         );
       }
@@ -172,7 +180,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       return renderBlock(
         { type: section.type, content: section.content, url: section.url, alt: section.alt },
         sectionIndex,
-        0
+        blockIndices?.[0] ?? 0
       );
     },
     [renderBlock]
