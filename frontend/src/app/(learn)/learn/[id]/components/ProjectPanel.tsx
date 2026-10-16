@@ -86,11 +86,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const numericGrade = typeof rawGrade === 'number' && Number.isFinite(rawGrade) ? rawGrade : null;
 
   const statusBadge = (() => {
-    if (isGraded) return { label: 'Graded', className: 'bg-green-900/40 text-green-300 border-green-700/50' };
-    if (needsRevision) return { label: 'Needs Revision', className: 'bg-orange-900/40 text-orange-300 border-orange-700/50' };
-    if (isSubmitted) return { label: 'Submitted', className: 'bg-blue-900/40 text-blue-300 border-blue-700/50' };
-    if (isOverdue) return { label: 'Overdue', className: 'bg-red-900/40 text-red-300 border-red-700/50' };
-    return { label: 'Not Submitted', className: 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' };
+    if (isGraded) return { label: 'Graded', className: 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30' };
+    if (needsRevision) return { label: 'Needs Revision', className: 'bg-amber-950/50 text-amber-300 border-amber-500/30' };
+    if (isSubmitted) return { label: 'Submitted', className: 'bg-blue-950/50 text-blue-300 border-blue-500/30' };
+    if (isOverdue) return { label: 'Overdue', className: 'bg-red-950/50 text-red-300 border-red-500/30' };
+    return { label: 'Not Submitted', className: 'bg-white/[0.04] text-gray-400 border-white/10' };
   })();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -154,7 +154,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-400 mb-3" />
+        <Loader2 className="h-8 w-8 animate-spin text-blue-400 mb-3" />
         <p className="text-sm">Loading project…</p>
       </div>
     );
@@ -178,11 +178,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   return (
     <div className="space-y-4">
       {/* Project overview */}
-      <div className="rounded-2xl border border-gray-800/80 bg-gray-900/70 p-4 sm:p-5 space-y-4">
+      <div className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
-            <div className="rounded-lg bg-orange-900/30 border border-orange-700/40 p-2 flex-shrink-0">
-              <FolderOpen className="h-5 w-5 text-orange-400" />
+            <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 p-2 flex-shrink-0">
+              <FolderOpen className="h-5 w-5 text-blue-400" />
             </div>
             <div className="min-w-0">
               <h3 className="text-lg font-semibold text-white break-words">{project.title}</h3>
@@ -191,19 +191,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   {statusBadge.label}
                 </Badge>
                 {project.points_possible > 0 && (
-                  <Badge variant="outline" className="text-xs bg-gray-800/60 text-gray-300 border-gray-700/50">
+                  <Badge variant="outline" className="text-xs bg-white/[0.04] text-gray-400 border-white/10">
                     <Award className="h-3 w-3 mr-1" />
                     {project.points_possible} pts
                   </Badge>
                 )}
                 {dueDate && (
-                  <Badge variant="outline" className={`text-xs ${isOverdue && !isSubmitted ? 'bg-red-900/30 text-red-300 border-red-700/50' : 'bg-gray-800/60 text-gray-300 border-gray-700/50'}`}>
+                  <Badge variant="outline" className={`text-xs ${isOverdue && !isSubmitted ? 'bg-red-950/50 text-red-300 border-red-500/30' : 'bg-white/[0.04] text-gray-400 border-white/10'}`}>
                     <Calendar className="h-3 w-3 mr-1" />
                     Due {dueDate.toLocaleDateString()}
                   </Badge>
                 )}
                 {project.collaboration_allowed && (
-                  <Badge variant="outline" className="text-xs bg-gray-800/60 text-gray-300 border-gray-700/50">
+                  <Badge variant="outline" className="text-xs bg-white/[0.04] text-gray-400 border-white/10">
                     Team up to {project.max_team_size}
                   </Badge>
                 )}
@@ -217,7 +217,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 setFormError(null);
                 setMode(mode === 'submit' ? 'view' : 'submit');
               }}
-              className="bg-orange-600 hover:bg-orange-700 text-white flex-shrink-0"
+              className={`flex-shrink-0 ${
+                mode === 'submit'
+                  ? 'shadow-none border border-white/10 bg-transparent text-gray-300 hover:bg-white/[0.06] hover:text-white'
+                  : 'bg-blue-600 text-white hover:bg-blue-500'
+              }`}
             >
               {mode === 'submit' ? 'Cancel' : isSubmitted ? 'Resubmit' : 'Start Project'}
             </Button>
@@ -229,9 +233,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         )}
 
         {project.objectives && (
-          <div className="rounded-xl border border-gray-800/60 bg-gray-950/40 p-3 sm:p-4">
+          <div className="rounded-xl border border-blue-500/15 bg-blue-500/[0.06] p-3 sm:p-4">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-white mb-2">
-              <Target className="h-4 w-4 text-orange-400" />
+              <Target className="h-4 w-4 text-blue-300" />
               Objectives
             </h4>
             <p className="text-sm text-gray-300 whitespace-pre-wrap">{project.objectives}</p>
@@ -239,19 +243,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         )}
 
         {project.tasks && project.tasks.length > 0 && (
-          <div className="rounded-xl border border-gray-800/60 bg-gray-950/40 p-3 sm:p-4">
+          <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 sm:p-4">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-white mb-2">
-              <ListChecks className="h-4 w-4 text-orange-400" />
+              <ListChecks className="h-4 w-4 text-blue-300" />
               Tasks
             </h4>
             <ul className="space-y-2">
               {project.tasks.map((task, index) => (
                 <li key={index} className="flex items-start gap-2 text-sm text-gray-300">
-                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-orange-400 flex-shrink-0" />
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-blue-400/75 flex-shrink-0" />
                   <div className="min-w-0">
                     <span className="break-words">{task.text}</span>
                     {task.is_optional && (
-                      <Badge variant="outline" className="ml-2 text-xs bg-gray-800/60 text-gray-400 border-gray-700/50">
+                      <Badge variant="outline" className="ml-2 text-xs bg-white/[0.04] text-gray-400 border-white/10">
                         optional
                       </Badge>
                     )}
@@ -273,9 +277,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         )}
 
         {needsRevision && (
-          <Alert className="bg-orange-900/20 border-orange-800/50">
-            <AlertCircle className="h-4 w-4 text-orange-400" />
-            <AlertTitle className="text-orange-300">Revision requested</AlertTitle>
+          <Alert className="bg-amber-950/30 border-amber-500/25">
+            <AlertCircle className="h-4 w-4 text-amber-400" />
+            <AlertTitle className="text-amber-300">Revision requested</AlertTitle>
             <AlertDescription className="text-gray-300">
               {submission?.modification_reason || status?.feedback || 'Your instructor asked for changes. Update your work and resubmit.'}
             </AlertDescription>
@@ -285,9 +289,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
       {/* Submission status / result */}
       {isSubmitted && submission && (
-        <div className="rounded-2xl border border-gray-800/80 bg-gray-900/70 p-4 sm:p-5 space-y-3">
+        <div className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5 space-y-3">
           <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
-            <CheckCircle className="h-4 w-4 text-green-400" />
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
             Your submission
           </h4>
           <div className="grid gap-2 text-sm text-gray-300 sm:grid-cols-2">
@@ -308,19 +312,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             )}
           </div>
           {submission.text_content && (
-            <div className="rounded-xl border border-gray-800/60 bg-gray-950/40 p-3">
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
               <p className="text-sm text-gray-300 whitespace-pre-wrap break-words">{submission.text_content}</p>
             </div>
           )}
           {isGraded && (
-            <div className="rounded-xl border border-green-800/40 bg-green-900/10 p-3 space-y-1.5">
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/30 p-3 space-y-1.5">
               {numericGrade !== null ? (
-                <p className="text-sm text-green-300 font-semibold">
+                <p className="text-sm text-emerald-300 font-semibold">
                   Grade: {numericGrade}
                   {project.points_possible > 0 ? ` / ${project.points_possible}` : ''}
                 </p>
               ) : (
-                <p className="text-sm text-green-300 font-semibold">{statusBadge.label}</p>
+                <p className="text-sm text-emerald-300 font-semibold">{statusBadge.label}</p>
               )}
               {(submission.feedback || status?.feedback) && (
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{submission.feedback || status?.feedback}</p>
@@ -332,7 +336,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
       {/* Submission form */}
       {mode === 'submit' && canResubmit && (
-        <div className="rounded-2xl border border-gray-800/80 bg-gray-900/70 p-4 sm:p-5 space-y-4">
+        <div className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5 space-y-4">
           <h4 className="text-sm font-semibold text-white">Submit your work</h4>
           <div className="space-y-1.5">
             <label htmlFor={textAreaId} className="text-xs font-medium text-gray-300">
@@ -349,7 +353,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               aria-invalid={formError ? true : undefined}
               aria-describedby={formError ? formErrorId : undefined}
               placeholder="Describe your project, link to your repository, or paste your write-up…"
-              className="w-full rounded-xl border border-gray-800 bg-gray-950/60 p-3 text-sm text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500/50 resize-y"
+              className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-y"
             />
           </div>
           <div className="space-y-1.5">
@@ -357,15 +361,15 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               Attach a file (optional)
             </label>
             {file ? (
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-gray-800 bg-gray-950/60 px-3 py-2">
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
                 <span className="text-sm text-gray-300 truncate flex items-center gap-2">
-                  <UploadCloud className="h-4 w-4 text-orange-400 flex-shrink-0" />
+                  <UploadCloud className="h-4 w-4 text-blue-300 flex-shrink-0" />
                   {file.name}
                 </span>
                 <button
                   type="button"
                   onClick={() => setFile(null)}
-                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/[0.06] hover:text-gray-100"
                   aria-label="Remove file"
                 >
                   <X className="h-4 w-4" />
@@ -381,7 +385,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             ) : (
               <label
                 htmlFor={fileInputId}
-                className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-gray-700 bg-gray-950/40 px-3 py-3 text-sm text-gray-400 hover:border-orange-600/60 hover:text-gray-200 transition-colors focus-within:border-orange-600/60 focus-within:text-gray-200 focus-within:ring-2 focus-within:ring-orange-500/50"
+                className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-3 py-3 text-sm text-gray-400 hover:border-blue-500/60 hover:text-gray-200 transition-colors focus-within:border-blue-500/60 focus-within:text-gray-200 focus-within:ring-2 focus-within:ring-blue-500/40"
               >
                 <UploadCloud className="h-4 w-4" />
                 Choose a file
@@ -398,7 +402,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           <Button
             onClick={() => void handleSubmit()}
             disabled={submitting}
-            className="bg-orange-600 hover:bg-orange-700 text-white"
+            className="bg-blue-600 text-white hover:bg-blue-500"
           >
             {submitting ? (
               <>
@@ -415,7 +419,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               tabIndex={-1}
               role="alert"
               id={formErrorId}
-              className="border-red-800/60 bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+              className="border-red-800/60 bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
             >
               <AlertCircle className="h-4 w-4 text-red-400" />
               <AlertTitle className="text-red-300">Submission problem</AlertTitle>

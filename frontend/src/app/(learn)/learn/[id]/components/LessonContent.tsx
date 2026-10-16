@@ -737,8 +737,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                         text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
                         ${currentViewMode === 'project' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
                       style={currentViewMode === 'project' ? {
-                        backgroundColor: 'rgba(251, 146, 60, 0.1)',
-                        color: 'rgb(251, 146, 60)',
+                        backgroundColor: `${lessonLevel.cssColor}18`,
+                        color: lessonLevel.cssColor,
                       } : undefined}
                     >
                       <FolderOpen className="h-3.5 w-3.5" />
