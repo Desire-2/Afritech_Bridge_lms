@@ -102,6 +102,7 @@ class RateLimitHandler:
 
         # Request window tracking for proactive RPM throttling
         self._request_window: Dict[str, deque] = {
+            'nvidia': deque(maxlen=int(os.getenv('NVIDIA_AI_MAX_RPM', '60'))),
             'openrouter': deque(maxlen=200),
             'gemini': deque(maxlen=15),
         }
@@ -351,9 +352,33 @@ class RateLimitHandler:
         """
         step_label = step_label or "AI content generation"
         last_error: Optional[str] = None
-        providers_to_try = ['openrouter', 'gemini']
+        providers_to_try = ['nvidia', 'openrouter', 'gemini']
+        if provider in providers_to_try:
+            providers_to_try = [provider] + [p for p in providers_to_try if p != provider]
+
+        # Lazy import: ai_providers imports this module at load time.
+        try:
+            from .ai_providers import ai_provider_manager as _provider_manager
+        except Exception:  # pragma: no cover - defensive
+            _provider_manager = None
+
+        # Pin each outer iteration to a provider. Without this, the fallback
+        # chain inside make_ai_request restarts at the same provider every
+        # time and the loop only multiplies the cooldown waits.
+        original_provider = getattr(_provider_manager, 'current_provider', None)
+        if _provider_manager is not None:
+            try:
+                _provider_manager.force_provider(providers_to_try[0], scope='thread')
+            except TypeError:
+                _provider_manager.force_provider(providers_to_try[0])
 
         for current_provider in providers_to_try:
+            if _provider_manager is not None:
+                try:
+                    _provider_manager.force_provider(current_provider, scope='thread')
+                except TypeError:
+                    _provider_manager.force_provider(current_provider)
+
             for attempt in range(1, self.max_retry_attempts + 1):
                 # Check cancellation before making the call
                 if cancellation_token and cancellation_token():
@@ -429,19 +454,32 @@ class RateLimitHandler:
                             f"[RATE LIMIT] Non-rate-limit error on {current_provider}: "
                             f"{error_str}. Step: \"{step_label}\""
                         )
+                        if _provider_manager is not None:
+                            try:
+                                _provider_manager.force_provider(original_provider, scope='thread')
+                            except TypeError:
+                                if original_provider:
+                                    _provider_manager.force_provider(original_provider)
                         raise
 
             # If we exhausted retries on this provider, log and switch
             logger.warning(
                 f"[RATE LIMIT] Exhausted: All {self.max_retry_attempts} attempts "
                 f"failed on {current_provider}. "
-                f"{'Switching to ' + ('gemini' if current_provider == 'openrouter' else '(no fallback)') + '.'}"
+                f"{'Switching to ' + (next((p for p in providers_to_try if p != current_provider), '(no fallback)')) + '.'}"
             )
 
             # Mark last error and continue to fallback provider
             last_error = f"Rate limit exhausted on {current_provider}"
 
-        # All providers exhausted
+        # All providers exhausted — restore the caller's provider preference
+        if _provider_manager is not None:
+            try:
+                _provider_manager.force_provider(original_provider, scope='thread')
+            except TypeError:
+                if original_provider:
+                    _provider_manager.force_provider(original_provider)
+
         raise RateLimitExhaustedError(
             provider=str(providers_to_try),
             attempts=self.max_retry_attempts * len(providers_to_try),
@@ -465,7 +503,11 @@ class RateLimitHandler:
                 return
 
             # Determine RPM limit based on provider
-            rpm_limit = 200 if provider == 'openrouter' else 15
+            rpm_limit = {
+                'nvidia': int(os.getenv('NVIDIA_AI_MAX_RPM', '60')),
+                'openrouter': int(os.getenv('OPENROUTER_MAX_RPM', '200')),
+                'gemini': int(os.getenv('GEMINI_MAX_RPM', '15')),
+            }.get(provider, 15)
 
             current_count = len(window)
             threshold_count = int(rpm_limit * self.proactive_threshold)

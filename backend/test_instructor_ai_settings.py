@@ -197,11 +197,13 @@ def run_tests():
         settings = data1.get("data", {}).get("settings", {})
         check("openrouter_api_key" in settings, "openrouter_api_key present")
         check("gemini_api_key" in settings, "gemini_api_key present")
+        check("nvidia_api_key" in settings, "nvidia_api_key present")
         check("openrouter_model_name" in settings, "openrouter_model_name present")
         check("gemini_model_name" in settings, "gemini_model_name present")
+        check("nvidia_model_name" in settings, "nvidia_model_name present")
         check("ai_agent_enabled" in settings, "ai_agent_enabled present")
         check("ai_max_requests_per_day" in settings, "ai_max_requests_per_day present")
-        check(len(settings) == 6, f"All 6 settings present (got {len(settings)})")
+        check(len(settings) == 8, f"All 8 settings present (got {len(settings)})")
 
     # ── Step 4: PUT model names ──
     log(f"\n{'='*60}")
@@ -210,6 +212,7 @@ def run_tests():
     resp = put_ai_settings(token1, {
         "openrouter_model_name": "user1-custom-openrouter-model",
         "gemini_model_name": "user1-custom-gemini-model",
+        "nvidia_model_name": "user1-custom-nvidia-model",
     }, "Save model names for User 1")
     check(resp.status_code == 200, "Model names saved (200)")
 
@@ -219,10 +222,13 @@ def run_tests():
         s = data1b.get("data", {}).get("settings", {})
         or_model = s.get("openrouter_model_name", {}).get("value", "")
         gem_model = s.get("gemini_model_name", {}).get("value", "")
+        nv_model = s.get("nvidia_model_name", {}).get("value", "")
         check(or_model == "user1-custom-openrouter-model",
               f"OpenRouter model name persisted: '{or_model}'")
         check(gem_model == "user1-custom-gemini-model",
               f"Gemini model name persisted: '{gem_model}'")
+        check(nv_model == "user1-custom-nvidia-model",
+              f"NVIDIA model name persisted: '{nv_model}'")
 
     # ── Step 5: PUT API keys ──
     log(f"\n{'='*60}")
@@ -231,6 +237,7 @@ def run_tests():
     resp = put_ai_settings(token1, {
         "openrouter_api_key": "sk-test-key-1234567890",
         "gemini_api_key": "AIza-test-key-1234567890",
+        "nvidia_api_key": "nvapi-test-key-1234567890",
     }, "Save API keys for User 1")
     check(resp.status_code == 200, "API keys saved (200)")
 
@@ -239,10 +246,13 @@ def run_tests():
         s = data1c.get("data", {}).get("settings", {})
         or_key = s.get("openrouter_api_key", {}).get("value", "")
         gem_key = s.get("gemini_api_key", {}).get("value", "")
+        nv_key = s.get("nvidia_api_key", {}).get("value", "")
         check("*" in str(or_key), f"OpenRouter key masked: '{or_key[:10]}...'")
         check("*" in str(gem_key), f"Gemini key masked: '{gem_key[:10]}...'")
+        check("*" in str(nv_key), f"NVIDIA key masked: '{nv_key[:10]}...'")
         check(or_key != "sk-test-key-1234567890", "OpenRouter key NOT returned in plaintext")
         check(gem_key != "AIza-test-key-1234567890", "Gemini key NOT returned in plaintext")
+        check(nv_key != "nvapi-test-key-1234567890", "NVIDIA key NOT returned in plaintext")
 
     # ── Step 6: PUT with masked value (unchanged) ──
     log(f"\n{'='*60}")

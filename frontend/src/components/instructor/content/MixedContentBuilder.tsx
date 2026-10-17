@@ -6,7 +6,8 @@ import {
   Plus, GripVertical, Trash2, Type, Video, FileText, 
   Image as ImageIcon, Heading1, Eye, Code, Check, X,
   BookOpen, PlayCircle, FileCheck, Sparkles, Wand2, Loader2,
-  LayoutGrid, ChevronDown, Grip, ArrowUpDown, PanelTop
+  LayoutGrid, ChevronDown, Grip, ArrowUpDown, PanelTop,
+  Clock, TimerReset
 } from 'lucide-react';
 
 // Type-specific accent colors
@@ -132,10 +133,31 @@ export default function MixedContentBuilder({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [generatingAI, setGeneratingAI] = useState(false);
+  const [genTask, setGenTask] = useState<{
+    taskId: string;
+    progress: number;
+    description: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'rate_limited';
+    rateLimit?: { wait_duration_seconds?: number; wait_remaining_seconds?: number };
+  } | null>(null);
+  const [genElapsed, setGenElapsed] = useState(0);
   const [enhancingSection, setEnhancingSection] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [textEditorPreview, setTextEditorPreview] = useState<Record<string, boolean>>({});
   const lastEmittedValueRef = useRef(''); // Track last value sent to parent to prevent feedback loop
+
+  // Elapsed-time ticker while AI generation runs
+  useEffect(() => {
+    if (!generatingAI) {
+      setGenElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setGenElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [generatingAI]);
 
   // Update sections when value prop changes (e.g., from AI generation)
   useEffect(() => {
@@ -289,21 +311,118 @@ export default function MixedContentBuilder({
     }
 
     setGeneratingAI(true);
+    setGenTask(null);
     try {
-      const result = await aiAgentService.generateMixedContent({
-        course_id: Number(courseId),
-        module_id: Number(moduleId),
-        lesson_title: lessonTitle,
-        template_id: templateId
-      });
+      const result = await aiAgentService.generateMixedContent(
+        {
+          course_id: Number(courseId),
+          module_id: Number(moduleId),
+          lesson_title: lessonTitle,
+          template_id: templateId
+        },
+        (status) => {
+          // Live task status from /ai-agent/task/{id}/status polling
+          setGenTask((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  progress: typeof status.progress === 'number' ? status.progress : prev.progress,
+                  description: status.current_step_description || prev.description,
+                  status: status.status,
+                  rateLimit: status.rate_limit_info || prev.rateLimit,
+                }
+              : prev
+          );
+        },
+        (taskId) => {
+          setGenTask({
+            taskId,
+            progress: 0,
+            description: 'Submitted to the AI engine — starting generation…',
+            status: 'pending',
+          });
+        }
+      );
 
       if (result.success && result.data?.sections) {
-        const generatedSections: ContentSection[] = result.data.sections.map((section: any, index: number) => ({
-          id: `section-${Date.now()}-${index}`,
-          type: section.type,
-          content: section.content,
-          metadata: section.metadata || { title: section.title || '' }
-        }));
+        const aiSections: any[] = result.data.sections;
+        const template = CONTENT_TEMPLATES.find(t => t.id === templateId);
+
+        // Merge the AI output onto the selected template: fill the template's
+        // slots (in order) with AI sections of the same type, keep the
+        // template's own titles/placeholders when the AI omits them, and append
+        // any extra AI sections at the end so the lesson can grow past the template.
+        let generatedSections: ContentSection[];
+        if (template && template.sections.length > 0) {
+          const used = new Array(aiSections.length).fill(false);
+          const merged: ContentSection[] = [];
+          let cursor = 0;
+
+          template.sections.forEach((slot: any, slotIdx: number) => {
+            // Prefer an unused AI section of this type that appears after the
+            // last match (order affinity); wrap around only if none is ahead.
+            let matchIdx = aiSections.findIndex(
+              (s, i) => !used[i] && i >= cursor && s.type === slot.type
+            );
+            if (matchIdx === -1) {
+              matchIdx = aiSections.findIndex((s, i) => !used[i] && s.type === slot.type);
+            }
+            if (matchIdx === -1) {
+              // No AI section of this type left — keep the template placeholder.
+              merged.push({
+                id: `section-${Date.now()}-${slotIdx}`,
+                type: slot.type,
+                content: slot.content || '',
+                metadata: { title: slot.title || '' }
+              });
+              return;
+            }
+            used[matchIdx] = true;
+            cursor = matchIdx + 1;
+            const gen = aiSections[matchIdx];
+            const url = typeof gen.url === 'string' && gen.url ? gen.url : undefined;
+            merged.push({
+              id: `section-${Date.now()}-${slotIdx}`,
+              type: slot.type,
+              content: gen.content ?? '',
+              metadata: {
+                title: gen.title || slot.title || '',
+                ...(url ? { url } : {}),
+                ...(gen.metadata || {})
+              }
+            });
+          });
+
+          // Append extra AI sections the template didn't account for.
+          aiSections.forEach((gen, i) => {
+            if (used[i]) return;
+            const url = typeof gen.url === 'string' && gen.url ? gen.url : undefined;
+            merged.push({
+              id: `section-${Date.now()}-extra-${i}`,
+              type: gen.type,
+              content: gen.content ?? '',
+              metadata: {
+                title: gen.title || '',
+                ...(url ? { url } : {}),
+                ...(gen.metadata || {})
+              }
+            });
+          });
+
+          generatedSections = merged;
+        } else {
+          generatedSections = aiSections.map((section: any, index: number) => ({
+            id: `section-${Date.now()}-${index}`,
+            type: section.type,
+            // Media sections carry their location in `url`, not `content`
+            content: section.content ?? '',
+            metadata: {
+              title: section.title || '',
+              ...(section.url ? { url: section.url } : {}),
+              ...(section.metadata || {})
+            }
+          }));
+        }
 
         // If there are existing sections, ask before replacing
         if (sections.length > 0) {
@@ -320,6 +439,9 @@ export default function MixedContentBuilder({
         }
 
         alert('✨ AI content generated successfully! You can now review and edit each section.');
+      } else if (/cancel/i.test(result.message || '')) {
+        // User pressed Cancel — not an error
+        toast.info('AI generation cancelled');
       } else {
         throw new Error(result.error || result.message || 'Failed to generate content');
       }
@@ -328,8 +450,23 @@ export default function MixedContentBuilder({
       alert(`Failed to generate AI content: ${error.message || 'Unknown error'}. Please try again.`);
     } finally {
       setGeneratingAI(false);
+      setGenTask(null);
     }
   };
+
+  // Cancel the running background generation task
+  const cancelGeneration = async () => {
+    if (!genTask?.taskId) return;
+    setGenTask((prev) => (prev ? { ...prev, description: 'Cancelling…' } : prev));
+    try {
+      await aiAgentService.cancelTask(genTask.taskId);
+    } catch {
+      toast.error('Could not cancel the generation task');
+    }
+  };
+
+  const formatTime = (totalSeconds: number) =>
+    `${Math.floor(totalSeconds / 60)}:${String(Math.max(0, totalSeconds) % 60).padStart(2, '0')}`;
 
 
 
@@ -864,7 +1001,84 @@ export default function MixedContentBuilder({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+      {/* AI generation progress overlay */}
+      {generatingAI && (
+        <div className="absolute inset-0 z-20 rounded-lg bg-white/70 dark:bg-slate-900/60 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="w-full max-w-md space-y-3 p-5 rounded-xl border border-purple-200/70 dark:border-purple-700/50 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/30 dark:to-indigo-900/20 shadow-lg">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-800/50 flex items-center justify-center shrink-0">
+                  <Wand2 className="w-4 h-4 text-purple-600 dark:text-purple-300" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    Generating mixed content
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                    {lessonTitle}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={cancelGeneration}
+                disabled={!genTask?.taskId || genTask?.description === 'Cancelling…'}
+                className="shrink-0 text-xs px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                Cancel
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2.5 text-sm text-purple-700 dark:text-purple-300">
+              <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
+              <span className="truncate font-medium">
+                {genTask?.description || 'Generating lesson content with AI…'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-2.5 bg-purple-100 dark:bg-purple-900/40 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                    genTask?.status === 'rate_limited'
+                      ? 'bg-gradient-to-r from-amber-400 to-amber-500'
+                      : 'bg-gradient-to-r from-purple-500 to-indigo-500'
+                  } ${!genTask || genTask.progress === 0 ? 'animate-pulse' : ''}`}
+                  style={{ width: `${Math.max(3, genTask?.progress || 0)}%` }}
+                />
+              </div>
+              <span className="text-xs font-semibold text-purple-600 dark:text-purple-300 tabular-nums min-w-[44px] text-right">
+                {genTask && genTask.progress > 0
+                  ? `${Math.round(genTask.progress)}%`
+                  : formatTime(genElapsed)}
+              </span>
+            </div>
+
+            {genTask?.status === 'rate_limited' && (
+              <div className="p-3 bg-amber-50/80 dark:bg-amber-900/25 rounded-lg border border-amber-200 dark:border-amber-700/50">
+                <div className="flex items-center gap-2">
+                  <TimerReset className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                  <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                    Rate limit cooling down — retrying automatically
+                    {typeof genTask.rateLimit?.wait_remaining_seconds === 'number' &&
+                      ` in ${formatTime(genTask.rateLimit.wait_remaining_seconds)}`}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-purple-200/60 dark:border-purple-800/40">
+              <span className="inline-flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                Elapsed: {formatTime(genElapsed)}
+              </span>
+              <span className="text-purple-500 dark:text-purple-400">Runs in background — safe to wait</span>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-200 dark:border-slate-700">
         <div className="flex items-center gap-2.5">

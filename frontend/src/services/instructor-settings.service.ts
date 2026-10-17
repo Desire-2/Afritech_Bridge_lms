@@ -15,12 +15,15 @@ export interface AISettingItem {
   has_value: boolean;
 }
 
+export type AIProviderName = 'nvidia' | 'openrouter' | 'gemini';
+
 export interface ProviderStats {
   available: boolean;
   failure_count: number;
   is_cooling_down: boolean;
   requests_this_minute: number;
   rpm_limit: number;
+  model?: string;
 }
 
 export interface AIProviderResponse {
@@ -28,6 +31,7 @@ export interface AIProviderResponse {
   data: {
     settings: Record<string, AISettingItem>;
     provider_stats: {
+      nvidia: ProviderStats;
       openrouter: ProviderStats;
       gemini: ProviderStats;
       current_provider: string;
@@ -74,7 +78,7 @@ class InstructorSettingsService {
    * Test AI provider connection
    */
   async testAIConnection(
-    provider: 'openrouter' | 'gemini'
+    provider: AIProviderName
   ): Promise<{
     success: boolean;
     message: string;
@@ -104,12 +108,14 @@ class InstructorSettingsService {
       has_personal_keys: boolean;
       active_provider: string;
       provider_stats: {
+        nvidia: ProviderStats;
         openrouter: ProviderStats;
         gemini: ProviderStats;
       };
       model_names: {
         openrouter_model_name: string;
         gemini_model_name: string;
+        nvidia_model_name: string;
       };
     };
   }> {

@@ -223,6 +223,55 @@ class NVIDIAProvider(AIProvider):
             "The NVIDIA API request failed.", provider=self.name, original=exc,
         )
 
+    def _error_for_status(self, status_code: int, detail: str,
+                          headers: Optional[Dict[str, str]] = None) -> ProviderError:
+        """Map an HTTP status code to the correct normalized provider error.
+
+        Status codes are classified BEFORE any string matching so that a 429
+        always becomes a retryable ``ProviderRateLimitError`` (fallback=False,
+        same-provider backoff) instead of a non-retryable invalid-request error.
+        """
+        msg_lower = (detail or "").lower()
+        if status_code == 429:
+            retry_after = None
+            if headers:
+                retry_after = _parse_retry_after(
+                    (headers or {}).get("Retry-After"), minimum=1.0
+                )
+            return ProviderRateLimitError(
+                "The NVIDIA API rate limited the request. It will be retried.",
+                retry_after=retry_after, provider=self.name,
+            )
+        if status_code in (401, 403):
+            return ProviderAuthError(
+                "The NVIDIA API rejected the API key.",
+                provider=self.name,
+            )
+        if status_code == 404:
+            return ProviderInvalidRequestError(
+                f"NVIDIA model not found. {detail[:200]}",
+                provider=self.name,
+            )
+        if status_code == 400:
+            if any(word in msg_lower for word in ("context", "too large", "token")):
+                return ProviderContextOverflowError(
+                    "The request exceeded the model context window.",
+                    provider=self.name,
+                )
+            return ProviderInvalidRequestError(
+                f"The NVIDIA API rejected the request payload. {detail[:200]}",
+                provider=self.name,
+            )
+        if status_code >= 500:
+            return ProviderTemporaryError(
+                "The NVIDIA API returned a temporary server error.",
+                provider=self.name,
+            )
+        return ProviderTemporaryError(
+            f"The NVIDIA API request failed (HTTP {status_code}). {detail[:200]}",
+            provider=self.name,
+        )
+
     def _extract_usage(self, chunk_usage: Any) -> Dict[str, int]:
         if not chunk_usage:
             return {}
@@ -261,12 +310,7 @@ class NVIDIAProvider(AIProvider):
             )
             if resp.status_code >= 400:
                 detail = (resp.text or "")[:500]
-                err = self._normalize_error(
-                    ProviderTemporaryError(f"HTTP {resp.status_code}: {detail}")
-                    if resp.status_code >= 500
-                    else ProviderInvalidRequestError(f"HTTP {resp.status_code}: {detail}")
-                )
-                raise err
+                raise self._error_for_status(resp.status_code, detail, resp.headers)
             if stream:
                 return resp  # caller iterates lines
             data = resp.json()

@@ -164,6 +164,102 @@ def _make_task_meta(course_id: int = None, module_id: int = None,
     return meta
 
 
+def _generation_defaults() -> dict:
+    """Describe the AI generation configuration the UI should display by default."""
+    manager = ai_provider_manager
+    provider = manager.current_provider
+    models = {
+        'nvidia': manager.nvidia_model_name,
+        'openrouter': manager.openrouter_model_name,
+        'gemini': manager.gemini_model_name,
+    }
+    defaults = {
+        'provider': provider,
+        'model': models.get(provider),
+        'provider_order': list(manager.provider_order),
+        'available_providers': manager._available_providers(),
+    }
+    if provider == 'nvidia':
+        defaults.update({
+            'base_url': manager.nvidia_base_url,
+            'temperature': manager.nvidia_temperature,
+            'top_p': manager.nvidia_top_p,
+            'max_tokens': manager.nvidia_max_tokens,
+            'seed': manager.nvidia_seed,
+            'enable_thinking': manager.nvidia_enable_thinking,
+        })
+    elif provider == 'openrouter':
+        defaults.update({'temperature': 0.7, 'top_p': 0.9, 'max_tokens': 4096})
+    else:
+        defaults.update({
+            'temperature': 0.7,
+            'top_p': 0.9,
+            'max_tokens': manager.gemini_max_output_tokens,
+        })
+    return defaults
+
+
+def _request_overrides_from_payload(data) -> dict:
+    """
+    Extract validated AI generation parameters from a request body.
+    Only recognised, sane values are returned; anything else is ignored.
+    """
+    if not isinstance(data, dict):
+        return {}
+
+    overrides = {}
+
+    temperature = data.get('temperature')
+    if temperature is not None:
+        try:
+            overrides['temperature'] = max(0.0, min(1.0, float(temperature)))
+        except (TypeError, ValueError):
+            logger.warning(f"Ignoring invalid temperature override: {temperature}")
+
+    top_p = data.get('top_p')
+    if top_p is not None:
+        try:
+            overrides['top_p'] = max(0.0, min(1.0, float(top_p)))
+        except (TypeError, ValueError):
+            logger.warning(f"Ignoring invalid top_p override: {top_p}")
+
+    max_tokens = data.get('max_tokens')
+    if max_tokens is not None:
+        try:
+            overrides['max_tokens'] = max(256, min(32768, int(max_tokens)))
+        except (TypeError, ValueError):
+            logger.warning(f"Ignoring invalid max_tokens override: {max_tokens}")
+
+    model = data.get('model')
+    if isinstance(model, str) and model.strip() and len(model.strip()) <= 200:
+        overrides['model'] = model.strip()
+
+    return overrides
+
+
+def _task_for_current_user(task_id: str):
+    """
+    Load a background task and make sure the caller is allowed to see it.
+    Returns (status_dict, None) on success or (None, (response, status_code)).
+    """
+    status_info = task_manager.get_task_status(task_id)
+    if not status_info:
+        return None, (jsonify({"success": False, "message": "Task not found"}), 404)
+
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    is_admin = bool(user and user.role and user.role.name == 'admin')
+    if not is_admin and str(status_info.get('user_id')) != str(current_user_id):
+        logger.warning(
+            f"Task access denied: user {current_user_id} tried to read task {task_id[:8]}..."
+        )
+        return None, (jsonify({
+            "success": False,
+            "message": "You are not allowed to access this generation task"
+        }), 403)
+    return status_info, None
+
+
 # =====================
 # ENHANCED HEALTH & STATUS
 # =====================
@@ -176,13 +272,14 @@ def health_check():
     try:
         # Get comprehensive provider statistics
         stats = ai_agent_service.get_provider_stats()
-        
+
         # Check if providers are configured
+        nvidia_configured = bool(ai_agent_service.provider.nvidia_api_key)
         openrouter_configured = bool(ai_agent_service.provider.openrouter_api_key)
         gemini_configured = bool(ai_agent_service.provider.gemini_api_key)
-        
+
         # Determine overall health status
-        if openrouter_configured or gemini_configured:
+        if nvidia_configured or openrouter_configured or gemini_configured:
             status = "healthy"
             message = "AI Agent service is operational"
             api_configured = True
@@ -190,35 +287,36 @@ def health_check():
             status = "degraded"
             message = "No AI providers configured"
             api_configured = False
-        
+
         # Get provider state from ai_provider_manager for rate limit awareness
         provider_state = ai_provider_manager.get_provider_stats()
-        
+
+        def _provider_block(name: str, configured: bool, default_rpm: int) -> dict:
+            state = provider_state.get(name, {}) if isinstance(provider_state, dict) else {}
+            return {
+                "configured": configured,
+                "model": state.get("model"),
+                "current": ai_agent_service.provider.current_provider == name,
+                "is_cooling_down": state.get('is_cooling_down', False),
+                "cooldown_remaining_seconds": state.get('cooldown_remaining_seconds', 0),
+                "requests_this_minute": state.get('requests_this_minute', 0),
+                "rpm_limit": state.get('rpm_limit', default_rpm),
+                "failure_count": state.get('failure_count', 0),
+            }
+
         return jsonify({
             "status": status,
             "api_configured": api_configured,
             "message": message,
+            "active_provider": ai_agent_service.provider.current_provider,
+            "active_model": provider_state.get('active_model') if isinstance(provider_state, dict) else None,
             "providers": {
-                "openrouter": {
-                    "configured": openrouter_configured,
-                    "current": ai_agent_service.provider.current_provider == 'openrouter',
-                    "is_cooling_down": provider_state.get('openrouter', {}).get('is_cooling_down', False),
-                    "cooldown_remaining_seconds": provider_state.get('openrouter', {}).get('cooldown_remaining_seconds', 0),
-                    "requests_this_minute": provider_state.get('openrouter', {}).get('requests_this_minute', 0),
-                    "rpm_limit": provider_state.get('openrouter', {}).get('rpm_limit', 200),
-                    "failure_count": provider_state.get('openrouter', {}).get('failure_count', 0),
-                },
-                "gemini": {
-                    "configured": gemini_configured,
-                    "current": ai_agent_service.provider.current_provider == 'gemini',
-                    "is_cooling_down": provider_state.get('gemini', {}).get('is_cooling_down', False),
-                    "cooldown_remaining_seconds": provider_state.get('gemini', {}).get('cooldown_remaining_seconds', 0),
-                    "requests_this_minute": provider_state.get('gemini', {}).get('requests_this_minute', 0),
-                    "rpm_limit": provider_state.get('gemini', {}).get('rpm_limit', 15),
-                    "failure_count": provider_state.get('gemini', {}).get('failure_count', 0),
-                }
+                "nvidia": _provider_block('nvidia', nvidia_configured, 60),
+                "openrouter": _provider_block('openrouter', openrouter_configured, 200),
+                "gemini": _provider_block('gemini', gemini_configured, 15),
             },
             "statistics": stats,
+            "generation_defaults": _generation_defaults(),
             "features": {
                 "smart_caching": True,
                 "progress_tracking": True,
@@ -238,6 +336,7 @@ def health_check():
         }), 500
 
 @ai_agent_bp.route("/progress/<session_id>", methods=["GET"])
+@instructor_required
 def get_progress(session_id):
     """
     Get progress for a specific generation session
@@ -347,17 +446,17 @@ def force_provider():
     
     Request body:
     {
-        "provider": "openrouter" | "gemini"
+        "provider": "nvidia" | "openrouter" | "gemini"
     }
     """
     try:
         data = request.get_json()
         provider = data.get('provider')
-        
-        if provider not in ['openrouter', 'gemini']:
+
+        if provider not in ['nvidia', 'openrouter', 'gemini']:
             return jsonify({
                 "success": False,
-                "message": "Invalid provider. Use 'openrouter' or 'gemini'"
+                "message": "Invalid provider. Use 'nvidia', 'openrouter' or 'gemini'"
             }), 400
         
         ai_agent_service.force_provider(provider)
@@ -380,9 +479,9 @@ def force_provider():
 def get_task_status(task_id):
     """Poll status/progress of a background generation task"""
     try:
-        status = task_manager.get_task_status(task_id)
-        if not status:
-            return jsonify({"success": False, "message": "Task not found"}), 404
+        status, error_response = _task_for_current_user(task_id)
+        if error_response:
+            return error_response
         # rate_limit_info is already included in the status dict by task.to_dict()
         return jsonify({"success": True, "data": status}), 200
     except Exception as e:
@@ -395,9 +494,9 @@ def get_task_status(task_id):
 def get_task_result(task_id):
     """Get the final result of a completed background task"""
     try:
-        status_info = task_manager.get_task_status(task_id)
-        if not status_info:
-            return jsonify({"success": False, "message": "Task not found"}), 404
+        status_info, error_response = _task_for_current_user(task_id)
+        if error_response:
+            return error_response
         
         task_status = status_info.get('status')
         
@@ -432,6 +531,9 @@ def get_task_result(task_id):
 def cancel_task(task_id):
     """Cancel a running background task"""
     try:
+        _, error_response = _task_for_current_user(task_id)
+        if error_response:
+            return error_response
         cancelled = task_manager.cancel_task(task_id)
         if cancelled:
             return jsonify({"success": True, "message": "Task cancelled"}), 200
@@ -482,9 +584,10 @@ def generate_course_outline():
         target_audience = data.get('target_audience', '')
         learning_objectives = data.get('learning_objectives', '')
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         logger.info(f"Generating course outline for topic: {topic} (background={background})")
-        
+
         # Background mode: return task_id immediately
         if background:
             current_user_id = get_jwt_identity()
@@ -503,18 +606,20 @@ def generate_course_outline():
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_title=topic),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": "Course outline generation started in background"
             }), 202
-        
-        ai_response = ai_agent_service.generate_course_outline(
-            topic=topic,
-            target_audience=target_audience,
-            learning_objectives=learning_objectives
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            ai_response = ai_agent_service.generate_course_outline(
+                topic=topic,
+                target_audience=target_audience,
+                learning_objectives=learning_objectives
+            )
         
         # Convert AIResponse to API response format
         response_data = ai_response.to_dict()
@@ -580,7 +685,8 @@ def generate_multiple_modules():
         course_context = _gather_course_context(course_id)
         
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         # Background mode: stepwise generation with delays
         if background:
             task_id = task_manager.submit_task(
@@ -598,21 +704,23 @@ def generate_multiple_modules():
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": f"Generating {num_modules} modules step by step in background"
             }), 202
-        
-        ai_response = ai_agent_service.generate_multiple_modules(
-            course_title=course.title,
-            course_description=course.description or '',
-            course_objectives=course.learning_objectives or '',
-            num_modules=num_modules,
-            existing_modules=existing_modules_context,
-            course_context=course_context
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            ai_response = ai_agent_service.generate_multiple_modules(
+                course_title=course.title,
+                course_description=course.description or '',
+                course_objectives=course.learning_objectives or '',
+                num_modules=num_modules,
+                existing_modules=existing_modules_context,
+                course_context=course_context
+            )
         
         # Convert AIResponse to API response format
         response_data = ai_response.to_dict()
@@ -674,7 +782,8 @@ def generate_module_content():
         course_context = _gather_course_context(course_id)
         
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         if background:
             current_user_id_bg = get_jwt_identity()
             task_id = task_manager.submit_task(
@@ -695,21 +804,23 @@ def generate_module_content():
                 user_id=current_user_id_bg,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": "Module content generation started in background"
             }), 202
-        
-        ai_response = ai_agent_service.generate_module_content(
-            course_title=course.title,
-            course_description=course.description or '',
-            course_objectives=course.learning_objectives or '',
-            module_title=module_title,
-            existing_modules=existing_modules_context,
-            course_context=course_context
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            ai_response = ai_agent_service.generate_module_content(
+                course_title=course.title,
+                course_description=course.description or '',
+                course_objectives=course.learning_objectives or '',
+                module_title=module_title,
+                existing_modules=existing_modules_context,
+                course_context=course_context
+            )
         
         # Convert AIResponse to API response format
         response_data = ai_response.to_dict()
@@ -782,7 +893,8 @@ def generate_multiple_lessons():
         logger.info(f"Generating {num_lessons} lessons for module: {module.title} (existing lessons: {len(existing_lessons)}, course modules: {len(course_context)})")
         
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         # Background mode: deep stepwise generation with cross-module context
         if background:
             task_id = task_manager.submit_task(
@@ -801,27 +913,31 @@ def generate_multiple_lessons():
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": f"Generating {num_lessons} lessons step by step with cross-module context"
             }), 202
-        
-        result = ai_agent_service.generate_multiple_lessons(
-            course_title=course.title,
-            module_title=module.title,
-            module_description=module.description or '',
-            module_objectives=module.learning_objectives or '',
-            num_lessons=num_lessons,
-            existing_lessons=existing_lessons_data,
-            course_context=course_context,
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            result = ai_agent_service.generate_multiple_lessons(
+                course_title=course.title,
+                module_title=module.title,
+                module_description=module.description or '',
+                module_objectives=module.learning_objectives or '',
+                num_lessons=num_lessons,
+                existing_lessons=existing_lessons_data,
+                course_context=course_context,
+            )
         
         # Convert AIResponse to dict for JSON serialization
         response_data = result.to_dict()
         
-        return jsonify(response_data), 200
+        if result.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating multiple lessons: {e}")
@@ -877,6 +993,9 @@ def generate_lesson_content():
         
         lesson_title = data.get('lesson_title', '')
         lesson_description = data.get('lesson_description', '')
+        difficulty_level = data.get('difficulty_level', 'intermediate')
+        if difficulty_level not in ['beginner', 'intermediate', 'advanced']:
+            return jsonify({"message": "Invalid difficulty_level. Must be 'beginner', 'intermediate', or 'advanced'"}), 400
         
         logger.info(f"Generating lesson content for module: {module.title} (existing lessons: {len(existing_lessons)})")
         
@@ -884,7 +1003,8 @@ def generate_lesson_content():
         course_context = _gather_course_context(course_id)
         
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         if background:
             # Use deep stepwise generation for higher quality
             task_id = task_manager.submit_task(
@@ -899,28 +1019,32 @@ def generate_lesson_content():
                     'lesson_description': lesson_description,
                     'existing_lessons': existing_lessons_data,
                     'course_context': course_context,
+                    'difficulty_level': difficulty_level,
                 },
                 total_steps=5,
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": "Deep lesson content generation started in background (outline → sections → enhance)"
             }), 202
-        
-        ai_response = ai_agent_service.generate_lesson_content(
-            course_title=course.title,
-            module_title=module.title,
-            module_description=module.description or '',
-            module_objectives=module.learning_objectives or '',
-            lesson_title=lesson_title,
-            lesson_description=lesson_description,
-            existing_lessons=existing_lessons_data,
-            course_context=course_context,
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            ai_response = ai_agent_service.generate_lesson_content(
+                course_title=course.title,
+                module_title=module.title,
+                module_description=module.description or '',
+                module_objectives=module.learning_objectives or '',
+                lesson_title=lesson_title,
+                lesson_description=lesson_description,
+                existing_lessons=existing_lessons_data,
+                course_context=course_context,
+                difficulty_level=difficulty_level,
+            )
         
         # Convert AIResponse to API response format
         response_data = ai_response.to_dict()
@@ -984,6 +1108,8 @@ def generate_comprehensive_lesson():
         if difficulty_level not in ['beginner', 'intermediate', 'advanced']:
             return jsonify({"message": "Invalid difficulty_level. Must be 'beginner', 'intermediate', or 'advanced'"}), 400
         
+        overrides = _request_overrides_from_payload(data)
+        
         # Verify the caller may act on this course (owns it, or is an admin)
         course, course_error = _course_for_generation(course_id, current_user_id)
         if course_error:
@@ -1025,11 +1151,13 @@ def generate_comprehensive_lesson():
                     'lesson_description': lesson_description,
                     'existing_lessons': existing_lessons_data,
                     'course_context': course_context,
+                    'difficulty_level': difficulty_level,
                 },
-                total_steps=6,
+                total_steps=5,
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1038,23 +1166,26 @@ def generate_comprehensive_lesson():
             }), 202
         
         # Sync mode: use the enhanced generation method with validation
-        result = ai_agent_service.generate_comprehensive_lesson_with_validation(
-            course_title=course.title,
-            module_title=module.title,
-            module_description=module.description or '',
-            module_objectives=module.learning_objectives or '',
-            lesson_title=lesson_title,
-            lesson_description=lesson_description,
-            difficulty_level=difficulty_level,
-            existing_lessons=existing_lessons_data
-        )
+        with ai_provider_manager.request_overrides(**overrides):
+            result = ai_agent_service.generate_comprehensive_lesson_with_validation(
+                course_title=course.title,
+                module_title=module.title,
+                module_description=module.description or '',
+                module_objectives=module.learning_objectives or '',
+                lesson_title=lesson_title,
+                lesson_description=lesson_description,
+                difficulty_level=difficulty_level,
+                existing_lessons=existing_lessons_data
+            )
         
         # Convert AIResponse to dict for JSON serialization
         response_data = result.to_dict()
         if result.data and 'quality_metrics' in result.data:
             response_data['message'] = f"Comprehensive lesson generated successfully with quality score: {result.data.get('quality_metrics', {}).get('average_score', 0):.1f}/100"
         
-        return jsonify(response_data), 200
+        if result.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating comprehensive lesson: {e}", exc_info=True)
@@ -1124,7 +1255,8 @@ def generate_quiz_questions():
         logger.info(f"Generating {num_questions} quiz questions for module: {module.title}")
         
         background = data.get('background', False)
-        
+        overrides = _request_overrides_from_payload(data)
+
         if background:
             task_id = task_manager.submit_task(
                 task_type='generate-quiz-questions',
@@ -1144,21 +1276,23 @@ def generate_quiz_questions():
                 user_id=current_user_id,
                 on_complete=handle_task_completion,
                 task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+                request_overrides=overrides,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
                 "message": f"Generating {num_questions} quiz questions in background"
             }), 202
-        
-        result = ai_agent_service.generate_quiz_questions(
-            course_title=course.title,
-            module_title=module.title,
-            lesson_title=lesson.title if lesson else module.title,
-            lesson_content=lesson_content,
-            num_questions=num_questions,
-            question_types=question_types
-        )
+
+        with ai_provider_manager.request_overrides(**overrides):
+            result = ai_agent_service.generate_quiz_questions(
+                course_title=course.title,
+                module_title=module.title,
+                lesson_title=lesson.title if lesson else module.title,
+                lesson_content=lesson_content,
+                num_questions=num_questions,
+                question_types=question_types
+            )
         
         # Convert AIResponse to dict for JSON serialization
         response_data = result.to_dict()
@@ -1455,6 +1589,7 @@ def generate_quiz_from_content():
             user_id=current_user_id,
             on_complete=handle_task_completion,
             task_meta=_make_task_meta(course_id=course_id, module_id=data.get('module_id'), course_title=course.title),
+            request_overrides=_request_overrides_from_payload(data),
         )
         return jsonify({
             "success": True, "background": True,
@@ -1849,6 +1984,7 @@ def generate_mixed_content():
         lesson_description = data.get('lesson_description', '')
         template_id = data.get('template_id')
         existing_sections = data.get('existing_sections', [])
+        overrides = _request_overrides_from_payload(data)
         
         # Verify access
         course = Course.query.get(course_id)
@@ -1893,6 +2029,7 @@ def generate_mixed_content():
             user_id=current_user_id,
             on_complete=handle_task_completion,
             task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+            request_overrides=overrides,
         )
         return jsonify({
             "success": True, "background": True,

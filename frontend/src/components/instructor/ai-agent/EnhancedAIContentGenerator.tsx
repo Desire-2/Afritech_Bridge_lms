@@ -66,6 +66,15 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
   const [waitRemaining, setWaitRemaining] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [generationDefaults, setGenerationDefaults] = useState<{
+    provider?: string;
+    model?: string;
+    temperature?: number;
+    top_p?: number;
+    max_tokens?: number;
+    seed?: number;
+    enable_thinking?: boolean;
+  } | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Form state
@@ -80,14 +89,30 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
     requirements: ''
   });
   
-  // Advanced settings
+  // Advanced settings — defaults mirror the backend NVIDIA Nemotron configuration
   const [settings, setSettings] = useState({
-    creativity: 0.7,
+    creativity: 1.0,
     includeExamples: true,
     includeExercises: true,
     generateQuiz: type === 'lesson',
     detailLevel: 'comprehensive'
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    aiAgentService.healthCheck()
+      .then((health: any) => {
+        if (cancelled) return;
+        setGenerationDefaults(health?.generation_defaults ?? {
+          provider: health?.active_provider,
+          model: health?.active_model,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setGenerationDefaults(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -157,6 +182,7 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
               topic: formData.title,
               target_audience: formData.targetAudience,
               learning_objectives: formData.requirements,
+              temperature: settings.creativity,
             },
             handleProgressUpdate,
           );
@@ -170,12 +196,12 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
           }
           if (batchMode) {
             response = await aiAgentService.generateMultipleModules(
-              { course_id: courseId, num_modules: batchCount },
+              { course_id: courseId, num_modules: batchCount, temperature: settings.creativity },
               handleProgressUpdate,
             );
           } else {
             response = await aiAgentService.generateModuleContent(
-              { course_id: courseId, module_title: formData.title.trim() },
+              { course_id: courseId, module_title: formData.title.trim(), temperature: settings.creativity },
               handleProgressUpdate,
             );
           }
@@ -189,7 +215,7 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
           }
           if (batchMode) {
             response = await aiAgentService.generateMultipleLessons(
-              { course_id: courseId, module_id: moduleId, num_lessons: batchCount },
+              { course_id: courseId, module_id: moduleId, num_lessons: batchCount, temperature: settings.creativity },
               handleProgressUpdate,
             );
           } else {
@@ -199,6 +225,7 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
                 module_id: moduleId,
                 lesson_title: formData.title.trim(),
                 lesson_description: formData.description,
+                temperature: settings.creativity,
               },
               handleProgressUpdate,
             );
@@ -218,6 +245,7 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
               module_id: moduleId,
               num_questions: numQuestions,
               question_types: ['multiple_choice', 'true_false'],
+              temperature: settings.creativity,
             },
             handleProgressUpdate,
           );
@@ -600,6 +628,27 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
             </CardHeader>
             
             <CardContent className="space-y-6">
+              <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-primary" />
+                    <Label>AI Model</Label>
+                  </div>
+                  <Badge variant="secondary">
+                    {generationDefaults?.model || 'NVIDIA Nemotron (default)'}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground sm:grid-cols-4">
+                  <span>Temperature: {generationDefaults?.temperature ?? 1.0}</span>
+                  <span>Top-p: {generationDefaults?.top_p ?? 0.95}</span>
+                  <span>Max tokens: {(generationDefaults?.max_tokens ?? 16384).toLocaleString()}</span>
+                  <span>Seed: {generationDefaults?.seed ?? 42}</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Default configuration used for course, module, lesson and quiz generation.
+                </p>
+              </div>
+
               <div>
                 <Label>Creativity Level: {settings.creativity}</Label>
                 <Slider
@@ -612,7 +661,7 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
                   disabled={isGenerating}
                 />
                 <p className="text-sm text-muted-foreground mt-1">
-                  Higher values produce more creative and diverse content
+                  Sent as the generation temperature. Defaults to {generationDefaults?.temperature ?? 1.0} — higher values produce more creative and diverse content.
                 </p>
               </div>
               

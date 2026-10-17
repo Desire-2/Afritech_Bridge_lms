@@ -36,22 +36,26 @@ export interface CourseOutlineRequest {
   topic: string;
   target_audience?: string;
   learning_objectives?: string;
+  temperature?: number;
 }
 
 export interface ModuleContentRequest {
   course_id: number;
   module_title?: string;
+  temperature?: number;
 }
 
 export interface MultipleModulesRequest {
   course_id: number;
   num_modules?: number;
+  temperature?: number;
 }
 
 export interface MultipleLessonsRequest {
   course_id: number;
   module_id: number;
   num_lessons?: number;
+  temperature?: number;
 }
 
 export interface LessonContentRequest {
@@ -59,6 +63,7 @@ export interface LessonContentRequest {
   module_id: number;
   lesson_title?: string;
   lesson_description?: string;
+  temperature?: number;
 }
 
 export interface QuizQuestionsRequest {
@@ -67,6 +72,7 @@ export interface QuizQuestionsRequest {
   lesson_id?: number;
   num_questions?: number;
   question_types?: string[];
+  temperature?: number;
 }
 
 export interface AssignmentRequest {
@@ -230,6 +236,8 @@ class AIAgentService {
     status: string;
     api_configured: boolean;
     provider_stats?: ProviderStats;
+    active_provider?: string;
+    active_model?: string;
     message: string;
   }> {
     try {
@@ -254,8 +262,15 @@ class AIAgentService {
     const pollProgress = async () => {
       try {
         const response = await aiApiClient.get(`/ai-agent/progress/${sessionId}`);
-        const progress: GenerationProgress = response.data;
+        // The API responds with { success, data } — unwrap before using it
+        const payload = response.data ?? {};
+        const progress: GenerationProgress = payload.data ?? payload;
         
+        if (typeof progress?.progress !== 'number') {
+          this.progressCallbacks.delete(sessionId);
+          return;
+        }
+
         onProgress(progress);
         
         // Continue polling if not complete
@@ -278,7 +293,7 @@ class AIAgentService {
    */
   async cancelGeneration(sessionId: string): Promise<void> {
     try {
-      await aiApiClient.post(`/ai-agent/cancel/${sessionId}`);
+      await aiApiClient.delete(`/ai-agent/cancel-session/${sessionId}`);
       this.progressCallbacks.delete(sessionId);
     } catch (error) {
       console.error('Cancel generation failed:', error);
@@ -313,12 +328,15 @@ class AIAgentService {
   ): Promise<AIResponse> {
     return new Promise((resolve, reject) => {
       const startedAt = Date.now();
-      const maxPollMs = 10 * 60 * 1000;
+      // Deep/chapter generation can run for 20+ minutes (multi-step with
+      // inter-step delays) — a 10 minute cap aborted polling while the task
+      // was still running and auto-saving on the server.
+      const maxPollMs = 30 * 60 * 1000;
       let consecutiveFailures = 0;
 
       const poll = async () => {
         if (Date.now() - startedAt > maxPollMs) {
-          reject(new Error('AI generation timed out after 10 minutes. Please try again.'));
+          reject(new Error('AI generation is taking longer than expected. Check your dashboard shortly — the result will be saved automatically.'));
           return;
         }
         try {
@@ -447,6 +465,7 @@ class AIAgentService {
     endpoint: string,
     requestData: any,
     onProgress?: TaskProgressCallback,
+    onTaskStart?: (taskId: string) => void,
   ): Promise<AIResponse & { task_id?: string }> {
     try {
       // Step 1: Submit as background task
@@ -455,6 +474,15 @@ class AIAgentService {
       if (!taskResponse.task_id) {
         // Server didn't return a task_id — fall through (shouldn't happen)
         throw new Error('No task_id returned from server');
+      }
+
+      // Expose the task id immediately so the UI can offer cancel while polling
+      if (onTaskStart) {
+        try {
+          onTaskStart(taskResponse.task_id);
+        } catch (callbackError) {
+          console.error('onTaskStart callback failed:', callbackError);
+        }
       }
 
       // Step 2: Poll until complete
@@ -645,8 +673,9 @@ class AIAgentService {
       existing_sections?: any[];
     },
     onProgress?: TaskProgressCallback,
+    onTaskStart?: (taskId: string) => void,
   ): Promise<AIResponse> {
-    return this.runInBackground('/ai-agent/generate-mixed-content', request, onProgress);
+    return this.runInBackground('/ai-agent/generate-mixed-content', request, onProgress, onTaskStart);
   }
 
   /**

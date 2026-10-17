@@ -382,7 +382,7 @@ def update_settings_bulk(current_user, validated_data):
         }
         
         # If AI provider settings were updated, reload config
-        ai_config_updated = any(k in settings_data for k in ('openrouter_api_key', 'gemini_api_key', 'gemini_model_name', 'openrouter_model_name'))
+        ai_config_updated = any(k in settings_data for k in ('openrouter_api_key', 'gemini_api_key', 'nvidia_api_key', 'gemini_model_name', 'openrouter_model_name', 'nvidia_model_name'))
         if ai_config_updated:
             logger.info("[SETTINGS] AI provider settings changed via admin bulk update — reloading config")
             try:

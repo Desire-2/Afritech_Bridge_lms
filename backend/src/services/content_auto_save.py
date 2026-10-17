@@ -100,8 +100,11 @@ def _auto_save_content(db, Course, Module, Lesson,
     # Extract the data payload from AIResponse.to_dict() format
     data = result.get('data', result) if isinstance(result, dict) else {}
     success = result.get('success', True) if isinstance(result, dict) else True
-    
-    if not success:
+    status = str(result.get('status', '')).lower() if isinstance(result, dict) else ''
+
+    # partial_success still carries usable content (routes treat it as a 200),
+    # so it must reach the save handlers instead of raising here.
+    if not success and status != 'partial_success':
         raise ValueError(result.get('message', 'Task returned unsuccessful result'))
 
     if task_type in ('generate-multiple-lessons',):
@@ -109,6 +112,9 @@ def _auto_save_content(db, Course, Module, Lesson,
     
     elif task_type in ('generate-lesson-content', 'generate-comprehensive-lesson'):
         return _save_single_lesson(db, Lesson, Module, module_id, course_id, data)
+
+    elif task_type in ('generate-mixed-content',):
+        return _save_mixed_content(db, Lesson, Module, module_id, course_id, data)
     
     elif task_type in ('generate-multiple-modules',):
         return _save_multiple_modules(db, Module, course_id, data)
@@ -138,6 +144,16 @@ def _auto_save_content(db, Course, Module, Lesson,
             'type': content_label,
             'reason': f'{content_label} preview is ready — review it in the course editor and save',
             'title': data.get('title', f'AI-generated {content_label}'),
+        }
+
+    elif task_type in ('enhance-content', 'enhance-section-content'):
+        # Pure transforms: the enhanced text is returned to the editor for the
+        # instructor to apply, so nothing is persisted here.
+        return {
+            'saved': False,
+            'type': 'enhancement',
+            'reason': 'enhanced content returned to the editor — review and save it there',
+            'title': data.get('title', 'AI Enhanced Content'),
         }
 
     else:
@@ -298,9 +314,44 @@ def _save_single_lesson(db, Lesson, Module, module_id: int, course_id: int,
     }
 
 
+def _normalize_mixed_sections(sections: Any) -> list:
+    """Keep only usable section dicts so the saved lesson passes validate_lesson_content."""
+    normalized = []
+    for section in sections or []:
+        if not isinstance(section, dict):
+            continue
+        section_type = str(section.get('type', '')).strip().lower()
+        if not section_type:
+            continue
+        cleaned = {key: value for key, value in section.items() if value not in (None, '')}
+        cleaned['type'] = section_type
+        normalized.append(cleaned)
+    return normalized
+
+
+def _save_mixed_content(db, Lesson, Module, module_id: int, course_id: int,
+                        data: Dict[str, Any]) -> Dict[str, Any]:
+    """Save AI-generated mixed content (sections) as a draft mixed-type lesson."""
+    sections = _normalize_mixed_sections(data.get('sections'))
+    if not sections:
+        return {'saved': False, 'reason': 'no sections in mixed content result'}
+
+    return _save_single_lesson(db, Lesson, Module, module_id, course_id, {
+        'title': (data.get('lesson_title') or data.get('title') or 'AI Generated Lesson').strip(),
+        'description': data.get('description', ''),
+        'learning_objectives': data.get('learning_objectives', ''),
+        'duration_minutes': data.get('duration_minutes'),
+        'content_type': 'mixed',
+        'content_data': json.dumps(sections),
+    })
+
+
 def _save_multiple_modules(db, Module, course_id: int,
                            data: Dict[str, Any]) -> Dict[str, Any]:
-    """Save multiple AI-generated modules to the DB"""
+    """Save multiple AI-generated modules to the DB.
+
+    Deduplication: modules whose titles already exist in the course are skipped.
+    """
     modules_data = data.get('modules', [])
     if not modules_data:
         return {'saved': False, 'reason': 'no modules in result'}
@@ -308,30 +359,46 @@ def _save_multiple_modules(db, Module, course_id: int,
     if not course_id:
         return {'saved': False, 'reason': 'no course_id provided'}
 
+    existing_titles = {
+        (module.title or '').strip().lower()
+        for module in Module.query.filter_by(course_id=course_id).all()
+    }
+
     last_module = Module.query.filter_by(course_id=course_id)\
         .order_by(Module.order.desc()).first()
     next_order = (last_module.order + 1) if last_module else 1
 
     created = []
+    skipped = []
     for i, mod_data in enumerate(modules_data):
+        title = mod_data.get('title', f'Module {next_order + i}') or f'Module {next_order + i}'
+        title_key = title.strip().lower()
+        if title_key in existing_titles:
+            skipped.append(title)
+            logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
+            continue
+
         module = Module(
-            title=mod_data.get('title', f'Module {next_order + i}'),
+            title=title,
             description=mod_data.get('description', ''),
             learning_objectives=mod_data.get('learning_objectives', ''),
             course_id=course_id,
-            order=mod_data.get('order', next_order + i),
+            order=mod_data.get('order', next_order + len(created)),
             is_published=False,
         )
         db.session.add(module)
-        created.append(mod_data.get('title', f'Module {next_order + i}'))
+        created.append(title)
+        existing_titles.add(title_key)
 
     db.session.commit()
-    logger.info(f"Auto-saved {len(created)} modules to course {course_id}")
+    logger.info(f"Auto-saved {len(created)} modules to course {course_id} "
+                f"(skipped {len(skipped)} duplicates)")
     return {
         'saved': True,
         'type': 'modules',
         'count': len(created),
         'titles': created,
+        'skipped_duplicates': skipped,
         'course_id': course_id,
     }
 
@@ -343,6 +410,16 @@ def _save_single_module(db, Module, course_id: int,
         return {'saved': False, 'reason': 'no course_id provided'}
 
     title = data.get('title', 'AI Generated Module')
+
+    existing = Module.query.filter_by(course_id=course_id)\
+        .filter(db.func.lower(Module.title) == title.strip().lower()).first()
+    if existing:
+        logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
+        return {
+            'saved': False,
+            'reason': f'module "{title}" already exists in this course',
+            'existing_module_id': existing.id,
+        }
 
     last_module = Module.query.filter_by(course_id=course_id)\
         .order_by(Module.order.desc()).first()

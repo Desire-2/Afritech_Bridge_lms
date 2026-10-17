@@ -145,7 +145,18 @@ class OpenRouterProvider(AIProvider):
             )
             if resp.status_code >= 400:
                 err: ProviderError
-                if resp.status_code >= 500:
+                if resp.status_code == 429:
+                    retry_after = None
+                    raw_retry_after = (resp.headers or {}).get("Retry-After")
+                    if raw_retry_after:
+                        try:
+                            retry_after = max(1.0, float(raw_retry_after))
+                        except (TypeError, ValueError):
+                            retry_after = None
+                    err = ProviderRateLimitError(
+                        "OpenRouter rate limited the request. It will be retried.",
+                        retry_after=retry_after, provider=self.name)
+                elif resp.status_code >= 500:
                     err = ProviderTemporaryError(
                         f"OpenRouter HTTP {resp.status_code}", provider=self.name)
                 elif resp.status_code in (401, 403):

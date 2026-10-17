@@ -166,13 +166,20 @@ class GeminiProvider(AIProvider):
 
     @staticmethod
     def _conversation_to_prompt(messages):
-        last = messages[-1]
-        if last.get("role") == "user":
-            return last.get("content", "")
+        if not messages:
+            return ""
+        if len(messages) == 1:
+            return messages[0].get("content", "")
         parts = []
-        for m in messages:
-            role = "Assistant" if m.get("role") in ("assistant", "system") else "User"
-            parts.append(f"{role}: {m.get('content', '')}")
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            if role == "system":
+                parts.append(f"System instructions:\n{content}")
+            elif role == "assistant":
+                parts.append(f"Assistant:\n{content}")
+            else:
+                parts.append(content)
         return "\n\n".join(parts)
 
     def generate_structured(self, messages: List[Dict[str, str]], *,

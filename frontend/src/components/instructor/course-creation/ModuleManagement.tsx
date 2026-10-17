@@ -45,7 +45,29 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     currentStep: number; totalSteps: number; description: string; percentage: number;
   } | null>(null);
   const [contentGenTaskId, setContentGenTaskId] = useState<string | null>(null);
-  
+  const [mixedGenProgress, setMixedGenProgress] = useState<{
+    taskId: string;
+    progress: number;
+    description: string;
+    status: string;
+    rateLimit?: { wait_duration_seconds?: number; wait_remaining_seconds?: number };
+  } | null>(null);
+  const [mixedGenTaskId, setMixedGenTaskId] = useState<string | null>(null);
+  const [mixedGenElapsed, setMixedGenElapsed] = useState(0);
+
+  // Elapsed-time ticker while mixed-content generation runs
+  useEffect(() => {
+    if (!isGeneratingMixedContent) {
+      setMixedGenElapsed(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setMixedGenElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isGeneratingMixedContent]);
+
   const [moduleForm, setModuleForm] = useState({
     title: '',
     description: '',
@@ -1045,6 +1067,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
     setIsGeneratingMixedContent(true);
     setShowMixedContentAI(false);
+    setMixedGenProgress(null);
+    setMixedGenTaskId(null);
 
     try {
       const currentModuleId = editingLesson?.moduleId || showLessonForm.moduleId;
@@ -1055,12 +1079,33 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         return;
       }
 
-      const response = await aiAgentService.generateMixedContent({
-        course_id: course.id,
-        module_id: currentModule.id,
-        lesson_title: lessonForm.title,
-        lesson_description: lessonForm.description
-      });
+      const response = await aiAgentService.generateMixedContent(
+        {
+          course_id: course.id,
+          module_id: currentModule.id,
+          lesson_title: lessonForm.title,
+          lesson_description: lessonForm.description
+        },
+        (status) => {
+          setMixedGenProgress((prev) => ({
+            taskId: status.task_id || prev?.taskId || '',
+            progress: typeof status.progress === 'number' ? status.progress : (prev?.progress || 0),
+            description: status.current_step_description || prev?.description || 'Generating…',
+            status: status.status,
+            rateLimit: status.rate_limit_info || prev?.rateLimit,
+          }));
+          if (status.task_id) setMixedGenTaskId(status.task_id);
+        },
+        (taskId) => {
+          setMixedGenTaskId(taskId);
+          setMixedGenProgress({
+            taskId,
+            progress: 0,
+            description: 'Submitted to the AI engine — starting generation…',
+            status: 'pending',
+          });
+        }
+      );
 
       if ((response.success || response.status === 'partial_success') && response.data?.sections) {
         // Convert AI sections into editor items, then serialize through the
@@ -1094,6 +1139,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         }));
         
         toast.success('Mixed content generated successfully!');
+      } else if (/cancel/i.test(response.message || '')) {
+        toast.info('Mixed content generation cancelled');
       } else {
         toast.error('Failed to generate content: ' + (response.message || 'Unknown error'));
       }
@@ -1102,7 +1149,17 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       toast.error('Failed to generate content. Please try again.');
     } finally {
       setIsGeneratingMixedContent(false);
+      setMixedGenProgress(null);
+      setMixedGenTaskId(null);
     }
+  };
+
+  const handleCancelMixedGen = async () => {
+    if (!mixedGenTaskId) return;
+    setMixedGenProgress((prev) => (prev ? { ...prev, description: 'Cancelling…' } : prev));
+    await aiAgentService.cancelTask(mixedGenTaskId);
+    // The awaited generateMixedContent call resolves with a cancelled result,
+    // which clears the generating state and shows the confirmation toast.
   };
 
   // Handler for AI content generation (background deep stepwise)
@@ -1711,6 +1768,9 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             showDialog={showMixedContentAI}
                                             onToggleDialog={() => setShowMixedContentAI(!showMixedContentAI)}
                                             onGenerate={handleMixedContentAIGenerate}
+                                            progress={mixedGenProgress}
+                                            elapsedSeconds={mixedGenElapsed}
+                                            onCancel={handleCancelMixedGen}
                                           />
                                         </div>
                                         <MixedContentBuilder

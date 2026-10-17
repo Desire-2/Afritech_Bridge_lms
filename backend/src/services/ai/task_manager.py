@@ -77,12 +77,14 @@ class TaskInfo:
     result: Optional[Any] = None
     error: Optional[str] = None
     rate_limit_info: Optional[Dict[str, Any]] = None
+    request_overrides: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         result_dict = {
             "task_id": self.task_id,
             "task_type": self.task_type,
             "status": self.status.value,
+            "user_id": self.user_id,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
@@ -158,16 +160,19 @@ class BackgroundTaskManager:
                     args: tuple = (), kwargs: dict = None,
                     total_steps: int = 1, user_id: int = None,
                     on_complete: Callable = None,
-                    task_meta: dict = None) -> str:
+                    task_meta: dict = None,
+                    request_overrides: dict = None) -> str:
         """
         Submit a task for background execution. Returns task_id immediately.
-        
+
         The task_func MUST accept a `task_id` keyword argument:
             def my_func(arg1, arg2, task_id=None, **kwargs): ...
 
         on_complete: optional callback(task_id, task_type, result, task_meta)
                      called after successful completion (for auto-save, notifications, etc.)
         task_meta:   arbitrary dict passed through to on_complete (e.g. course_id, module_id)
+        request_overrides: optional AI generation parameters (temperature, top_p,
+                     max_tokens, model) applied for the duration of this task
         """
         task_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
@@ -179,6 +184,7 @@ class BackgroundTaskManager:
             created_at=now,
             total_steps=total_steps,
             user_id=user_id,
+            request_overrides=request_overrides or None,
         )
         self.tasks[task_id] = task_info
         self.cancel_flags[task_id] = threading.Event()
@@ -215,6 +221,13 @@ class BackgroundTaskManager:
                             f"in background task {task_id[:8]}...")
             except Exception as ctx_err:
                 logger.warning(f"[TASK] Failed to set user context for task {task_id[:8]}...: {ctx_err}")
+
+        if task.request_overrides:
+            try:
+                from .ai_providers import ai_provider_manager
+                ai_provider_manager.set_request_overrides(**task.request_overrides)
+            except Exception as ov_err:
+                logger.warning(f"[TASK] Failed to apply request overrides for task {task_id[:8]}...: {ov_err}")
 
         try:
             # Pass task_id to the function so it can report progress
@@ -257,6 +270,12 @@ class BackgroundTaskManager:
                                 error=str(e))
                 except Exception as cb_err:
                     logger.error(f"Task {task_id[:8]}... failure callback failed: {cb_err}")
+        finally:
+            try:
+                from .ai_providers import ai_provider_manager
+                ai_provider_manager.clear_request_overrides()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     # ===== Progress Tracking =====
 

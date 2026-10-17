@@ -606,6 +606,28 @@ def initialize_default_settings():
             'is_editable': True,
             'default_value': 'nvidia/nemotron-3-super-120b-a12b:free'
         },
+
+        # NVIDIA (Nemotron) — primary AI provider for content generation
+        {
+            'key': 'nvidia_api_key',
+            'value': '',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'NVIDIA API key for AI content generation (primary provider, overrides NVIDIA_API_KEY env var)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': ''
+        },
+        {
+            'key': 'nvidia_model_name',
+            'value': 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'NVIDIA model name used for AI content generation (overrides NVIDIA_AI_MODEL env var)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': 'nvidia/nemotron-3.5-super-vl-120b-a12b'
+        },
         # ── Booking Settings ──
         {
             'key': 'booking_slot_duration_minutes',
@@ -718,8 +740,10 @@ class UserAISetting(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
     openrouter_api_key = db.Column(db.Text, nullable=True, default='')
     gemini_api_key = db.Column(db.Text, nullable=True, default='')
+    nvidia_api_key = db.Column(db.Text, nullable=True, default='')
     openrouter_model_name = db.Column(db.String(200), nullable=True, default='')
     gemini_model_name = db.Column(db.String(200), nullable=True, default='')
+    nvidia_model_name = db.Column(db.String(200), nullable=True, default='')
     ai_agent_enabled = db.Column(db.Boolean, nullable=True, default=True)
     ai_max_requests_per_day = db.Column(db.Integer, nullable=True, default=100)
     created_at = db.Column(db.DateTime, default=now_local)
@@ -740,8 +764,10 @@ class UserAISetting(db.Model):
         return {
             'openrouter_api_key': _mask(self.openrouter_api_key) if mask_keys else (self.openrouter_api_key or ''),
             'gemini_api_key': _mask(self.gemini_api_key) if mask_keys else (self.gemini_api_key or ''),
+            'nvidia_api_key': _mask(self.nvidia_api_key) if mask_keys else (self.nvidia_api_key or ''),
             'openrouter_model_name': self.openrouter_model_name or '',
             'gemini_model_name': self.gemini_model_name or '',
+            'nvidia_model_name': self.nvidia_model_name or '',
             'ai_agent_enabled': self.ai_agent_enabled if self.ai_agent_enabled is not None else True,
             'ai_max_requests_per_day': self.ai_max_requests_per_day or 100,
         }
@@ -752,14 +778,15 @@ class UserAISetting(db.Model):
         Returns list of updated field names.
         """
         updated = []
-        for key in ('openrouter_api_key', 'gemini_api_key', 'openrouter_model_name',
-                     'gemini_model_name', 'ai_agent_enabled', 'ai_max_requests_per_day'):
+        for key in ('openrouter_api_key', 'gemini_api_key', 'nvidia_api_key',
+                     'openrouter_model_name', 'gemini_model_name', 'nvidia_model_name',
+                     'ai_agent_enabled', 'ai_max_requests_per_day'):
             if key not in data:
                 continue
             value = data[key]
 
             # Skip masked API key values (unchanged from frontend)
-            if mask_check and key in ('openrouter_api_key', 'gemini_api_key'):
+            if mask_check and key in ('openrouter_api_key', 'gemini_api_key', 'nvidia_api_key'):
                 if isinstance(value, str) and '*' in value and len(value) > 8:
                     continue
 

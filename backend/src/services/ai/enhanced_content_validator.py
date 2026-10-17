@@ -161,6 +161,20 @@ class EnhancedContentValidator:
         main_content = ""
         if content.get('content'):
             main_content = str(content['content'])
+        elif isinstance(content.get('sections'), list) and content['sections']:
+            # Mixed-content lessons: aggregate text from each section block
+            section_parts = []
+            for section in content['sections']:
+                if not isinstance(section, dict):
+                    continue
+                for field in ('content', 'title', 'description'):
+                    value = section.get(field)
+                    if value:
+                        section_parts.append(str(value))
+            main_content = ' '.join(section_parts)
+        elif content.get('content_data'):
+            # Lesson results store the body in content_data (markdown or mixed JSON)
+            main_content = str(content['content_data'])
         elif content.get('description'):
             main_content = str(content['description'])
         
@@ -187,6 +201,22 @@ class EnhancedContentValidator:
         
         return main_content
     
+    def _field_value(self, content: Dict[str, Any], field: str):
+        """Read a field, mapping the key names generators actually emit."""
+        value = content.get(field)
+        if value:
+            return value
+        if field == 'title':
+            return content.get('lesson_title') or content.get('module_title') or ''
+        if field == 'content':
+            # Lesson results store the body under content_data, not content
+            return content.get('content_data') or ''
+        if field == 'sections':
+            return content.get('sections') or content.get('content_data') or ''
+        if field == 'description':
+            return content.get('module_description') or ''
+        return value
+
     def _assess_completeness(self, content: Dict[str, Any], content_type: ContentType) -> QualityScore:
         """Assess content completeness based on expected fields"""
         score = 0.0
@@ -235,14 +265,14 @@ class EnhancedContentValidator:
         optional_fields = self._get_optional_fields(content_type)
         
         # Check required fields
-        missing_required = [field for field in required_fields if not content.get(field)]
+        missing_required = [field for field in required_fields if not self._field_value(content, field)]
         present_required = len(required_fields) - len(missing_required)
         
         if required_fields:
             score += (present_required / len(required_fields)) * 0.7
         
         # Check optional fields for bonus points
-        present_optional = sum(1 for field in optional_fields if content.get(field))
+        present_optional = sum(1 for field in optional_fields if self._field_value(content, field))
         if optional_fields:
             score += (present_optional / len(optional_fields)) * 0.3
         
@@ -266,10 +296,27 @@ class EnhancedContentValidator:
         suggestions = []
         
         # Check for proper nesting and hierarchy
-        if content_type == ContentType.LESSON_CONTENT:
-            if isinstance(content.get('content'), str):
-                text = content['content']
-                
+        if content_type in (ContentType.LESSON_CONTENT, ContentType.MIXED_CONTENT):
+            # Lesson bodies live in `content` (basic) or `content_data` (generators)
+            body = self._field_value(content, 'content')
+            text = str(body) if isinstance(body, str) else ""
+
+            if not text and isinstance(content.get('sections'), list) and content['sections']:
+                # Mixed content: structure comes from the section blocks
+                sections = [s for s in content['sections'] if isinstance(s, dict)]
+                if sections:
+                    typed = sum(1 for s in sections if s.get('type'))
+                    if typed == len(sections):
+                        score += 0.15
+                    else:
+                        score += 0.05
+                        suggestions.append("Ensure every section declares a type")
+                    if any(s.get('type') == 'heading' for s in sections):
+                        score += 0.05
+                    if len(sections) >= 3:
+                        score += 0.05
+
+            if text:
                 # Check for headings (more lenient)
                 heading_count = len(re.findall(r'^#+\s', text, re.MULTILINE))
                 if heading_count >= 2:  # Reduced from 3
@@ -489,6 +536,37 @@ class EnhancedContentValidator:
         
         if not main_content:
             return QualityScore(QualityAspect.FORMATTING, 0.5, "No content to format", [])
+
+        # Mixed content is judged on section structure, not markdown-in-prose
+        if (content_type == ContentType.MIXED_CONTENT
+                and isinstance(content.get('sections'), list) and content['sections']):
+            sections = [s for s in content['sections'] if isinstance(s, dict)]
+            typed = sum(1 for s in sections if s.get('type'))
+            media = sum(1 for s in sections if s.get('type') in ('video', 'pdf', 'image'))
+            text_sections = [
+                str(s.get('content', ''))
+                for s in sections if s.get('type') == 'text' and s.get('content')
+            ]
+            has_text_headers = any(
+                re.search(r'^#+\s', text, re.MULTILINE) for text in text_sections
+            )
+
+            section_score = 0.7
+            if sections and typed == len(sections):
+                section_score += 0.15
+            if len(sections) >= 3:
+                section_score += 0.1
+            if has_text_headers or any(s.get('type') == 'heading' for s in sections):
+                section_score += 0.05
+            if media:
+                section_score += 0.05
+
+            return QualityScore(
+                QualityAspect.FORMATTING,
+                max(0.0, min(1.0, section_score)),
+                "Mixed content structured into typed sections",
+                suggestions,
+            )
         
         # Check for markdown formatting
         has_headers = bool(re.search(r'^#+\s', main_content, re.MULTILINE))

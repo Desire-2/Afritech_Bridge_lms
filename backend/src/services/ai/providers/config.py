@@ -40,7 +40,7 @@ NVIDIA_AI_BASE_URL = os.environ.get(
     "NVIDIA_AI_BASE_URL", "https://integrate.api.nvidia.com/v1"
 )
 NVIDIA_AI_MODEL = os.environ.get(
-    "NVIDIA_AI_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"
+    "NVIDIA_AI_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b"
 )
 NVIDIA_AI_TEMPERATURE = _env_float("NVIDIA_AI_TEMPERATURE", 1.0)
 NVIDIA_AI_TOP_P = _env_float("NVIDIA_AI_TOP_P", 0.95)

@@ -38,6 +38,7 @@ interface HealthResponse {
   api_configured: boolean;
   message: string;
   providers: {
+    nvidia: ProviderInfo;
     openrouter: ProviderInfo;
     gemini: ProviderInfo;
   };
@@ -75,7 +76,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({ name, info, isActive, waitR
       <div className="p-4 border border-dashed border-slate-300 dark:border-slate-600 rounded-xl bg-slate-50/50 dark:bg-slate-800/30">
         <div className="flex items-center gap-2 text-sm text-slate-400 mb-2">
           <Cpu className="w-4 h-4" />
-          <span className="font-medium capitalize">{name}</span>
+          <span className="font-medium">{name === 'nvidia' ? 'NVIDIA' : name}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
           <XCircle className="w-3 h-3" />
@@ -106,7 +107,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({ name, info, isActive, waitR
             <Cpu className="w-3.5 h-3.5" />
           </div>
           <div>
-            <span className="text-sm font-semibold capitalize">{name}</span>
+            <span className="text-sm font-semibold">{name === 'nvidia' ? 'NVIDIA' : name}</span>
             {isActive && (
               <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-[10px] font-medium">
                 <Zap className="w-2.5 h-2.5" />
@@ -349,7 +350,13 @@ export const AIProviderHealthWidget: React.FC<AIProviderHealthWidgetProps> = ({
         ) : (
           <>
             {/* Provider cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <ProviderCard
+                name="nvidia"
+                info={providers?.nvidia}
+                isActive={activeProvider === 'nvidia'}
+                waitRemaining={cooldownRemaining['nvidia'] ?? 0}
+              />
               <ProviderCard
                 name="openrouter"
                 info={providers?.openrouter}

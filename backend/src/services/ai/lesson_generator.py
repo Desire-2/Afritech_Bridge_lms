@@ -3,6 +3,7 @@ Lesson Generation Module
 Handles AI-powered generation of lesson content including basic, comprehensive, and mixed content
 """
 
+import re
 import time
 import json
 import logging
@@ -186,6 +187,7 @@ class LessonGenerator:
                                lesson_title: str = "", lesson_description: str = "",
                                existing_lessons: Optional[List[Dict[str, Any]]] = None,
                                course_context: Optional[List[Dict[str, Any]]] = None,
+                               difficulty_level: str = "intermediate",
                                session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate detailed lesson content with markdown formatting
@@ -228,7 +230,8 @@ class LessonGenerator:
 Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
-Module Objectives: {module_objectives}{existing_lessons_text}{course_context_text}
+Module Objectives: {module_objectives}
+Difficulty Level: {difficulty_level}{existing_lessons_text}{course_context_text}
 {'Lesson Title: ' + lesson_title if lesson_title else 'You MUST generate a SPECIFIC, DESCRIPTIVE lesson title that clearly reflects the topic being taught. Do NOT use generic titles like "Course Lesson", "Lesson Title", or "Module Lesson".'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
@@ -347,12 +350,12 @@ Format as JSON:
         
         try:
             # Switch to alternative provider
-            if original_provider == 'openrouter':
-                self.provider.force_provider('gemini')
-                logger.info("Switched to Gemini for lesson generation retry")
+            alternative = self.provider.alternative_provider()
+            if alternative:
+                self.provider.force_provider(alternative)
+                logger.info(f"Switched to {alternative} for lesson generation retry")
             else:
-                self.provider.force_provider('openrouter')
-                logger.info("Switched to OpenRouter for lesson generation retry")
+                logger.warning("No alternative AI provider available for lesson generation retry")
             
             # Retry with alternative provider
             result, provider = rate_limit_handler.execute_with_retry(
@@ -459,9 +462,9 @@ Format as JSON:
         """
         existing_context = ""
         if existing_sections and len(existing_sections) > 0:
-            existing_context = "\\n\\nExisting Content Sections:\\n"
+            existing_context = "\n\nExisting Content Sections:\n"
             for idx, section in enumerate(existing_sections, 1):
-                existing_context += f"\\n{idx}. {section.get('type', 'unknown').upper()}: "
+                existing_context += f"\n{idx}. {section.get('type', 'unknown').upper()}: "
                 if section['type'] == 'heading':
                     existing_context += section.get('content', '')
                 elif section['type'] in ['text']:
@@ -469,22 +472,27 @@ Format as JSON:
                     existing_context += f"{content_preview}..."
                 elif section['type'] in ['video', 'pdf', 'image']:
                     existing_context += section.get('title', 'Untitled')
-            existing_context += "\\n\\n[Generate sections that complement and extend this existing content]"
-        
+            existing_context += "\n\n[Generate sections that complement and extend this existing content]"
+
         template_structure = self.TEMPLATES.get(template_id, None) if template_id else None
         template_guidance = ""
         if template_structure:
-            template_guidance = f"\\n\\nTemplate Structure ({template_id}):\\n"
+            template_guidance = f"\n\nTEMPLATE STRUCTURE ({template_id}) — FOLLOW THIS EXACTLY:\n"
             for idx, section in enumerate(template_structure, 1):
-                template_guidance += f"{idx}. {section['type'].upper()}: {section['role']}\\n"
-            template_guidance += "\\n[Generate content following this exact structure]"
-        
+                template_guidance += f"{idx}. {section['type'].upper()}: {section['role']}\n"
+            template_guidance += (
+                "\nYour \"sections\" array MUST contain, IN THIS ORDER, one entry for each numbered "
+                "slot above (same type in the same position). After the required slots you MAY append "
+                "extra sections (more text/heading/media blocks) if the lesson needs them.\n"
+                "[Generate content following this exact structure]"
+            )
+
         prompt = self._build_mixed_content_prompt(
-            course_title, module_title, module_description, 
-            lesson_title, lesson_description, existing_context, 
+            course_title, module_title, module_description,
+            lesson_title, lesson_description, existing_context,
             template_guidance, template_id
         )
-        
+
         result, provider = rate_limit_handler.execute_with_retry(
             self.provider.make_ai_request,
             prompt,
@@ -492,24 +500,215 @@ Format as JSON:
             task_id=task_id,
             step_label=f"Generating mixed content: {lesson_title}",
             temperature=0.7,
-            max_tokens=4096,
+            max_tokens=16384,
         )
+        sections = None
         if result:
             parsed = json_parser.parse_json_response(result, "mixed content")
-            if parsed and 'sections' in parsed:
+            if parsed and isinstance(parsed.get('sections'), list) and parsed['sections']:
+                sections = parsed['sections']
+
+        if sections is not None:
+            # Merge onto the selected template so slots stay filled in template
+            # order and any extra AI sections are appended at the end.
+            if template_structure:
+                sections = self._merge_sections_with_template(template_structure, sections)
+            sections = self._normalize_mixed_sections(sections)
+
+            if not self._mixed_text_is_thin(sections) or not template_structure:
                 return {
-                    "sections": parsed['sections'],
+                    "sections": sections,
                     "lesson_title": lesson_title,
                     "template_used": template_id
                 }
-        
+
+            # Text sections came back skeletal (e.g. truncated JSON recovery).
+            # Ask once more, this time showing the model what it already wrote.
+            retry_prompt = (
+                f"{prompt}\n\n"
+                "CRITICAL RETRY INSTRUCTION: Your previous attempt produced text sections "
+                "that were far too short (learning-objectives-level stubs instead of full prose). "
+                "Rewrite the FULL lesson. Every TEXT section must contain 300+ words of real, "
+                "detailed prose with concrete examples — not bullet stubs. Keep the same JSON "
+                "schema and the same template structure."
+            )
+            retry_result, _ = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                retry_prompt,
+                session_id=session_id,
+                task_id=task_id,
+                step_label=f"Expanding mixed content: {lesson_title}",
+                temperature=0.7,
+                max_tokens=16384,
+            )
+            if retry_result:
+                retry_parsed = json_parser.parse_json_response(retry_result, "mixed content retry")
+                if retry_parsed and isinstance(retry_parsed.get('sections'), list) and retry_parsed['sections']:
+                    retry_sections = retry_parsed['sections']
+                    if template_structure:
+                        retry_sections = self._merge_sections_with_template(template_structure, retry_sections)
+                    retry_sections = self._normalize_mixed_sections(retry_sections)
+                    if not self._mixed_text_is_thin(retry_sections):
+                        return {
+                            "sections": retry_sections,
+                            "lesson_title": lesson_title,
+                            "template_used": template_id
+                        }
+            # First attempt's sections are better than the skeleton fallback.
+            return {
+                "sections": sections,
+                "lesson_title": lesson_title,
+                "template_used": template_id
+            }
+
         return fallback_generators.generate_fallback_mixed_content(lesson_title, template_id)
+
+    def _normalize_mixed_sections(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Coerce mixed-content sections into the flat block shape the builder expects."""
+        normalized = []
+        for section in sections or []:
+            if not isinstance(section, dict):
+                continue
+            stype = str(section.get('type', 'text')).lower()
+            if stype not in ('heading', 'text', 'video', 'pdf', 'image'):
+                stype = 'text'
+            content = section.get('content', '')
+            if isinstance(content, (list, dict)):
+                content = json.dumps(content)
+            content = str(content or '')
+            item: Dict[str, Any] = {'type': stype, 'content': content.strip()}
+            title = section.get('title') or section.get('name') or ''
+            if title:
+                item['title'] = str(title)
+            url = section.get('url', '')
+            if url:
+                item['url'] = str(url)
+            caption = section.get('caption', '')
+            if caption:
+                item['caption'] = str(caption)
+            normalized.append(item)
+        return normalized
+
+    def _mixed_text_is_thin(self, sections: List[Dict[str, Any]]) -> bool:
+        """True when any text section has fewer than 30 words.
+
+        A rich intro next to a stub takeaways section means generation was cut
+        off mid-JSON — the salvage kept only complete sections, leaving template
+        placeholders in the remaining text slots. That is incomplete, not
+        skeleton-only, so it must count as thin (→ retry).
+        """
+        text_counts = []
+        for section in sections or []:
+            if section.get('type') != 'text':
+                continue
+            content = section.get('content', '') or ''
+            text_counts.append(len(re.findall(r'\w+', content)))
+        if not text_counts:
+            return True
+        return any(count < 30 for count in text_counts)
+
+    def _merge_sections_with_template(
+        self,
+        template_structure: List[Dict[str, Any]],
+        generated_sections: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Fill the selected template's slots (in order) from generated sections.
+
+        Each template slot picks the best unused generated section of the same
+        type: order-affinity (section appearing after the last match) and keyword
+        overlap with the slot's role/content both count, so a misordered AI
+        response still lands the right prose in the right slot. Generated
+        sections beyond the template's length are appended at the end so the AI
+        can extend the lesson when needed.
+        """
+        generated = [s for s in (generated_sections or []) if isinstance(s, dict)]
+        used = [False] * len(generated)
+        merged: List[Dict[str, Any]] = []
+        cursor = 0
+
+        for slot in template_structure:
+            slot_type = slot.get('type', 'text')
+            keywords = self._slot_keywords(slot)
+
+            best_idx = None
+            best_score = None
+            for idx, gen in enumerate(generated):
+                if used[idx] or gen.get('type') != slot_type:
+                    continue
+                haystack = f"{gen.get('content', '')} {gen.get('title', '')}".lower()
+                score = 2 if idx >= cursor else 0
+                for word in keywords:
+                    if word in haystack:
+                        score += 5
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            if best_idx is None:
+                # No generated section of this type left — keep the template placeholder.
+                merged.append(dict(slot))
+                continue
+
+            used[best_idx] = True
+            cursor = best_idx + 1
+            gen = generated[best_idx]
+            filled: Dict[str, Any] = {'type': slot_type, 'content': gen.get('content', '')}
+            title = gen.get('title') or slot.get('content') or slot.get('title', '')
+            if title:
+                filled['title'] = str(title)
+            if gen.get('url'):
+                filled['url'] = gen['url']
+            if gen.get('caption'):
+                filled['caption'] = gen['caption']
+            merged.append(filled)
+
+        # Append extra generated sections the template didn't account for.
+        for idx, gen in enumerate(generated):
+            if not used[idx]:
+                extra: Dict[str, Any] = {'type': gen.get('type', 'text'), 'content': gen.get('content', '')}
+                if gen.get('title'):
+                    extra['title'] = gen['title']
+                if gen.get('url'):
+                    extra['url'] = gen['url']
+                if gen.get('caption'):
+                    extra['caption'] = gen['caption']
+                merged.append(extra)
+
+        return merged
+
+    @staticmethod
+    def _slot_keywords(slot: Dict[str, Any]) -> List[str]:
+        """Extract meaningful keywords from a template slot's role/content hints."""
+        raw = f"{slot.get('role', '')} {slot.get('content', '')}".lower()
+        stop = {
+            'text', 'video', 'heading', 'image', 'pdf', 'url', 'placeholder',
+            'notes', 'about', 'content', 'section', 'type', 'insert', 'here',
+        }
+        return [
+            token for token in re.findall(r'[a-z]{4,}', raw)
+            if token not in stop
+        ]
     
     def _build_mixed_content_prompt(self, course_title: str, module_title: str,
                                    module_description: str, lesson_title: str,
                                    lesson_description: str, existing_context: str,
                                    template_guidance: str, template_id: str) -> str:
         """Build the prompt for mixed content generation"""
+        template_structure = self.TEMPLATES.get(template_id) if template_id else None
+        if template_structure:
+            example_block = self._template_example_json(template_structure)
+            shape_note = (
+                "The JSON example below lists EXACTLY the sections you must return, "
+                "in this order, with these types. Fill each entry with real content. "
+                "You MAY append extra sections after the last one if the lesson needs them."
+            )
+        else:
+            example_block = self._generic_example_json()
+            shape_note = (
+                "The JSON example below shows the expected shape and level of detail. "
+                "Adapt the section list to this lesson."
+            )
+
         return f"""You are an expert professor and instructional designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content.
 
 **Course Context:**
@@ -521,37 +720,19 @@ Format as JSON:
 
 ===== CRITICAL REQUIREMENTS =====
 
-Create a complete, professional lesson with RICH, DETAILED content (minimum 2500-3500 total words).
+Create a complete, professional lesson with RICH, DETAILED content (minimum 1400-1800 total words).
 
 **TEXT SECTION REQUIREMENTS:**
-Each TEXT section MUST be SUBSTANTIAL and COMPREHENSIVE:
+Each TEXT section MUST be SUBSTANTIAL and COMPREHENSIVE (250-500 words of real prose each):
 
-1. **Introduction Section** (400-500 words):
-   - Hook with compelling real-world scenario or question
-   - Context explaining professional relevance
-   - Clear preview of what will be covered
-   - Specific learning objectives
-
-2. **Main Content Sections** (500-800 words EACH):
-   - Detailed theoretical explanations (not just definitions)
-   - Step-by-step procedures where applicable
-   - SPECIFIC examples with actual data, numbers, formulas
-   - Real-world applications with named companies/scenarios
-   - Common mistakes and how to avoid them
-   - Professional tips and best practices
-
-3. **Practical Examples Section** (400-600 words):
-   - 2-3 detailed worked examples
-   - Complete step-by-step solutions
-   - All calculations and reasoning shown
-
-4. **Summary/Takeaways Section** (200-300 words):
-   - 5-7 specific actionable takeaways
-   - Quick reference formulas if applicable
+- Opening prose: hook, professional relevance, preview, specific learning objectives
+- Main content: detailed theory, step-by-step procedures, SPECIFIC examples with
+  actual data/numbers/formulas, real-world applications, common mistakes, best practices
+- Closing prose: concrete actionable takeaways
 
 **MEDIA PLACEHOLDERS:**
 - VIDEO: Use [INSERT_VIDEO_URL_HERE]
-- PDF: Use [INSERT_PDF_URL_HERE]  
+- PDF: Use [INSERT_PDF_URL_HERE]
 - IMAGE: Use [INSERT_IMAGE_URL_HERE]
 
 **CONTENT QUALITY STANDARDS:**
@@ -562,21 +743,69 @@ Each TEXT section MUST be SUBSTANTIAL and COMPREHENSIVE:
 - Use proper markdown: ## headers, **bold**, `code`, lists
 - DO NOT write vague, generic, or placeholder text content
 
-CRITICAL: Return ONLY valid JSON. Use \\\\n for newlines.
+CRITICAL: Return ONLY valid JSON — no markdown fences, no commentary, no reasoning before or after.
+Inside the JSON strings, represent line breaks with the standard JSON newline escape `\n`
+(single backslash). Do NOT use literal newlines inside string values and do NOT double-escape.
 
-{{
+{shape_note}
+
+{example_block}
+
+The example shows `\\n` (escaped once for JSON) — in the string VALUE that becomes a real
+newline. Emit exactly that: `\\n` inside the quoted content strings, nothing else."""
+
+    def _template_example_json(self, template_structure: List[Dict[str, Any]]) -> str:
+        """Build a JSON example that mirrors the selected template's slots exactly."""
+        entries = []
+        word_budgets = ['250-350', '350-500', '350-500', '300-400', '350-500', '300-400']
+        text_idx = 0
+        for slot in template_structure:
+            stype = slot.get('type', 'text')
+            if stype == 'heading':
+                entry = {'type': 'heading', 'content': '[Your Section Title]', 'title': '[Your Section Title]'}
+            elif stype == 'text':
+                budget = word_budgets[min(text_idx, len(word_budgets) - 1)]
+                text_idx += 1
+                entry = {
+                    'type': 'text',
+                    'content': (
+                        f'## [Your Section Title]\n\n[Write {budget} words of detailed, '
+                        f'professor-quality prose for this section. '
+                        f'Separate paragraphs with blank lines.]'
+                    ),
+                }
+            else:
+                placeholder = {
+                    'video': '[INSERT_VIDEO_URL_HERE]',
+                    'pdf': '[INSERT_PDF_URL_HERE]',
+                    'image': '[INSERT_IMAGE_URL_HERE]',
+                }.get(stype, '[INSERT_URL_HERE]')
+                entry = {
+                    'type': stype,
+                    'url': placeholder,
+                    'title': f'[What this {stype} shows]',
+                    'description': f'[Describe what this {stype} covers...]',
+                }
+            # json.dumps escapes quotes/backslashes/newlines correctly so the
+            # example is always valid JSON (and demonstrates real \n escapes).
+            entries.append('    ' + json.dumps(entry, ensure_ascii=False))
+        return '{\n  "sections": [\n' + ',\n'.join(entries) + '\n  ]\n}'
+
+    def _generic_example_json(self) -> str:
+        """JSON example used when no template is selected."""
+        return '''{
   "sections": [
-    {{"type": "heading", "content": "Introduction", "title": "Introduction"}},
-    {{"type": "text", "content": "## Introduction\\\\n\\\\n[400-500 words of engaging, detailed introduction content...]"}},
-    {{"type": "heading", "content": "Core Concepts", "title": "Core Concepts"}},
-    {{"type": "text", "content": "## Core Concepts\\\\n\\\\n[500-800 words of comprehensive theory...]"}},
-    {{"type": "video", "url": "[INSERT_VIDEO_URL_HERE]", "title": "Video Tutorial", "description": "Detailed description of video content..."}},
-    {{"type": "heading", "content": "Practical Application", "title": "Practical Application"}},
-    {{"type": "text", "content": "## Practical Application\\\\n\\\\n[500-800 words with detailed examples...]"}},
-    {{"type": "heading", "content": "Key Takeaways", "title": "Key Takeaways"}},
-    {{"type": "text", "content": "## Key Takeaways\\\\n\\\\n[200-300 words with specific, actionable points...]"}}
+    {"type": "heading", "content": "Introduction", "title": "Introduction"},
+    {"type": "text", "content": "## Introduction\\n\\nWrite 250-350 words of engaging, detailed introduction content here. Use \\n\\n between paragraphs."},
+    {"type": "heading", "content": "Core Concepts", "title": "Core Concepts"},
+    {"type": "text", "content": "## Core Concepts\\n\\nWrite 350-500 words of comprehensive theory with concrete examples."},
+    {"type": "video", "url": "[INSERT_VIDEO_URL_HERE]", "title": "Video Tutorial", "description": "Detailed description of video content..."},
+    {"type": "heading", "content": "Practical Application", "title": "Practical Application"},
+    {"type": "text", "content": "## Practical Application\\n\\nWrite 300-400 words with detailed, worked examples."},
+    {"type": "heading", "content": "Key Takeaways", "title": "Key Takeaways"},
+    {"type": "text", "content": "## Key Takeaways\\n\\nWrite 150-250 words with specific, actionable points."}
   ]
-}}"""
+}'''
     
     def generate_lesson_section(self, lesson_title: str, section_type: str,
                                section_context: Dict[str, Any],
@@ -930,6 +1159,7 @@ This lesson has provided you with a comprehensive foundation in {lesson_title}. 
                                       lesson_title: str = "", lesson_description: str = "",
                                       existing_lessons: Optional[List[Dict[str, Any]]] = None,
                                       course_context: Optional[List[Dict[str, Any]]] = None,
+                                      difficulty_level: str = "intermediate",
                                       session_id: str = None, task_id: str = None) -> Optional[Dict[str, Any]]:
         """Step 1: Generate a detailed lesson outline with sections, topics, and structure."""
         existing_text = ""
@@ -948,7 +1178,8 @@ This lesson has provided you with a comprehensive foundation in {lesson_title}. 
 Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
-Module Objectives: {module_objectives}{existing_text}{course_ctx}
+Module Objectives: {module_objectives}
+Difficulty Level: {difficulty_level}{existing_text}{course_ctx}
 {'Lesson Title: ' + lesson_title if lesson_title else 'You MUST choose a SPECIFIC, DESCRIPTIVE lesson title that clearly indicates the topic (NOT generic like "Course Lesson", "Lesson Title", or "Module Lesson"). The title should reflect the actual subject matter being taught.'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
@@ -1100,6 +1331,7 @@ REQUIREMENTS:
                                       section: Dict[str, Any],
                                       previous_sections_content: str = "",
                                       course_context: Optional[List[Dict[str, Any]]] = None,
+                                      difficulty_level: str = "intermediate",
                                       session_id: str = None, task_id: str = None) -> Optional[str]:
         """Step 2+: Generate a single section of a lesson with full context."""
         course_ctx = self._build_course_context_text(course_context, module_title)
@@ -1115,7 +1347,8 @@ REQUIREMENTS:
 Course: {course_title}
 Module: {module_title}
 Lesson: {lesson_title}
-Lesson Description: {lesson_description}{course_ctx}{prev_ctx}
+Lesson Description: {lesson_description}
+Difficulty Level: {difficulty_level}{course_ctx}{prev_ctx}
 
 ===== SECTION TO WRITE =====
 Heading: {section.get('heading', 'Section')}
@@ -1133,7 +1366,9 @@ Key Topics to Cover: {', '.join(section.get('key_topics', []))}
 7. DO NOT repeat content from previous sections (shown above)
 8. DO NOT repeat content from other lessons in the course (shown in course structure)
 9. Build naturally on what came before — reference previous sections where relevant
-10. Write as a professor teaching, not summarizing        Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
+10. Write as a professor teaching, not summarizing
+
+Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
 
         result, provider = rate_limit_handler.execute_with_retry(
             self.provider.make_ai_request,
@@ -1336,6 +1571,12 @@ Return ONLY valid JSON:
                     lesson['order'] = idx + start_num
 
                 logger.info(f"Batch generated {len(deduplicated)} lesson outlines using {provider} (removed {len(lessons) - len(deduplicated)} duplicates, cross-module dedup active)")
+                if not deduplicated:
+                    logger.warning("All generated lesson outlines already exist — nothing new to add")
+                    return {
+                        "lessons": [],
+                        "reason": "All generated lesson titles already exist in this course",
+                    }
                 return {"lessons": deduplicated}
         
         logger.warning("Failed to generate lesson outlines, returning empty")

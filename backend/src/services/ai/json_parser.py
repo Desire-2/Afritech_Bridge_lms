@@ -5,7 +5,7 @@ Handles parsing and cleaning of JSON responses from AI providers
 
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +178,21 @@ class JSONResponseParser:
         """
         import re
         
+        # Strategy 0: Salvage truncated JSON (long generations cut off by max_tokens).
+        # The text ends mid-object/mid-string with no closing braces. Trim back to
+        # the last COMPLETE object inside the outermost container, then close it.
+        try:
+            start_idx = cleaned_result.find('{')
+            if start_idx != -1 and cleaned_result.rstrip()[-1] not in ('}', ']'):
+                salvaged = JSONResponseParser._salvage_truncated_json(cleaned_result)
+                if salvaged:
+                    parsed = json.loads(salvaged)
+                    if isinstance(parsed, dict):
+                        logger.info("Recovered truncated JSON via truncation salvage")
+                        return parsed
+        except (json.JSONDecodeError, Exception):
+            pass
+        
         # Strategy 1: Fix unescaped newlines in string values
         try:
             # More comprehensive newline fixing
@@ -248,6 +263,97 @@ class JSONResponseParser:
         return None
     
     @staticmethod
+    def _salvage_truncated_json(text: str) -> Optional[str]:
+        """Rebuild parseable JSON from a response that was cut off mid-generation.
+
+        Finds the last complete `{...}` object that closes cleanly (accounting for
+        braces inside string values), trims anything after it, drops any dangling
+        comma/property, then appends the closing brackets needed for the outer
+        containers (e.g. ``{"sections": [ {...}, {...} `` -> valid JSON).
+        """
+        if not text:
+            return None
+
+        # Scan from the first '{' tracking depth and in-string state to find the
+        # last position where an object closed cleanly at depth >= 2
+        # (i.e. an item inside the outer object).
+        start = text.find('{')
+        if start == -1:
+            return None
+
+        depth = 0
+        in_string = False
+        escape = False
+        last_clean_item_end = -1
+        open_stack: List[str] = []
+
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == '\\':
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+            elif ch == '{':
+                depth += 1
+                open_stack.append('}')
+            elif ch == '[':
+                depth += 1
+                open_stack.append(']')
+            elif ch in ('}', ']'):
+                if open_stack:
+                    open_stack.pop()
+                depth -= 1
+                # A complete object at depth >= 2 sits inside the top-level object.
+                if ch == '}' and depth >= 2:
+                    last_clean_item_end = i
+
+        if last_clean_item_end == -1:
+            # Nothing complete inside — can't salvage.
+            return None
+
+        # Cut after the last complete inner object.
+        truncated = text[:last_clean_item_end + 1]
+        # Drop a trailing comma (and any partial property after it).
+        truncated = truncated.rstrip()
+        if truncated.endswith(','):
+            truncated = truncated[:-1].rstrip()
+
+        # Close whatever containers were left open.
+        # Re-scan the trimmed prefix to know exactly which brackets remain open.
+        open_stack = []
+        in_string = False
+        escape = False
+        for ch in truncated:
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == '\\':
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == '{':
+                open_stack.append('}')
+            elif ch == '[':
+                open_stack.append(']')
+            elif ch in ('}', ']'):
+                if open_stack:
+                    open_stack.pop()
+
+        if not open_stack:
+            return truncated
+        return truncated + ''.join(reversed(open_stack))
+    
+    @staticmethod
     def _extract_json_object(cleaned_result: str) -> Optional[Dict[str, Any]]:
         """
         Try to extract JSON object from text that may contain extra content
@@ -259,25 +365,95 @@ class JSONResponseParser:
             Parsed JSON dict or None
         """
         try:
-            # Find the first { and last }
+            decoder = json.JSONDecoder()
+
+            # Candidate texts: the whole response plus any fenced code block
+            # content (model may emit prose, then ```json ... ```).
+            candidates = [cleaned_result]
+            if '```' in cleaned_result:
+                first_fence = cleaned_result.find('```')
+                last_fence = cleaned_result.rfind('```')
+                if last_fence > first_fence:
+                    fenced = cleaned_result[first_fence + 3:last_fence]
+                    if fenced.lstrip().lower().startswith('json'):
+                        fenced = fenced.lstrip()[4:]
+                    candidates.append(fenced.strip())
+
+            # Try EVERY '{' position, not just the first one: reasoning leaks or
+            # prose before the JSON can contain braces (quoted examples etc.)
+            # while the real payload starts later. raw_decode stops at the end
+            # of the first valid object, ignoring trailing text. Collect all
+            # parseable dicts and pick the most substantive one afterwards (a
+            # quoted example in prose must not win over the real answer).
+            found: List[Dict[str, Any]] = []
+            for text in candidates:
+                search_from = 0
+                attempts = 0
+                while attempts < 50:
+                    start_idx = text.find('{', search_from)
+                    if start_idx == -1:
+                        break
+                    attempts += 1
+                    try:
+                        parsed, _ = decoder.raw_decode(text[start_idx:])
+                        if isinstance(parsed, dict) and parsed:
+                            found.append(parsed)
+                    except json.JSONDecodeError:
+                        pass
+                    search_from = start_idx + 1
+
+            if found:
+                return max(found, key=JSONResponseParser._payload_richness)
+
+            # Legacy fallback: first '{' to last '}'
             start_idx = cleaned_result.find('{')
             end_idx = cleaned_result.rfind('}')
-            
+
             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                 json_str = cleaned_result[start_idx:end_idx + 1]
-                
+
                 # Clean the extracted string
                 json_str = JSONResponseParser._clean_response(json_str)
-                
+
                 # Try parsing the extracted JSON
                 return json.loads(json_str)
-                        
+
         except json.JSONDecodeError:
             logger.error("Failed to extract valid JSON from response")
         except Exception as e:
             logger.error(f"Error extracting JSON: {e}")
             
         return None
+    
+    @staticmethod
+    def _payload_richness(payload: Dict[str, Any]) -> int:
+        """Score a parsed payload: prefer real content over quoted examples."""
+        import re as _re
+        score = 0
+        sections = payload.get('sections')
+        if isinstance(sections, list):
+            score += 1000
+            for section in sections:
+                if isinstance(section, dict):
+                    content = section.get('content') or ''
+                    if isinstance(content, str):
+                        score += len(_re.findall(r'\w+', content))
+        lessons = payload.get('lessons')
+        if isinstance(lessons, list):
+            score += 500 + len(lessons)
+        for key in ('lesson_title', 'template_used', 'title', 'modules'):
+            if payload.get(key):
+                score += 10
+        # Placeholder-heavy payloads (a quoted prompt example inside prose) score
+        # far below real prose. Note: INSERT_*_URL_HERE is NOT penalized — real
+        # template output legitimately contains those media placeholders.
+        placeholder = 0
+        blob = str(payload)
+        for marker in ('words of engaging', 'words of detailed',
+                       'Write 250-350', 'Write 350-500', 'Write 300-400'):
+            placeholder += blob.count(marker)
+        score -= placeholder * 400
+        return score
     
     @staticmethod
     def extract_outline_from_markdown(text: str) -> Optional[Dict[str, Any]]:

@@ -71,8 +71,10 @@ interface SystemSettings {
     ai_max_requests_per_day: number;
     openrouter_api_key: string;
     gemini_api_key: string;
+    nvidia_api_key: string;
     openrouter_model_name: string;
     gemini_model_name: string;
+    nvidia_model_name: string;
   };
 }
 
@@ -150,8 +152,10 @@ const EnhancedSettingsPanel: React.FC = () => {
       ai_max_requests_per_day: 100,
       openrouter_api_key: '',
       gemini_api_key: '',
+      nvidia_api_key: '',
       openrouter_model_name: '',
       gemini_model_name: '',
+      nvidia_model_name: '',
     }
   });
 
@@ -301,8 +305,10 @@ const EnhancedSettingsPanel: React.FC = () => {
         ai_max_requests_per_day: backendSettings.ai?.ai_max_requests_per_day || 100,
         openrouter_api_key: backendSettings.ai?.openrouter_api_key || '',
         gemini_api_key: backendSettings.ai?.gemini_api_key || '',
+        nvidia_api_key: backendSettings.ai?.nvidia_api_key || '',
         openrouter_model_name: backendSettings.ai?.openrouter_model_name || '',
         gemini_model_name: backendSettings.ai?.gemini_model_name || '',
+        nvidia_model_name: backendSettings.ai?.nvidia_model_name || '',
       }
     };
 
@@ -1540,6 +1546,7 @@ const AISettingsTab: React.FC<{
 }> = ({ settings, setSettings, handleInputChange, errors, validationErrors, settingsDetails }) => {
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [showNvidiaKey, setShowNvidiaKey] = useState(false);
 
   return (
     <div className="p-6">
@@ -1553,6 +1560,38 @@ const AISettingsTab: React.FC<{
           </div>
           <p className="text-blue-700 dark:text-blue-300 text-sm mt-1">
             Configure AI provider API keys for course content generation. Keys set here override .env configuration.
+          </p>
+        </div>
+
+        {/* NVIDIA API Key */}
+        <div>
+          <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1.5 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            NVIDIA API Key
+            {settings.ai.nvidia_api_key && (
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">
+                Configured
+              </span>
+            )}
+          </label>
+          <div className="relative">
+            <input
+              type={showNvidiaKey ? 'text' : 'password'}
+              value={settings.ai.nvidia_api_key}
+              onChange={(e) => handleInputChange('ai', 'nvidia_api_key', e.target.value)}
+              placeholder="nvapi-..."
+              className="w-full px-4 py-2.5 pr-10 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+            />
+            <button
+              type="button"
+              onClick={() => setShowNvidiaKey(!showNvidiaKey)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              {showNvidiaKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Primary AI provider (Nemotron) for course, module, lesson and quiz generation
           </p>
         </div>
 
@@ -1584,7 +1623,7 @@ const AISettingsTab: React.FC<{
             </button>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Primary AI provider for content generation (free models available)
+            Fallback AI provider when NVIDIA is unavailable
           </p>
         </div>
 
@@ -1616,7 +1655,30 @@ const AISettingsTab: React.FC<{
             </button>
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            Fallback AI provider when OpenRouter is unavailable
+            Second fallback AI provider when NVIDIA and OpenRouter are unavailable
+          </p>
+        </div>
+
+        {/* NVIDIA Model Name */}
+        <div>
+          <label className="block text-gray-700 dark:text-gray-300 font-medium mb-1.5 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            NVIDIA Model Name
+            {settings.ai.nvidia_model_name && (
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">
+                Set
+              </span>
+            )}
+          </label>
+          <input
+            type="text"
+            value={settings.ai.nvidia_model_name}
+            onChange={(e) => handleInputChange('ai', 'nvidia_model_name', e.target.value)}
+            placeholder="nvidia/nemotron-3.5-super-vl-120b-a12b"
+            className="w-full max-w-md px-4 py-2.5 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            NVIDIA model identifier used for AI content generation (defaults to Nemotron 3.5 Super)
           </p>
         </div>
 

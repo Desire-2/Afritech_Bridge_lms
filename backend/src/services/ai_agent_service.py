@@ -240,10 +240,10 @@ class AIAgentService:
         self.smart_cache.clear()     # smart cache
         logger.info("All caches cleared")
     
-    def force_provider(self, provider: str):
-        """Force use of a specific provider ('openrouter' or 'gemini')"""
-        self.provider.force_provider(provider)
-        logger.info(f"Forced provider switch to: {provider}")
+    def force_provider(self, provider: str, scope: str = 'global'):
+        """Force use of a specific provider ('nvidia', 'openrouter' or 'gemini')"""
+        self.provider.force_provider(provider, scope=scope)
+        logger.info(f"Forced provider switch to: {provider} ({scope} scope)")
     
     def set_quality_threshold(self, threshold: float):
         """Set minimum content quality threshold (0.0 - 1.0)"""
@@ -251,7 +251,26 @@ class AIAgentService:
         logger.info(f"Quality threshold set to: {self.quality_threshold}")
     
     # ===== Enhanced Generation Methods =====
-    
+
+    @staticmethod
+    def _is_empty_result(result: Dict[str, Any]) -> bool:
+        """Detect generators that returned a valid-looking but empty payload.
+
+        A dict like {"lessons": []} is truthy, so it would otherwise be cached
+        and reported as SUCCESS even though nothing was generated.
+        """
+        if not result:
+            return True
+        # An explicit reason means the generator explained why the payload is
+        # empty (e.g. every generated title was a duplicate) — not a failure.
+        if result.get('reason') or result.get('message'):
+            return False
+        for key in ('lessons', 'modules', 'sections', 'questions', 'suggested_modules', 'suggested_lessons'):
+            value = result.get(key)
+            if isinstance(value, list) and not value:
+                return True
+        return False
+
     def _execute_with_retry_and_cache(self, cache_key: str, generation_func: Callable, 
                                     *args, skip_quality_check: bool = False, **kwargs) -> AIResponse:
         """Execute generation with retry logic, caching, and optional quality validation
@@ -282,7 +301,7 @@ class AIAgentService:
             try:
                 result = generation_func(*args, **kwargs)
                 
-                if result and isinstance(result, dict):
+                if result and isinstance(result, dict) and not self._is_empty_result(result):
                     # Assess quality (for logging) but skip threshold enforcement if requested
                     quality_score = self._assess_content_quality(result)
                     
@@ -302,43 +321,49 @@ class AIAgentService:
                         current_provider = getattr(self.provider, 'current_provider', 'unknown')
                         logger.warning(f"Content quality below threshold: {quality_score:.2f} < {self.quality_threshold} (provider: {current_provider})")
                         
-                        # If OpenRouter failed quality check and we're not on the last attempt, try Gemini
-                        if current_provider == 'openrouter' and attempt < self.retry_attempts - 1:
-                            logger.info("OpenRouter content failed quality check, trying Gemini for better results...")
-                            
-                            # Try with Gemini
+                        # If the active provider failed the quality check and we're not on the
+                        # last attempt, retry once on an alternative provider
+                        alternative_provider = getattr(
+                            self.provider, 'alternative_provider', lambda: None
+                        )()
+                        if alternative_provider and attempt < self.retry_attempts - 1:
+                            logger.info(
+                                f"Content from {current_provider} failed quality check, "
+                                f"trying {alternative_provider} for better results..."
+                            )
+
                             try:
                                 original_provider = self.provider.current_provider
-                                self.provider.force_provider('gemini')
-                                
-                                gemini_result = generation_func(*args, **kwargs)
-                                if gemini_result and isinstance(gemini_result, dict):
-                                    gemini_quality = self._assess_content_quality(gemini_result)
-                                    
+                                self.provider.force_provider(alternative_provider)
+
+                                fallback_result = generation_func(*args, **kwargs)
+                                if fallback_result and isinstance(fallback_result, dict):
+                                    fallback_quality = self._assess_content_quality(fallback_result)
+
                                     # Use a more lenient threshold for lesson content (0.45 vs 0.6)
                                     effective_threshold = 0.45 if "lesson" in cache_key.lower() else self.quality_threshold
-                                    
-                                    if gemini_quality >= effective_threshold:
-                                        # Cache successful Gemini result
-                                        self.smart_cache.set(gemini_result, cache_key=cache_key)
-                                        logger.info(f"Gemini generated better quality content: {gemini_quality:.2f} (threshold: {effective_threshold:.2f})")
-                                        
+
+                                    if fallback_quality >= effective_threshold:
+                                        # Cache successful fallback result
+                                        self.smart_cache.set(fallback_result, cache_key=cache_key)
+                                        logger.info(f"{alternative_provider} generated better quality content: {fallback_quality:.2f} (threshold: {effective_threshold:.2f})")
+
                                         return AIResponse(
                                             status=ResponseStatus.SUCCESS,
-                                            data=gemini_result,
-                                            message="Content generated successfully with Gemini fallback",
-                                            provider_used='gemini',
+                                            data=fallback_result,
+                                            message=f"Content generated successfully with {alternative_provider} fallback",
+                                            provider_used=alternative_provider,
                                             generation_time=time.time() - start_time,
-                                            content_quality_score=gemini_quality
+                                            content_quality_score=fallback_quality
                                         )
                                     else:
-                                        logger.warning(f"Gemini also produced low quality content: {gemini_quality:.2f}")
+                                        logger.warning(f"{alternative_provider} also produced low quality content: {fallback_quality:.2f}")
                                         # Use the better result of the two
-                                        if gemini_quality > quality_score:
-                                            result = gemini_result
-                                            quality_score = gemini_quality
-                            except Exception as gemini_error:
-                                logger.error(f"Gemini fallback failed: {gemini_error}")
+                                        if fallback_quality > quality_score:
+                                            result = fallback_result
+                                            quality_score = fallback_quality
+                            except Exception as fallback_error:
+                                logger.error(f"{alternative_provider} fallback failed: {fallback_error}")
                             finally:
                                 # Restore original provider
                                 self.provider.force_provider(original_provider)
@@ -387,10 +412,18 @@ class AIAgentService:
                 elif content.get('lessons') and isinstance(content.get('lessons'), list):
                     # Handle {"lessons": [...]} structure from generate_multiple_lessons
                     content_type = ContentType.MODULE_CONTENT
-                elif content.get('content') and len(str(content.get('content', ''))) > 100:
-                    content_type = ContentType.LESSON_CONTENT
+                elif content.get('sections') and isinstance(content.get('sections'), list):
+                    # Mixed-content lessons return {"sections": [...]}
+                    content_type = ContentType.MIXED_CONTENT
                 elif content.get('questions') and isinstance(content.get('questions'), list):
                     content_type = ContentType.QUIZ_QUESTIONS
+                elif content.get('content') and len(str(content.get('content', ''))) > 100:
+                    content_type = ContentType.LESSON_CONTENT
+                elif content.get('content_data') and len(str(content.get('content_data', ''))) > 100:
+                    # Lesson generators store the body in content_data
+                    content_type = ContentType.LESSON_CONTENT
+                elif content.get('content') or content.get('content_data') or content.get('description'):
+                    content_type = ContentType.LESSON_CONTENT
                 else:
                     content_type = ContentType.MIXED_CONTENT
                 
@@ -491,15 +524,16 @@ class AIAgentService:
                                module_description: str, module_objectives: str,
                                lesson_title: str = "", lesson_description: str = "",
                                existing_lessons: Optional[List[Dict[str, Any]]] = None,
-                               course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+                               course_context: Optional[List[Dict[str, Any]]] = None,
+                               difficulty_level: str = "intermediate") -> AIResponse:
         """Generate detailed lesson content with enhanced handling and cross-module context"""
-        cache_key = f"lesson_{course_title}_{module_title}_{lesson_title}_{len(existing_lessons or [])}"
+        cache_key = f"lesson_{course_title}_{module_title}_{lesson_title}_{difficulty_level}_{len(existing_lessons or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
             self.lesson_gen.generate_lesson_content,
             course_title, module_title, module_description, module_objectives,
-            lesson_title, lesson_description, existing_lessons, course_context
+            lesson_title, lesson_description, existing_lessons, course_context, difficulty_level
         )
     
     def generate_multiple_lessons(self, course_title: str, module_title: str,
@@ -536,7 +570,10 @@ class AIAgentService:
             cache_key,
             self.lesson_gen.generate_mixed_content,
             course_title, module_title, module_description, lesson_title,
-            lesson_description, template_id, existing_sections
+            lesson_description, template_id, existing_sections,
+            # Sections are structural blocks the instructor edits afterwards, so
+            # the prose-oriented quality gate would only burn extra API calls.
+            skip_quality_check=True
         )
     
     def generate_lesson_section(self, lesson_title: str, section_type: str,
@@ -1058,6 +1095,12 @@ class AIAgentService:
         
         if task_id:
             task_manager.update_progress(task_id, 1, 1, "Generating content...")
+            # update_progress computes percent as step/total = 100% for a
+            # single-step task — but the step is only STARTING. Show a partial
+            # bar instead; complete_step() moves it to 100% when done.
+            task = task_manager.tasks.get(task_id)
+            if task is not None and task.status.value != 'rate_limited':
+                task.progress = 10.0
         
         result = method(**(method_kwargs or {}))
         
@@ -1180,7 +1223,8 @@ class AIAgentService:
                                                lesson_title: str = '',
                                                lesson_description: str = '',
                                                existing_lessons: Optional[List[Dict[str, Any]]] = None,
-                                               course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                                               course_context: Optional[List[Dict[str, Any]]] = None,
+                                               difficulty_level: str = 'intermediate') -> Dict[str, Any]:
         """
         Deep multi-step lesson generation for highest quality content.
         
@@ -1206,6 +1250,7 @@ class AIAgentService:
             lesson_description=lesson_description,
             existing_lessons=existing_lessons,
             course_context=course_context,
+            difficulty_level=difficulty_level,
         )
         
         if not outline:
@@ -1269,6 +1314,7 @@ class AIAgentService:
                     section=section,
                     previous_sections_content=accumulated_content,
                     course_context=course_context,
+                    difficulty_level=difficulty_level,
                 )
             except Exception as e:
                 logger.error(f"Section generation failed for '{section.get('heading')}': {e}")

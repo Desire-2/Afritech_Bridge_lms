@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 import instructorSettingsService from '@/services/instructor-settings.service';
-import { AISettingItem, ProviderStats } from '@/services/instructor-settings.service';
+import { AISettingItem, ProviderStats, AIProviderName } from '@/services/instructor-settings.service';
 import {
   Key,
   Globe,
@@ -22,6 +22,12 @@ import {
 
 type TabType = 'ai-keys';
 
+const PROVIDER_LABELS: Record<AIProviderName, string> = {
+  nvidia: 'NVIDIA',
+  openrouter: 'OpenRouter',
+  gemini: 'Gemini',
+};
+
 const InstructorAISettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -30,6 +36,7 @@ const InstructorAISettingsPage: React.FC = () => {
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [providerStats, setProviderStats] = useState<{
+    nvidia: ProviderStats;
     openrouter: ProviderStats;
     gemini: ProviderStats;
     current_provider: string;
@@ -90,11 +97,7 @@ const InstructorAISettingsPage: React.FC = () => {
       Object.entries(formValues).forEach(([key, value]) => {
         const original = settings[key]?.value || '';
         // If it's an API key field and hasn't changed from masked value, skip
-        if (
-          (key === 'openrouter_api_key' || key === 'gemini_api_key') &&
-          value.includes('*') &&
-          value === original
-        ) {
+        if (key.endsWith('_api_key') && value.includes('*') && value === original) {
           return;
         }
         // Convert boolean-like values
@@ -129,21 +132,18 @@ const InstructorAISettingsPage: React.FC = () => {
     }
   };
 
-  const handleTestConnection = async (provider: 'openrouter' | 'gemini') => {
+  const handleTestConnection = async (provider: AIProviderName) => {
+    const label = PROVIDER_LABELS[provider] || provider;
     try {
       setTesting(provider);
       const response = await instructorSettingsService.testAIConnection(provider);
 
       if (response.success) {
-        toast.success(
-          `${provider === 'openrouter' ? 'OpenRouter' : 'Gemini'} connection successful!`
-        );
+        toast.success(`${label} connection successful!`);
         // Reload provider stats
         await loadSettings();
       } else {
-        toast.error(
-          `${provider === 'openrouter' ? 'OpenRouter' : 'Gemini'} test failed: ${response.message}`
-        );
+        toast.error(`${label} test failed: ${response.message}`);
       }
     } catch (error: any) {
       toast.error(
@@ -170,7 +170,7 @@ const InstructorAISettingsPage: React.FC = () => {
     );
   }
 
-  const apiKeySettings = ['openrouter_api_key', 'gemini_api_key'];
+  const apiKeySettings = ['nvidia_api_key', 'openrouter_api_key', 'gemini_api_key'];
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -191,7 +191,16 @@ const InstructorAISettingsPage: React.FC = () => {
       </div>
 
       {/* Provider Status Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* NVIDIA Card */}
+        <ProviderStatusCard
+          name="NVIDIA Nemotron"
+          icon={<Zap className="w-5 h-5" />}
+          stats={providerStats?.nvidia}
+          isActive={providerStats?.current_provider === 'nvidia'}
+          gradient="from-emerald-500 to-teal-600"
+        />
+
         {/* OpenRouter Card */}
         <ProviderStatusCard
           name="OpenRouter"
@@ -221,6 +230,21 @@ const InstructorAISettingsPage: React.FC = () => {
         </div>
 
         <div className="p-6 space-y-6">
+          {/* NVIDIA API Key */}
+          <ApiKeyField
+            label="NVIDIA API Key"
+            keyName="nvidia_api_key"
+            value={formValues['nvidia_api_key'] || ''}
+            onChange={(val) => handleValueChange('nvidia_api_key', val)}
+            showKey={showKeys['nvidia_api_key'] || false}
+            onToggleShow={() => toggleShowKey('nvidia_api_key')}
+            hasValue={settings['nvidia_api_key']?.has_value || false}
+            description="Primary AI provider for course, module, lesson and quiz generation"
+            provider="nvidia"
+            testing={testing}
+            onTestConnection={handleTestConnection}
+          />
+
           {/* OpenRouter API Key */}
           <ApiKeyField
             label="OpenRouter API Key"
@@ -230,7 +254,7 @@ const InstructorAISettingsPage: React.FC = () => {
             showKey={showKeys['openrouter_api_key'] || false}
             onToggleShow={() => toggleShowKey('openrouter_api_key')}
             hasValue={settings['openrouter_api_key']?.has_value || false}
-            description="Used as the primary AI provider for content generation"
+            description="Fallback AI provider used when NVIDIA is unavailable"
             provider="openrouter"
             testing={testing}
             onTestConnection={handleTestConnection}
@@ -245,11 +269,34 @@ const InstructorAISettingsPage: React.FC = () => {
             showKey={showKeys['gemini_api_key'] || false}
             onToggleShow={() => toggleShowKey('gemini_api_key')}
             hasValue={settings['gemini_api_key']?.has_value || false}
-            description="Used as a fallback AI provider when OpenRouter is unavailable"
+            description="Second fallback AI provider when NVIDIA and OpenRouter are unavailable"
             provider="gemini"
             testing={testing}
             onTestConnection={handleTestConnection}
           />
+
+          {/* NVIDIA Model Name */}
+          <div>
+            <label className="block text-sm font-medium text-slate-900 dark:text-white mb-1.5 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              NVIDIA Model Name
+              {settings['nvidia_model_name']?.has_value && (
+                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal bg-emerald-50 dark:bg-emerald-900/20 px-1.5 py-0.5 rounded">
+                  Set
+                </span>
+              )}
+            </label>
+            <input
+              type="text"
+              value={formValues['nvidia_model_name'] || ''}
+              onChange={(e) => handleValueChange('nvidia_model_name', e.target.value)}
+              placeholder="nvidia/nemotron-3.5-super-vl-120b-a12b"
+              className="w-full max-w-md px-3 py-2.5 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
+            />
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              NVIDIA model identifier used for AI content generation (defaults to Nemotron 3.5 Super)
+            </p>
+          </div>
 
           {/* OpenRouter Model Name */}
           <div>
@@ -510,9 +557,9 @@ interface ApiKeyFieldProps {
   onToggleShow: () => void;
   hasValue: boolean;
   description: string;
-  provider: 'openrouter' | 'gemini';
+  provider: AIProviderName;
   testing: string | null;
-  onTestConnection: (provider: 'openrouter' | 'gemini') => void;
+  onTestConnection: (provider: AIProviderName) => void;
 }
 
 const ApiKeyField: React.FC<ApiKeyFieldProps> = ({
@@ -545,7 +592,7 @@ const ApiKeyField: React.FC<ApiKeyFieldProps> = ({
             type={showKey ? 'text' : 'password'}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder={`Enter your ${provider === 'openrouter' ? 'OpenRouter' : 'Gemini'} API key`}
+            placeholder={`Enter your ${PROVIDER_LABELS[provider] || provider} API key`}
             className="w-full px-3 py-2.5 pr-10 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
           />
           <button

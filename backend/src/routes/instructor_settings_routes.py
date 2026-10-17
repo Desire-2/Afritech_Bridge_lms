@@ -51,8 +51,10 @@ def instructor_required(f):
 PERSONAL_AI_SETTINGS_KEYS = [
     "openrouter_api_key",
     "gemini_api_key",
+    "nvidia_api_key",
     "openrouter_model_name",
     "gemini_model_name",
+    "nvidia_model_name",
     "ai_agent_enabled",
     "ai_max_requests_per_day",
 ]
@@ -64,6 +66,28 @@ def _is_masked_value(value: str) -> bool:
     Used to detect when the frontend sends back the masked representation unchanged.
     """
     return isinstance(value, str) and "*" in value and len(value) > 8
+
+
+def _provider_stats_block(provider_stats: dict, provider: str) -> dict:
+    """Project the provider-manager stats down to the fields the UI shows."""
+    block = provider_stats.get(provider, {})
+    return {
+        "available": block.get("available", False),
+        "failure_count": block.get("failure_count", 0),
+        "is_cooling_down": block.get("is_cooling_down", False),
+        "requests_this_minute": block.get("requests_this_minute", 0),
+        "rpm_limit": block.get("rpm_limit", 0),
+        "model": block.get("model", ""),
+    }
+
+
+def _all_provider_stats_block(provider_stats: dict) -> dict:
+    return {
+        "nvidia": _provider_stats_block(provider_stats, "nvidia"),
+        "openrouter": _provider_stats_block(provider_stats, "openrouter"),
+        "gemini": _provider_stats_block(provider_stats, "gemini"),
+        "current_provider": provider_stats.get("current_provider"),
+    }
 
 
 def _get_or_create_user_ai_settings(user_id: int) -> UserAISetting:
@@ -110,23 +134,7 @@ def get_ai_settings(current_user):
                 "success": True,
                 "data": {
                     "settings": settings,
-                    "provider_stats": {
-                        "openrouter": {
-                            "available": provider_stats["openrouter"]["available"],
-                            "failure_count": provider_stats["openrouter"]["failure_count"],
-                            "is_cooling_down": provider_stats["openrouter"]["is_cooling_down"],
-                            "requests_this_minute": provider_stats["openrouter"]["requests_this_minute"],
-                            "rpm_limit": provider_stats["openrouter"]["rpm_limit"],
-                        },
-                        "gemini": {
-                            "available": provider_stats["gemini"]["available"],
-                            "failure_count": provider_stats["gemini"]["failure_count"],
-                            "is_cooling_down": provider_stats["gemini"]["is_cooling_down"],
-                            "requests_this_minute": provider_stats["gemini"]["requests_this_minute"],
-                            "rpm_limit": provider_stats["gemini"]["rpm_limit"],
-                        },
-                        "current_provider": provider_stats["current_provider"],
-                    },
+                    "provider_stats": _all_provider_stats_block(provider_stats),
                 },
             }
         ), 200
@@ -156,7 +164,7 @@ def update_ai_settings(current_user):
                 continue
 
             # If masked API key value (unchanged), skip
-            if key in ("openrouter_api_key", "gemini_api_key") and _is_masked_value(str(value)):
+            if key in ("openrouter_api_key", "gemini_api_key", "nvidia_api_key") and _is_masked_value(str(value)):
                 logger.info(f"Skipping {key} — masked (unchanged)")
                 continue
 
@@ -201,11 +209,14 @@ def test_ai_connection(current_user):
         data = request.get_json() or {}
         provider = data.get("provider", "openrouter")
 
-        if provider not in ("openrouter", "gemini"):
-            return jsonify({"error": "Invalid provider. Use 'openrouter' or 'gemini'"}), 400
+        if provider not in ("nvidia", "openrouter", "gemini"):
+            return jsonify({"error": "Invalid provider. Use 'nvidia', 'openrouter' or 'gemini'"}), 400
 
         # Ensure the user's context is active for this test
         ai_provider_manager.set_active_user(current_user.id)
+
+        if provider == "nvidia" and not ai_provider_manager.nvidia_api_key:
+            return jsonify({"success": False, "message": "NVIDIA API key is not configured"}), 400
 
         if provider == "openrouter" and not ai_provider_manager.openrouter_api_key:
             return jsonify({"success": False, "message": "OpenRouter API key is not configured"}), 400
@@ -213,14 +224,20 @@ def test_ai_connection(current_user):
         if provider == "gemini" and not ai_provider_manager.gemini_api_key:
             return jsonify({"success": False, "message": "Gemini API key is not configured"}), 400
 
-        # Make a minimal test request
+        # Make a minimal test request pinned to the requested provider, so the
+        # result actually proves that provider's credentials work.
         test_prompt = "Respond with only the word 'OK' if you receive this message."
-        result, used_provider = ai_provider_manager.make_ai_request(
-            test_prompt,
-            temperature=0.1,
-            max_tokens=10,
-            prefer_fast=True,
-        )
+        original_provider = ai_provider_manager.current_provider
+        ai_provider_manager.force_provider(provider, scope='thread')
+        try:
+            result, used_provider = ai_provider_manager.make_ai_request(
+                test_prompt,
+                temperature=0.1,
+                max_tokens=10,
+                prefer_fast=True,
+            )
+        finally:
+            ai_provider_manager.force_provider(original_provider, scope='thread')
 
         if result:
             return jsonify(
@@ -266,7 +283,9 @@ def activate_ai_context(current_user):
         provider_stats = ai_provider_manager.get_provider_stats()
 
         has_personal_keys = bool(
-            user_settings.openrouter_api_key or user_settings.gemini_api_key
+            user_settings.openrouter_api_key
+            or user_settings.gemini_api_key
+            or user_settings.nvidia_api_key
         )
 
         return jsonify(
@@ -277,25 +296,11 @@ def activate_ai_context(current_user):
                     "active_user_id": current_user.id,
                     "has_personal_keys": has_personal_keys,
                     "active_provider": provider_stats.get("current_provider"),
-                    "provider_stats": {
-                        "openrouter": {
-                            "available": provider_stats["openrouter"]["available"],
-                            "failure_count": provider_stats["openrouter"]["failure_count"],
-                            "is_cooling_down": provider_stats["openrouter"]["is_cooling_down"],
-                            "requests_this_minute": provider_stats["openrouter"]["requests_this_minute"],
-                            "rpm_limit": provider_stats["openrouter"]["rpm_limit"],
-                        },
-                        "gemini": {
-                            "available": provider_stats["gemini"]["available"],
-                            "failure_count": provider_stats["gemini"]["failure_count"],
-                            "is_cooling_down": provider_stats["gemini"]["is_cooling_down"],
-                            "requests_this_minute": provider_stats["gemini"]["requests_this_minute"],
-                            "rpm_limit": provider_stats["gemini"]["rpm_limit"],
-                        },
-                    },
+                    "provider_stats": _all_provider_stats_block(provider_stats),
                     "model_names": {
                         "openrouter_model_name": user_settings.openrouter_model_name or "",
                         "gemini_model_name": user_settings.gemini_model_name or "",
+                        "nvidia_model_name": user_settings.nvidia_model_name or "",
                     },
                 },
             }
@@ -311,8 +316,10 @@ def _get_setting_description(key: str) -> str:
     descriptions = {
         "openrouter_api_key": "OpenRouter API key for AI content generation (your personal key)",
         "gemini_api_key": "Gemini API key for AI content generation (your personal key)",
+        "nvidia_api_key": "NVIDIA API key for AI content generation (your personal key)",
         "openrouter_model_name": "OpenRouter model name used for AI content generation",
         "gemini_model_name": "Gemini model name used for AI content generation",
+        "nvidia_model_name": "NVIDIA model name used for AI content generation",
         "ai_agent_enabled": "Enable AI-powered content generation features",
         "ai_max_requests_per_day": "Maximum AI requests per day (per user)",
     }
