@@ -2992,9 +2992,23 @@ def get_student_project_details(project_id):
         if include_rubric:
             _attach_rubric_to_dict(project_data)
         
+        # A team row scaffolded by the instructor holds no text, no file and no
+        # outcome yet. Counting it as a submission shows the student a "Submitted"
+        # badge with no way to start the work, so only rows that actually carry
+        # content or a recorded grade/feedback count as handed in.
+        has_content = False
+        has_outcome = False
+        if submission:
+            has_content = bool(
+                (submission.text_content and submission.text_content.strip())
+                or submission.file_path
+            )
+            has_outcome = submission.grade is not None or bool(submission.feedback)
+        is_handed_in = bool(submission) and (has_content or has_outcome)
+
         # Build submission_status dict
         submission_status = {
-            'submitted': submission is not None,
+            'submitted': is_handed_in,
             'status': 'not_submitted',
             'is_late': False
         }
@@ -3005,7 +3019,8 @@ def get_student_project_details(project_id):
             submission_data['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at and project.due_date else False
             if submission.grader:
                 submission_data['grader_name'] = submission.grader.full_name
-            
+        
+        if is_handed_in:
             submission_status['submitted'] = True
             submission_status['id'] = submission.id
             submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
@@ -3030,7 +3045,7 @@ def get_student_project_details(project_id):
             else:
                 submission_status['status'] = 'submitted'
         else:
-            if project.due_date < datetime.utcnow():
+            if project.due_date and project.due_date < datetime.utcnow():
                 submission_status['status'] = 'late'
                 submission_status['is_late'] = True
                 submission_status['days_late'] = (datetime.utcnow() - project.due_date).days

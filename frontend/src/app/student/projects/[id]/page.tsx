@@ -3,14 +3,21 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { StudentSubmissionService, SubmissionDetail } from '@/services/student-submission.service';
-import { sanitizeHtml } from '@/utils/sanitizeHtml';
+import { FileUploadService } from '@/services/file-upload.service';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
+import {
+  getSubmissionRequirements,
+  getFileRules,
+  isSubmissionHandedIn,
+  isFileTypeAllowed,
+  parseAttachments,
+} from '@/lib/project-submission';
 import {
   ArrowLeft,
   Loader2,
@@ -27,6 +34,7 @@ import {
   BookOpen,
   Users,
   Target,
+  X,
 } from 'lucide-react';
 
 export default function ProjectDetailPage() {
@@ -39,7 +47,7 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [textContent, setTextContent] = useState('');
-  const [fileUrl, setFileUrl] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
@@ -67,25 +75,90 @@ export default function ProjectDetailPage() {
   }, [fetchProject]);
 
   const handleSubmit = async () => {
-    if (!textContent.trim() && !fileUrl.trim()) {
-      setSubmitError('Please provide either text content or a file URL.');
+    const project = data?.project;
+    const requirements = getSubmissionRequirements(project?.submission_format);
+    const rules = getFileRules(project);
+    const hasText = !!textContent.trim();
+
+    if (requirements.needsText && !requirements.needsFile && !hasText) {
+      setSubmitError('Please add your written response before submitting.');
       return;
     }
+    if (requirements.needsFile && !requirements.needsText && !file) {
+      setSubmitError(
+        `Please attach your ${requirements.format === 'presentation' ? 'presentation' : 'file'} before submitting.`,
+      );
+      return;
+    }
+    if (requirements.needsText && requirements.needsFile && (!hasText || !file)) {
+      setSubmitError('Please add a written response and attach a file before submitting.');
+      return;
+    }
+    if (!requirements.needsText && !requirements.needsFile && !hasText && !file) {
+      setSubmitError('Please add your work before submitting.');
+      return;
+    }
+    if (file) {
+      if (file.size > rules.maxFileSizeBytes) {
+        setSubmitError(
+          `${file.name} is ${FileUploadService.formatFileSize(file.size)} — the maximum allowed file size is ${FileUploadService.formatFileSize(rules.maxFileSizeBytes)}.`,
+        );
+        return;
+      }
+      if (!isFileTypeAllowed(file.name, rules.allowedFileTypes)) {
+        setSubmitError(
+          `${file.name} is not an accepted file type. Allowed: ${rules.allowedFileTypes.join(', ')}.`,
+        );
+        return;
+      }
+    }
+
     setSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(false);
     try {
+      let fileUrl: string | undefined;
+      if (file) {
+        const uploaded = await FileUploadService.uploadFile(file, {
+          maxSize: rules.maxFileSizeBytes,
+        });
+        fileUrl = uploaded?.url;
+      }
       await StudentSubmissionService.submitProject(projectId, {
-        text_content: textContent.trim() || undefined,
-        file_url: fileUrl.trim() || undefined,
+        text_content: hasText ? textContent.trim() : undefined,
+        file_url: fileUrl,
       });
       setSubmitSuccess(true);
+      setTextContent('');
+      setFile(null);
       fetchProject();
     } catch (err: any) {
       setSubmitError(err?.message || 'Failed to submit project');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] ?? null;
+    if (selected) {
+      const rules = getFileRules(data?.project);
+      if (selected.size > rules.maxFileSizeBytes) {
+        setFile(null);
+        setSubmitError(
+          `${selected.name} is ${FileUploadService.formatFileSize(selected.size)} — the maximum allowed file size is ${FileUploadService.formatFileSize(rules.maxFileSizeBytes)}.`,
+        );
+      } else if (!isFileTypeAllowed(selected.name, rules.allowedFileTypes)) {
+        setFile(null);
+        setSubmitError(
+          `${selected.name} is not an accepted file type. Allowed: ${rules.allowedFileTypes.join(', ')}.`,
+        );
+      } else {
+        setFile(selected);
+        setSubmitError(null);
+      }
+    }
+    event.target.value = '';
   };
 
   // ── Loading ─────────────────────────────────────────────────
@@ -124,10 +197,26 @@ export default function ProjectDetailPage() {
   const project = data.project;
   const submission = data.submission;
   const status = project.submission_status;
-  const needsRevision = project.modification_requested && project.can_resubmit;
+  const requirements = getSubmissionRequirements(project.submission_format);
+  const rules = getFileRules(project);
+  const needsRevision =
+    status?.status === 'needs_revision' ||
+    (!!project.modification_requested && !!project.can_resubmit);
   const isGraded = status?.status === 'graded';
-  const isSubmitted = status?.submitted;
+  // An instructor-scaffolded team row has no content and no grade; it must
+  // not read as submitted or the form below never appears.
+  const isSubmitted = isSubmissionHandedIn(submission);
   const canSubmit = !isSubmitted || needsRevision;
+  const attachments = parseAttachments(
+    submission?.file_path || submission?.file_url,
+    submission?.file_name,
+  );
+  const hasResponse = !!textContent.trim();
+  const missingRequiredWork =
+    (requirements.needsText && !requirements.needsFile && !hasResponse) ||
+    (requirements.needsFile && !requirements.needsText && !file) ||
+    (requirements.needsText && requirements.needsFile && (!hasResponse || !file)) ||
+    (!requirements.needsText && !requirements.needsFile && !hasResponse && !file);
 
   const pct =
     status?.grade != null && project.points_possible
@@ -154,8 +243,14 @@ export default function ProjectDetailPage() {
             Revision Requested
           </AlertTitle>
           <AlertDescription className="text-orange-700 dark:text-orange-400">
-            {project.modification_request_reason ||
-              'Your instructor has requested modifications to your submission. Please review the feedback and resubmit.'}
+            <MarkdownRenderer
+              variant="compact"
+              className="prose-sm leading-relaxed"
+              content={
+                project.modification_request_reason ||
+                'Your instructor has requested modifications to your submission. Please review the feedback and resubmit.'
+              }
+            />
           </AlertDescription>
         </Alert>
       )}
@@ -223,17 +318,23 @@ export default function ProjectDetailPage() {
           <CardTitle className="text-base">Description</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div
-            className="prose prose-sm dark:prose-invert max-w-[72ch]"
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(project.description || '') }}
-          />
+          <div className="max-w-[72ch] text-sm">
+            <MarkdownRenderer
+              content={project.description || ''}
+              variant="compact"
+              className="prose-sm leading-relaxed"
+            />
+          </div>
           {project.objectives && (
             <>
               <h4 className="text-sm font-semibold mt-4">Learning Objectives</h4>
-              <div
-                className="prose prose-sm dark:prose-invert max-w-[72ch]"
-                dangerouslySetInnerHTML={{ __html: sanitizeHtml(project.objectives || '') }}
-              />
+              <div className="max-w-[72ch] text-sm">
+                <MarkdownRenderer
+                  content={project.objectives}
+                  variant="compact"
+                  className="prose-sm leading-relaxed"
+                />
+              </div>
             </>
           )}
         </CardContent>
@@ -273,9 +374,13 @@ export default function ProjectDetailPage() {
                       )}
                     </p>
                     {task.description && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        {task.description}
-                      </p>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        <MarkdownRenderer
+                          content={task.description}
+                          variant="compact"
+                          className="prose-sm leading-relaxed"
+                        />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -321,7 +426,13 @@ export default function ProjectDetailPage() {
             {status?.feedback && (
               <div className="mt-3 bg-muted/50 rounded-lg px-4 py-3">
                 <p className="text-xs font-semibold text-muted-foreground mb-1">Instructor Feedback</p>
-                <p className="text-sm">{status.feedback}</p>
+                <div className="text-sm">
+                  <MarkdownRenderer
+                    content={status.feedback}
+                    variant="compact"
+                    className="prose-sm leading-relaxed"
+                  />
+                </div>
                 {status.grader_name && (
                   <p className="text-xs text-muted-foreground mt-2">— {status.grader_name}</p>
                 )}
@@ -332,7 +443,7 @@ export default function ProjectDetailPage() {
       )}
 
       {/* Previous Submission */}
-      {submission && (
+      {isSubmitted && submission && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -340,14 +451,20 @@ export default function ProjectDetailPage() {
               Your Submission
             </CardTitle>
             <CardDescription>
-              Submitted on{' '}
-              {new Date(submission.submitted_at).toLocaleDateString('en-US', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
+              {submission.submitted_at ? (
+                <>
+                  Submitted on{' '}
+                  {new Date(submission.submitted_at).toLocaleDateString('en-US', {
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </>
+              ) : (
+                'Handed in'
+              )}
               {submission.is_late && (
                 <Badge variant="destructive" className="ml-2 text-[10px]">
                   Late
@@ -359,33 +476,46 @@ export default function ProjectDetailPage() {
             {submission.text_content && (
               <div className="bg-muted/50 rounded-lg px-4 py-3">
                 <p className="text-xs font-semibold text-muted-foreground mb-1">Response</p>
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  {submission.text_content}
+                <div className="text-sm">
+                  <MarkdownRenderer
+                    content={submission.text_content}
+                    variant="compact"
+                    className="prose-sm leading-relaxed"
+                  />
                 </div>
               </div>
             )}
-            {(submission.file_url || submission.file_path) && (
-              <div className="flex items-center gap-2 bg-muted/50 rounded-lg px-4 py-3">
+            {attachments.map((attachment, index) => (
+              <div
+                key={`${attachment.url}-${index}`}
+                className="flex items-center gap-2 bg-muted/50 rounded-lg px-4 py-3"
+              >
                 <Upload className="w-4 h-4 text-muted-foreground" />
-                <span className="text-sm">{submission.file_name || 'Uploaded file'}</span>
-                {submission.file_url && (
-                  <a
-                    href={submission.file_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline ml-auto"
-                  >
-                    View File
-                  </a>
-                )}
+                <span className="text-sm">
+                  {attachment.name || submission.file_name || 'Uploaded file'}
+                </span>
+                <a
+                  href={attachment.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline ml-auto"
+                >
+                  View File
+                </a>
               </div>
-            )}
+            ))}
             {submission.feedback && !isGraded && (
               <div className="bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 rounded-lg px-4 py-3">
                 <p className="text-xs font-semibold text-orange-800 dark:text-orange-300 mb-1">
                   Feedback
                 </p>
-                <p className="text-sm text-orange-700 dark:text-orange-400">{submission.feedback}</p>
+                <div className="text-sm text-orange-700 dark:text-orange-400">
+                  <MarkdownRenderer
+                    content={submission.feedback}
+                    variant="compact"
+                    className="prose-sm leading-relaxed"
+                  />
+                </div>
               </div>
             )}
           </CardContent>
@@ -400,11 +530,11 @@ export default function ProjectDetailPage() {
               {needsRevision ? 'Resubmit Project' : 'Submit Project'}
             </CardTitle>
             <CardDescription>
-              {project.submission_format === 'file_upload'
-                ? 'Upload your project file.'
-                : project.submission_format === 'text_response'
-                ? 'Provide your project response below.'
-                : 'Provide your project response and/or upload a file.'}
+              {requirements.needsText && requirements.needsFile
+                ? 'Provide your project response and upload a file.'
+                : requirements.needsFile
+                  ? `Upload your project ${requirements.format === 'presentation' ? 'presentation' : 'file'}.`
+                  : 'Provide your project response below.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -423,42 +553,77 @@ export default function ProjectDetailPage() {
               </Alert>
             )}
 
-            {(project.submission_format === 'text_response' ||
-              project.submission_format === 'both') && (
+            {requirements.needsText && (
               <div className="space-y-2">
                 <Label htmlFor="text-content">Response</Label>
                 <Textarea
                   id="text-content"
                   placeholder="Write your project response here..."
                   value={textContent}
-                  onChange={(e) => setTextContent(e.target.value)}
+                  onChange={(e) => {
+                    setTextContent(e.target.value);
+                    setSubmitError(null);
+                  }}
                   rows={8}
                 />
               </div>
             )}
 
-            {(project.submission_format === 'file_upload' ||
-              project.submission_format === 'both' ||
-              project.submission_format === 'presentation') && (
+            {requirements.needsFile && (
               <div className="space-y-2">
-                <Label htmlFor="file-url">File URL</Label>
-                <Input
-                  id="file-url"
-                  type="url"
-                  placeholder="Paste a link to your project file (Google Drive, GitHub, etc.)"
-                  value={fileUrl}
-                  onChange={(e) => setFileUrl(e.target.value)}
-                />
+                <Label htmlFor="project-file">
+                  {requirements.format === 'presentation' ? 'Presentation file' : 'File'}
+                </Label>
+                {file ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
+                    <span className="text-sm truncate flex items-center gap-2">
+                      <Upload className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      {file.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setFile(null)}
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label="Remove file"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="file"
+                      id="project-file"
+                      className="sr-only"
+                      accept={rules.accept}
+                      onChange={handleFileChange}
+                      disabled={submitting}
+                    />
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="project-file"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground hover:border-primary/60 hover:text-foreground transition-colors focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/30"
+                  >
+                    <Upload className="w-4 h-4" />
+                    Choose a file
+                    <input
+                      type="file"
+                      id="project-file"
+                      className="sr-only"
+                      accept={rules.accept}
+                      onChange={handleFileChange}
+                      disabled={submitting}
+                    />
+                  </label>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  Max file size: {project.max_file_size_mb || 50}MB
-                  {project.allowed_file_types && ` • Allowed: ${project.allowed_file_types}`}
+                  Max file size: {rules.maxFileSizeMB}MB
+                  {rules.allowedFileTypes.length > 0 && ` • Allowed: ${rules.allowedFileTypes.join(', ')}`}
                 </p>
               </div>
             )}
 
             <Button
               onClick={handleSubmit}
-              disabled={submitting || (!textContent.trim() && !fileUrl.trim())}
+              disabled={submitting || missingRequiredWork}
               className="w-full sm:w-auto"
             >
               {submitting ? (

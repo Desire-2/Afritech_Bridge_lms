@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { StudentSubmissionService, TeamDashboardData, TeamMember } from '@/services/student-submission.service';
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
+import { parseAttachments } from '@/lib/project-submission';
 import {
   ArrowLeft,
   Loader2,
@@ -189,9 +191,16 @@ export default function StudentTeamDashboardPage() {
             <Edit3 className="w-5 h-5 text-orange-600 mt-0.5 shrink-0" />
             <div>
               <h4 className="font-semibold text-orange-800 dark:text-orange-300">Revision Requested</h4>
-              <p className="text-sm text-orange-700 dark:text-orange-400">
-                {submission.modification_reason || 'Your instructor has requested modifications. Please revise and resubmit.'}
-              </p>
+              <div className="text-sm text-orange-700 dark:text-orange-400">
+                <MarkdownRenderer
+                  variant="compact"
+                  className="prose-sm leading-relaxed"
+                  content={
+                    submission.modification_reason ||
+                    'Your instructor has requested modifications. Please revise and resubmit.'
+                  }
+                />
+              </div>
             </div>
           </div>
         )}
@@ -413,30 +422,39 @@ export default function StudentTeamDashboardPage() {
                       <MessageSquare className="w-5 h-5 text-indigo-500 mt-0.5 shrink-0" />
                       <div>
                         <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">Instructor Feedback</p>
-                        <p className="text-sm text-indigo-700 dark:text-indigo-400">{submission.feedback}</p>
+                        <div className="text-sm text-indigo-700 dark:text-indigo-400">
+                          <MarkdownRenderer
+                            variant="compact"
+                            className="prose-sm leading-relaxed"
+                            content={submission.feedback}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
                 )}
 
                 {/* File Display */}
-                {submission.file_path && (
-                  <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
+                {parseAttachments(submission.file_path).map((attachment, index) => (
+                  <div
+                    key={`${attachment.url}-${index}`}
+                    className="flex items-center gap-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4"
+                  >
                     <FileText className="w-5 h-5 text-gray-400" />
-                    <span className="text-sm text-gray-700 dark:text-gray-300">{submission.file_name || 'Submitted file'}</span>
-                    {submission.file_path && (
-                      <a
-                        href={submission.file_path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ml-auto text-sm text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        View
-                      </a>
-                    )}
+                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                      {attachment.name || submission.file_name || 'Submitted file'}
+                    </span>
+                    <a
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-auto text-sm text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      View
+                    </a>
                   </div>
-                )}
+                ))}
 
                 {/* Submit Button if not yet submitted or needs revision */}
                 {(!submission.submitted || submission.needs_revision) && (
