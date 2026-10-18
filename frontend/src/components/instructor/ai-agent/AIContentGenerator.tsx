@@ -39,6 +39,14 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // A request is "in flight" from submit until its poll settles — even if the
+  // user dismisses the progress panel. Keeping the button locked for that
+  // whole window stops a second batch from being started alongside the first.
+  const inFlightRef = useRef(false);
+  const [inFlight, setInFlight] = useState(false);
+  // Set by Cancel so a late-resolving poll can't apply a cancelled result.
+  const cancelledRef = useRef(false);
+
   // Background task state
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
@@ -85,17 +93,37 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   }, [taskStatus?.rate_limit_info?.is_waiting, taskStatus?.rate_limit_info?.wait_remaining_seconds]);
 
   const handleProgressUpdate = useCallback((status: TaskStatus) => {
+    if (!status.task_id) {
+      setTaskStatus(status);
+      return;
+    }
+
+    // Cancel can arrive before the submitted task id is known — forward it to
+    // the server on the first status update instead of losing the cancellation.
+    if (cancelledRef.current) {
+      if (status.status !== 'cancelled' && status.status !== 'completed') {
+        aiAgentService.cancelTask(status.task_id);
+      }
+      return;
+    }
+
     setTaskStatus(status);
+    // The task id only arrives with the submitted response, which resolves
+    // after polling finishes — grab it from the first status update so the
+    // Cancel button actually has something to cancel.
+    setTaskId(prev => prev || status.task_id);
   }, []);
 
   const handleCancel = useCallback(async () => {
-    if (taskId) {
-      await aiAgentService.cancelTask(taskId);
-      setLoading(false);
-      setTaskId(null);
-      setTaskStatus(null);
-      setError('Generation cancelled');
+    cancelledRef.current = true;
+    const id = taskId;
+    if (id) {
+      await aiAgentService.cancelTask(id);
     }
+    setLoading(false);
+    setTaskId(null);
+    setTaskStatus(null);
+    setError('Generation cancelled');
   }, [taskId]);
 
   const getTypeConfig = () => {
@@ -139,11 +167,23 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   };
 
   const handleGenerate = async () => {
+    // Re-entry guard: "Continue Working" hides the panel but leaves the poll
+    // running, so a second batch must not be started alongside the first.
+    if (inFlightRef.current) return;
+
+    inFlightRef.current = true;
+    setInFlight(true);
+    cancelledRef.current = false;
     setLoading(true);
     setError(null);
     setSuccess(false);
     setTaskId(null);
     setTaskStatus(null);
+
+    const releaseLock = () => {
+      inFlightRef.current = false;
+      setInFlight(false);
+    };
 
     try {
       let response;
@@ -168,6 +208,7 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
           if (!moduleId) {
             setError('Module ID is required for lesson generation');
             setLoading(false);
+            releaseLock();
             return;
           }
           if (batchMode) {
@@ -188,6 +229,7 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
           if (!moduleId) {
             setError('Module ID is required for quiz generation');
             setLoading(false);
+            releaseLock();
             return;
           }
           const numQuestions = parseInt(customInput) || 5;
@@ -207,6 +249,7 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
           if (!moduleId) {
             setError('Module ID is required for assignment generation');
             setLoading(false);
+            releaseLock();
             return;
           }
           response = await aiAgentService.generateAssignment(
@@ -225,17 +268,21 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
         default:
           setError('Unknown content type');
           setLoading(false);
+          releaseLock();
           return;
       }
 
       // Store task_id for cancellation
-      if (response && 'task_id' in response) {
+      if (!cancelledRef.current && response && 'task_id' in response) {
         setTaskId(response.task_id as string);
       }
 
       const isUsableResponse = (response.success || response.status === 'partial_success') && response.data;
-      
-      if (isUsableResponse) {
+
+      if (cancelledRef.current) {
+        // The user cancelled while the task was running — discard the result.
+        // The server auto-save has already been told to stop (see handleCancel).
+      } else if (isUsableResponse) {
         setSuccess(true);
         onGenerate(response.data);
         setCustomInput('');
@@ -254,6 +301,7 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
       setLoading(false);
       setTaskId(null);
       setTaskStatus(null);
+      releaseLock();
     }
   };
 
@@ -343,7 +391,7 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
         <div className="flex gap-2">
           <Button
             onClick={handleGenerate}
-            disabled={loading}
+            disabled={loading || inFlight}
             className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
             size="default"
           >
@@ -351,6 +399,11 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 {taskStatus ? `Step ${taskStatus.current_step}/${taskStatus.total_steps}` : 'Starting...'}
+              </>
+            ) : inFlight ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Generation running in background…
               </>
             ) : (
               <>

@@ -494,7 +494,16 @@ class AIAgentService:
                                   course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
         """Generate multiple module outlines with enhanced handling.
         Quality threshold is skipped for module outlines."""
-        cache_key = f"modules_{course_title}_{num_modules}_{len(existing_modules or [])}"
+        # Key on the actual existing titles (not just their count) so two
+        # courses with the same title and module count can't share a payload.
+        existing_signature = hashlib.md5(
+            "|".join(sorted({
+                (m.get('title') or '').strip().lower()
+                for m in (existing_modules or [])
+                if isinstance(m, dict)
+            })).encode("utf-8", "ignore")
+        ).hexdigest()[:12]
+        cache_key = f"modules_{course_title}_{num_modules}_{existing_signature}"
         
         return self._execute_with_retry_and_cache(
             cache_key,

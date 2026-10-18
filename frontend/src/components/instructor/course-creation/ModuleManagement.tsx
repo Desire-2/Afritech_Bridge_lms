@@ -916,36 +916,95 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   // AI handlers for module
   const handleModuleAIGenerate = async (data: any) => {
     if (data.modules && Array.isArray(data.modules)) {
-      // Multiple modules generated - create them all
+      // Multiple modules generated - create them all.
+      // The background task auto-saves server-side, so the local `modules`
+      // state may already be stale — always re-read the course first and only
+      // create what is genuinely missing. This keeps the handler idempotent.
       try {
+        const freshCourse = await CourseCreationService.getCourseDetails(course.id);
+        const freshModules = (freshCourse.modules as EnhancedModule[]) || [];
+
+        const moduleByTitle = new Map<string, EnhancedModule>();
+        const existingLessonTitles = new Set<string>();
+        for (const mod of freshModules) {
+          const moduleKey = (mod.title || '').trim().toLowerCase();
+          if (moduleKey && !moduleByTitle.has(moduleKey)) {
+            moduleByTitle.set(moduleKey, mod);
+          }
+          for (const lesson of (mod.lessons || [])) {
+            const lessonKey = (lesson.title || '').trim().toLowerCase();
+            if (lessonKey) existingLessonTitles.add(lessonKey);
+          }
+        }
+
+        let createdCount = 0;
+        let skippedCount = 0;
+        let lessonsCreated = 0;
+        const skippedTitles: string[] = [];
+
         for (const moduleData of data.modules) {
-          const newModule = await CourseCreationService.createModule(course.id, {
-            title: moduleData.title,
-            description: moduleData.description || '',
-            learning_objectives: moduleData.learning_objectives || '',
-            is_published: false
-          });
-          
-          // If suggested lessons exist, create them too
-          if (moduleData.suggested_lessons && Array.isArray(moduleData.suggested_lessons)) {
-            for (const lessonData of moduleData.suggested_lessons) {
-              await CourseCreationService.createLesson(course.id, newModule.id, {
+          const titleKey = (moduleData.title || '').trim().toLowerCase();
+          let targetModule = titleKey ? moduleByTitle.get(titleKey) : undefined;
+
+          if (targetModule) {
+            skippedCount++;
+            skippedTitles.push(moduleData.title);
+          } else {
+            targetModule = await CourseCreationService.createModule(course.id, {
+              title: moduleData.title,
+              description: moduleData.description || '',
+              learning_objectives: moduleData.learning_objectives || '',
+              is_published: false,
+              ai_generated: true
+            });
+            createdCount++;
+            if (titleKey) moduleByTitle.set(titleKey, targetModule);
+          }
+
+          // Attach suggested lessons (deduped course-wide, including lessons
+          // that already exist on a module the server auto-saved for us).
+          const suggestedLessons = moduleData.suggested_lessons;
+          if (Array.isArray(suggestedLessons)) {
+            for (const lessonData of suggestedLessons) {
+              const lessonKey = (lessonData.title || '').trim().toLowerCase();
+              if (!lessonKey || existingLessonTitles.has(lessonKey)) continue;
+
+              await CourseCreationService.createLesson(course.id, targetModule.id, {
                 title: lessonData.title,
                 description: lessonData.description || '',
                 content_type: 'text',
                 content_data: `# ${lessonData.title}\n\nContent to be developed...`,
                 duration_minutes: lessonData.duration_minutes || 30,
-                is_published: false
+                is_published: false,
+                ai_generated: true
               });
+              existingLessonTitles.add(lessonKey);
+              lessonsCreated++;
             }
           }
         }
-        
+
         // Refresh course data
-        const updatedCourse = await CourseCreationService.getCourseWithModules(course.id);
+        const updatedCourse = await CourseCreationService.getCourseDetails(course.id);
         onCourseUpdate(updatedCourse);
         setModules(updatedCourse.modules as EnhancedModule[] || []);
-        toast.success(`Successfully created ${data.modules.length} modules with lessons!`);
+
+        if (createdCount === 0 && lessonsCreated === 0) {
+          if (skippedCount > 0) {
+            toast.info(
+              `All ${skippedCount} module(s) were already saved automatically — no duplicates created.`
+            );
+          } else {
+            toast.warning('No modules were returned by the AI. Please try again.');
+          }
+        } else {
+          const parts = [
+            createdCount > 0 ? `created ${createdCount} module(s)` : '',
+            lessonsCreated > 0 ? `planned ${lessonsCreated} lesson(s)` : '',
+            skippedCount > 0 ? `skipped ${skippedCount} duplicate(s)` : ''
+          ].filter(Boolean);
+          toast.success(`AI batch complete: ${parts.join(', ')}.`);
+        }
       } catch (error) {
         console.error('Error creating modules:', error);
         toast.error('Failed to create some modules. Please try again.');
@@ -977,9 +1036,21 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       setIsCreatingLessons(true);
       
       try {
+        // Re-read the course first: the background task auto-saves lessons
+        // server-side, so local state may already be stale. Dedup against the
+        // authoritative copy to keep this handler idempotent.
+        const freshCourse = await CourseCreationService.getCourseDetails(course.id);
+        const freshModules = (freshCourse.modules as EnhancedModule[]) || [];
+        const currentFreshModule = freshModules.find(m => m.id === showLessonAI.moduleId)
+          || freshModules.find(m => m.title === currentModule.title);
+        if (!currentFreshModule) {
+          toast.error('Module not found');
+          return;
+        }
+
         // Build a set of existing lesson titles across ALL modules (case-insensitive) for deduplication
         const existingTitleSet = new Set<string>();
-        for (const mod of modules) {
+        for (const mod of freshModules) {
           for (const lesson of (mod.lessons || [])) {
             if (lesson.title) {
               existingTitleSet.add(lesson.title.trim().toLowerCase());
@@ -1001,24 +1072,26 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
             continue;
           }
 
-          // Outlines only — content_data is empty, will be generated separately
+          // Outlines only — content_data will be generated separately
           const lessonPayload = {
             title: lessonData.title,
             description: lessonData.description || '',
             content_type: lessonData.content_type || 'text',
-            content_data: lessonData.content_data || '',
+            content_data: lessonData.content_data
+              || `# ${lessonData.title}\n\nContent to be developed...`,
             learning_objectives: lessonData.learning_objectives || '',
             duration_minutes: lessonData.duration_minutes || 60,
-            order: lessonData.order || 1
+            order: lessonData.order || 1,
+            ai_generated: true
           };
 
-          const createdLesson = await CourseCreationService.createLesson(course.id, currentModule.id, lessonPayload);
+          const createdLesson = await CourseCreationService.createLesson(course.id, currentFreshModule.id, lessonPayload);
           successCount++;
           existingTitleSet.add(titleKey); // Track to prevent intra-batch duplicates
           
           // Update local state
           setModules(prevModules => prevModules.map(mod => {
-            if (mod.id === currentModule.id) {
+            if (mod.id === currentFreshModule.id) {
               return {
                 ...mod,
                 lessons: [...(mod.lessons || []), createdLesson]

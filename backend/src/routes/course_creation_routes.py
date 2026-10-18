@@ -341,13 +341,29 @@ def create_module(course_id):
         # Validate required fields
         if not data.get('title'):
             return jsonify({"message": "Module title is required"}), 400
-        
+
+        title = str(data['title']).strip()
+
+        # AI-driven creates are idempotent: the background generator may already
+        # have auto-saved this module, so re-posting the same title must return
+        # the existing row instead of inserting a duplicate. Manual creates are
+        # unaffected — an instructor can still deliberately reuse a title.
+        if data.get('ai_generated'):
+            existing_module = Module.query.filter_by(course_id=course_id)\
+                .filter(db.func.lower(Module.title) == title.lower()).first()
+            if existing_module:
+                return jsonify({
+                    "message": "Module already exists",
+                    "module": existing_module.to_dict(include_lessons=True),
+                    "duplicate": True,
+                }), 200
+
         # Get the next order number
         last_module = Module.query.filter_by(course_id=course_id).order_by(Module.order.desc()).first()
         next_order = (last_module.order + 1) if last_module else 1
         
         module = Module(
-            title=data['title'],
+            title=title,
             description=data.get('description', ''),
             learning_objectives=data.get('learning_objectives', ''),
             course_id=course_id,
@@ -555,7 +571,19 @@ def create_lesson(course_id, module_id):
         if not content_ok:
             logger.debug(f"LESSON - Invalid content: {content_error}")
             return jsonify({"message": content_error, "error": "INVALID_LESSON_CONTENT"}), 400
-        
+
+        # AI-driven creates are idempotent (see create_module): the background
+        # generator auto-saves, so an identical re-post returns the existing row.
+        if data.get('ai_generated'):
+            existing_lesson = Lesson.query.filter_by(module_id=module_id)\
+                .filter(db.func.lower(Lesson.title) == str(data['title']).strip().lower()).first()
+            if existing_lesson:
+                return jsonify({
+                    "message": "Lesson already exists",
+                    "lesson": existing_lesson.to_dict(),
+                    "duplicate": True,
+                }), 200
+
         # Get the next order number
         last_lesson = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order.desc()).first()
         next_order = (last_lesson.order + 1) if last_lesson else 1

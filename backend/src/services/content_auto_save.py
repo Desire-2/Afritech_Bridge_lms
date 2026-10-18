@@ -9,10 +9,27 @@ Called by BackgroundTaskManager's on_complete callback.
 
 import logging
 import json
+import threading
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# Module auto-saves must be serialised per course: two overlapping AI tasks
+# (or an AI task racing a manual save) would otherwise read the same
+# "existing titles" snapshot and insert the same rows twice.
+_save_locks: Dict[str, threading.Lock] = {}
+_save_locks_guard = threading.Lock()
+
+
+def _lock_for_course(course_id: int) -> threading.Lock:
+    key = str(course_id)
+    with _save_locks_guard:
+        lock = _save_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _save_locks[key] = lock
+        return lock
 
 
 def handle_task_completion(task_id: str, task_type: str, result: Any,
@@ -350,7 +367,10 @@ def _save_multiple_modules(db, Module, course_id: int,
                            data: Dict[str, Any]) -> Dict[str, Any]:
     """Save multiple AI-generated modules to the DB.
 
-    Deduplication: modules whose titles already exist in the course are skipped.
+    Deduplication: modules whose titles already exist in the course are skipped,
+    and suggested lessons are only created when their title doesn't already exist
+    anywhere in the course. The whole save runs under a per-course lock so a
+    second writer can't interleave between the existence check and the insert.
     """
     modules_data = data.get('modules', [])
     if not modules_data:
@@ -359,48 +379,120 @@ def _save_multiple_modules(db, Module, course_id: int,
     if not course_id:
         return {'saved': False, 'reason': 'no course_id provided'}
 
-    existing_titles = {
-        (module.title or '').strip().lower()
-        for module in Module.query.filter_by(course_id=course_id).all()
-    }
-
-    last_module = Module.query.filter_by(course_id=course_id)\
-        .order_by(Module.order.desc()).first()
-    next_order = (last_module.order + 1) if last_module else 1
-
     created = []
     skipped = []
-    for i, mod_data in enumerate(modules_data):
-        title = mod_data.get('title', f'Module {next_order + i}') or f'Module {next_order + i}'
-        title_key = title.strip().lower()
-        if title_key in existing_titles:
-            skipped.append(title)
-            logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
-            continue
+    lessons_created = 0
 
-        module = Module(
-            title=title,
-            description=mod_data.get('description', ''),
-            learning_objectives=mod_data.get('learning_objectives', ''),
-            course_id=course_id,
-            order=mod_data.get('order', next_order + len(created)),
-            is_published=False,
-        )
-        db.session.add(module)
-        created.append(title)
-        existing_titles.add(title_key)
+    with _lock_for_course(course_id):
+        try:
+            existing_titles = {
+                (module.title or '').strip().lower()
+                for module in Module.query.filter_by(course_id=course_id).all()
+            }
 
-    db.session.commit()
+            last_module = Module.query.filter_by(course_id=course_id)\
+                .order_by(Module.order.desc()).first()
+            next_order = (last_module.order + 1) if last_module else 1
+
+            lesson_titles = _load_course_lesson_titles(db, course_id)
+
+            for i, mod_data in enumerate(modules_data):
+                title = mod_data.get('title', f'Module {next_order + i}') or f'Module {next_order + i}'
+                title_key = title.strip().lower()
+                if title_key in existing_titles:
+                    skipped.append(title)
+                    logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
+                    continue
+
+                # Always append at the end: the AI-supplied order is derived
+                # from a snapshot that may skip duplicates and can collide with
+                # a manually reordered course.
+                module = Module(
+                    title=title,
+                    description=mod_data.get('description', ''),
+                    learning_objectives=mod_data.get('learning_objectives', ''),
+                    course_id=course_id,
+                    order=next_order + len(created),
+                    is_published=False,
+                )
+                db.session.add(module)
+                # Flush so the new module gets an id before its lessons reference it
+                db.session.flush()
+                created.append(title)
+                existing_titles.add(title_key)
+                lessons_created += _create_suggested_lessons(db, module, mod_data, lesson_titles)
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
     logger.info(f"Auto-saved {len(created)} modules to course {course_id} "
-                f"(skipped {len(skipped)} duplicates)")
+                f"(skipped {len(skipped)} duplicates, {lessons_created} lessons)")
     return {
         'saved': True,
         'type': 'modules',
         'count': len(created),
         'titles': created,
         'skipped_duplicates': skipped,
+        'lessons_created': lessons_created,
         'course_id': course_id,
     }
+
+
+def _load_course_lesson_titles(db, course_id: int) -> set:
+    """Lower-cased titles of every lesson already present in the course."""
+    from ..models.course_models import Lesson, Module
+    rows = db.session.query(Lesson).join(
+        Module, Lesson.module_id == Module.id
+    ).filter(Module.course_id == course_id).all()
+    return {(les.title or '').strip().lower() for les in rows if (les.title or '').strip()}
+
+
+def _create_suggested_lessons(db, module, mod_data: Dict[str, Any],
+                              lesson_titles: set) -> int:
+    """Create the lesson outlines attached to an AI-generated module.
+
+    Every title is checked against `lesson_titles` (course-wide, lower-cased),
+    which is mutated in place so the same lesson can't be created twice inside
+    one batch. Returns the number of lessons actually created.
+    """
+    from ..models.course_models import Lesson
+
+    suggestions = mod_data.get('suggested_lessons')
+    if not isinstance(suggestions, list) or not suggestions:
+        return 0
+
+    created = 0
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        title = (suggestion.get('title') or '').strip()
+        title_key = title.lower()
+        if not title_key or title_key in lesson_titles:
+            continue
+
+        try:
+            duration = int(suggestion.get('duration_minutes') or 30)
+        except (TypeError, ValueError):
+            duration = 30
+
+        db.session.add(Lesson(
+            title=title,
+            content_type='text',
+            content_data=f"# {title}\n\nContent to be developed...",
+            description=suggestion.get('description', ''),
+            learning_objectives=suggestion.get('learning_objectives', ''),
+            module_id=module.id,
+            order=created + 1,
+            duration_minutes=duration,
+            is_published=False,
+        ))
+
+        lesson_titles.add(title_key)
+        created += 1
+
+    return created
 
 
 def _save_single_module(db, Module, course_id: int,
@@ -411,30 +503,35 @@ def _save_single_module(db, Module, course_id: int,
 
     title = data.get('title', 'AI Generated Module')
 
-    existing = Module.query.filter_by(course_id=course_id)\
-        .filter(db.func.lower(Module.title) == title.strip().lower()).first()
-    if existing:
-        logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
-        return {
-            'saved': False,
-            'reason': f'module "{title}" already exists in this course',
-            'existing_module_id': existing.id,
-        }
+    with _lock_for_course(course_id):
+        try:
+            existing = Module.query.filter_by(course_id=course_id)\
+                .filter(db.func.lower(Module.title) == title.strip().lower()).first()
+            if existing:
+                logger.info(f"Skipping duplicate module '{title}' in course {course_id}")
+                return {
+                    'saved': False,
+                    'reason': f'module "{title}" already exists in this course',
+                    'existing_module_id': existing.id,
+                }
 
-    last_module = Module.query.filter_by(course_id=course_id)\
-        .order_by(Module.order.desc()).first()
-    next_order = (last_module.order + 1) if last_module else 1
+            last_module = Module.query.filter_by(course_id=course_id)\
+                .order_by(Module.order.desc()).first()
+            next_order = (last_module.order + 1) if last_module else 1
 
-    module = Module(
-        title=title,
-        description=data.get('description', ''),
-        learning_objectives=data.get('learning_objectives', ''),
-        course_id=course_id,
-        order=data.get('order', next_order),
-        is_published=False,
-    )
-    db.session.add(module)
-    db.session.commit()
+            module = Module(
+                title=title,
+                description=data.get('description', ''),
+                learning_objectives=data.get('learning_objectives', ''),
+                course_id=course_id,
+                order=data.get('order', next_order),
+                is_published=False,
+            )
+            db.session.add(module)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
     logger.info(f"Auto-saved module '{title}' to course {course_id}")
     return {
         'saved': True,
@@ -459,6 +556,8 @@ def _create_success_notification(db, Notification, user_id: int, task_id: str,
     count = saved_info.get('count', 0)
     titles = saved_info.get('titles', [])
     content_type = saved_info.get('type', task_type)
+    skipped_duplicates = saved_info.get('skipped_duplicates') or []
+    lessons_created = saved_info.get('lessons_created') or 0
 
     if saved and count > 0:
         # For lesson outlines, use different messaging since no content was generated
@@ -482,6 +581,22 @@ def _create_success_notification(db, Notification, user_id: int, task_id: str,
                 f"for {course_name}. Items: {titles_preview}. "
                 f"Review them in your course editor."
             )
+            if lessons_created:
+                message += f" Planned {lessons_created} lesson outline(s) inside them."
+            if skipped_duplicates:
+                message += f" Skipped {len(skipped_duplicates)} duplicate(s) that already existed."
+    elif saved and skipped_duplicates:
+        # Everything the AI returned was already in the course — nothing new
+        # was written, which is the desired (non-duplicating) outcome.
+        title = "AI Content Already Present"
+        dup_preview = ", ".join(skipped_duplicates[:3])
+        if len(skipped_duplicates) > 3:
+            dup_preview += f" (+{len(skipped_duplicates) - 3} more)"
+        message = (
+            f"AI generation for {course_name} returned {len(skipped_duplicates)} "
+            f"item(s) that already exist ({dup_preview}). Nothing was duplicated — "
+            f"your existing content is unchanged."
+        )
     else:
         title = "AI Content Generated"
         reason = saved_info.get('reason', 'Content generated but not auto-saved')

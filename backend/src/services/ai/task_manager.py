@@ -240,21 +240,33 @@ class BackgroundTaskManager:
                 logger.info(f"Task {task_id[:8]}... was cancelled")
                 return
 
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = now_local().isoformat()
-            task.progress = 100.0
-            task.current_step_description = "Completed"
+            # Store the result, then run the completion callback (auto-save,
+            # notifications, ...) BEFORE flipping the status to COMPLETED.
+            # Pollers only see `completed` once the result has been persisted —
+            # otherwise a client can act on a task the server is still saving
+            # and write the very same records a second time.
             task.result = result
             self.task_results[task_id] = result
-            logger.info(f"Task {task_id[:8]}... completed successfully")
 
-            # Fire completion callback (auto-save, notifications, etc.)
             if on_complete:
                 try:
                     on_complete(task_id, task.task_type, result,
                                 task_meta or {}, task.user_id)
                 except Exception as cb_err:
                     logger.error(f"Task {task_id[:8]}... on_complete callback failed: {cb_err}")
+
+            if self.cancel_flags.get(task_id, threading.Event()).is_set():
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = now_local().isoformat()
+                task.current_step_description = "Cancelled"
+                logger.info(f"Task {task_id[:8]}... was cancelled during completion")
+                return
+
+            task.status = TaskStatus.COMPLETED
+            task.completed_at = now_local().isoformat()
+            task.progress = 100.0
+            task.current_step_description = "Completed"
+            logger.info(f"Task {task_id[:8]}... completed successfully")
 
         except Exception as e:
             task.status = TaskStatus.FAILED

@@ -160,6 +160,7 @@ export interface CreateEnhancedModuleRequest {
   learning_objectives?: string;
   order?: number;
   is_published?: boolean;
+  ai_generated?: boolean;
 }
 
 export interface Lesson {
@@ -188,6 +189,7 @@ export interface CreateEnhancedLessonRequest {
   order?: number;
   duration_minutes?: number;
   is_published?: boolean;
+  ai_generated?: boolean;
 }
 
 export interface ModuleOrderUpdate {
