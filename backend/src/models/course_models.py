@@ -1728,6 +1728,66 @@ class TeamAssignmentEvent(db.Model):
         return f'<TeamAssignmentEvent {self.id} {self.event_type} project={self.project_id}>'
 
 
+class TeamChatMessage(db.Model):
+    """One message in the team room of a collaborative project.
+
+    A "team" is a ProjectSubmission row (the primary submitter plus the ids in
+    ``team_members``), so the room keys off that row instead of a member list:
+    every member of the submission shares one room, and the room disappears
+    with the team.
+    """
+
+    __tablename__ = 'team_chat_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    submission_id = db.Column(
+        db.Integer,
+        db.ForeignKey('project_submissions.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    sender_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False, index=True)
+
+    sender = db.relationship(
+        'User',
+        foreign_keys=[sender_id],
+        backref=db.backref('team_chat_messages', lazy='dynamic'),
+    )
+    submission = db.relationship(
+        'ProjectSubmission',
+        backref=db.backref(
+            'chat_messages',
+            lazy='dynamic',
+            cascade='all, delete-orphan',
+            passive_deletes=True,
+        ),
+    )
+
+    def to_dict(self):
+        # first/last name are often unset — never render "None None".
+        name = f"{self.sender.first_name or ''} {self.sender.last_name or ''}".strip() if self.sender else ''
+        if not name and self.sender:
+            name = self.sender.username or self.sender.email or f"User {self.sender.id}"
+        return {
+            'id': self.id,
+            'submission_id': self.submission_id,
+            'sender_id': self.sender_id,
+            'sender_name': name,
+            'body': self.body,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f'<TeamChatMessage {self.id} team={self.submission_id}>'
+
+
 class Announcement(db.Model):
     __tablename__ = 'announcements'
     id = db.Column(db.Integer, primary_key=True)

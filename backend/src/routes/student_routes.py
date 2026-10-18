@@ -11,7 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission, Announcement, ApplicationWindow, CohortModuleRelease
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission, TeamChatMessage, Announcement, ApplicationWindow, CohortModuleRelease
+from ..models.course_application import CourseApplication
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
@@ -3066,6 +3067,61 @@ def get_student_project_details(project_id):
         return jsonify({"message": "Error fetching project details", "error": str(e)}), 500
 
 
+def _display_name(user):
+    """A name that is never "None None" — first/last are often unset."""
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return name or user.username or user.email or f"User {user.id}"
+
+
+def _find_team_submission(project_id, student_id):
+    """Return ``(submission, member_ids)`` for the team the student belongs to.
+
+    A team is one ProjectSubmission row: the primary submitter
+    (``student_id``) plus the other member ids stored as JSON in
+    ``team_members``. Returns ``(None, set())`` when the student is on no team
+    for this project.
+    """
+    submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
+    for sub in submissions:
+        member_ids = sub.get_team_members() or []
+        all_ids = set(member_ids + [sub.student_id])
+        if student_id in all_ids:
+            return sub, all_ids
+    return None, set()
+
+
+def _member_phone(user, course_id):
+    """Phone number for a team member, falling back to their application form.
+
+    ``users.phone_number`` is optional and usually blank, but every applicant
+    leaves a number on the application form, so look at the application this
+    enrollment came from — and failing that, any application filed with the
+    same email address.
+    """
+    phone = (user.phone_number or "").strip()
+    if phone:
+        return phone
+
+    enrollment = Enrollment.query.filter(
+        Enrollment.student_id == user.id,
+        Enrollment.course_id == course_id,
+        Enrollment.application_id.isnot(None),
+    ).order_by(Enrollment.id.desc()).first()
+    if enrollment and enrollment.application and enrollment.application.phone:
+        return enrollment.application.phone.strip()
+
+    application = (
+        CourseApplication.query
+        .filter(db.func.lower(CourseApplication.email) == (user.email or "").lower())
+        .order_by(CourseApplication.id.desc())
+        .first()
+    )
+    if application and application.phone:
+        return application.phone.strip()
+
+    return ""
+
+
 @student_bp.route("/projects/<int:project_id>/my-team", methods=["GET"])
 @student_required
 def get_student_team_info(project_id):
@@ -3092,19 +3148,9 @@ def get_student_team_info(project_id):
             return jsonify({"message": "This project does not have collaboration enabled"}), 400
         
         # Find the submission where the student is a member
-        submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
-        
-        my_submission = None
-        team_member_ids = set()
-        
-        for sub in submissions:
-            member_ids = sub.get_team_members() or []
-            all_ids = list(set(member_ids + [sub.student_id]))
-            
-            if current_user_id in all_ids:
-                my_submission = sub
-                team_member_ids = set(all_ids)
-                break
+        my_submission, team_member_ids = _find_team_submission(
+            project_id, current_user_id
+        )
         
         if not my_submission:
             return jsonify({
@@ -3122,9 +3168,9 @@ def get_student_team_info(project_id):
             if user:
                 team_members.append({
                     "id": user.id,
-                    "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "name": _display_name(user),
                     "email": user.email,
-                    "phone": user.phone_number or "",
+                    "phone": _member_phone(user, project.course_id),
                     "is_primary": user.id == my_submission.student_id,
                     "is_me": user.id == current_user_id
                 })
@@ -3185,6 +3231,114 @@ def get_student_team_info(project_id):
     except Exception as e:
         logger.error(f"Error fetching student team info: {str(e)}", exc_info=True)
         return jsonify({"message": "Error fetching team info", "error": str(e)}), 500
+
+
+@student_bp.route("/projects/<int:project_id>/team/chat", methods=["GET"])
+@student_required
+def get_team_chat(project_id):
+    """Messages in this student's team room.
+
+    Polling clients pass ``?after=<last id>`` and only receive what is new;
+    the first load (no ``after``) returns the most recent window, oldest first.
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({"message": "Project not found"}), 404
+        if not project.collaboration_allowed:
+            return jsonify({
+                "message": "This project does not have collaboration enabled"
+            }), 400
+
+        submission, _member_ids = _find_team_submission(project_id, current_user_id)
+        if not submission:
+            return jsonify({
+                "message": "You are not assigned to any team for this project",
+                "submission_id": None,
+                "viewer_id": current_user_id,
+                "messages": [],
+            }), 403
+
+        try:
+            after_id = int(request.args.get("after", 0))
+        except (TypeError, ValueError):
+            after_id = 0
+        try:
+            limit = int(request.args.get("limit", 100))
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(limit, 200))
+
+        query = TeamChatMessage.query.filter_by(submission_id=submission.id)
+        if after_id > 0:
+            messages = (
+                query.filter(TeamChatMessage.id > after_id)
+                .order_by(TeamChatMessage.id.asc())
+                .limit(limit)
+                .all()
+            )
+        else:
+            messages = list(
+                reversed(
+                    query.order_by(TeamChatMessage.id.desc()).limit(limit).all()
+                )
+            )
+
+        return jsonify({
+            "submission_id": submission.id,
+            "viewer_id": current_user_id,
+            "messages": [m.to_dict() for m in messages],
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching team chat: {str(e)}", exc_info=True)
+        return jsonify({"message": "Error fetching team chat", "error": str(e)}), 500
+
+
+@student_bp.route("/projects/<int:project_id>/team/chat", methods=["POST"])
+@student_required
+def send_team_chat_message(project_id):
+    """Post one message to this student's team room."""
+    try:
+        current_user_id = int(get_jwt_identity())
+
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({"message": "Project not found"}), 404
+        if not project.collaboration_allowed:
+            return jsonify({
+                "message": "This project does not have collaboration enabled"
+            }), 400
+
+        submission, _member_ids = _find_team_submission(project_id, current_user_id)
+        if not submission:
+            return jsonify({
+                "message": "You are not assigned to any team for this project"
+            }), 403
+
+        data = request.get_json(silent=True) or {}
+        body = (data.get("body") or "").strip()
+        if not body:
+            return jsonify({"message": "Message cannot be empty"}), 400
+        if len(body) > 2000:
+            return jsonify({"message": "Message is too long (2000 characters max)"}), 400
+
+        message = TeamChatMessage(
+            submission_id=submission.id,
+            sender_id=current_user_id,
+            body=body,
+        )
+        db.session.add(message)
+        db.session.commit()
+
+        return jsonify({"message": message.to_dict()}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error posting team chat message: {str(e)}", exc_info=True)
+        return jsonify({"message": "Error posting message", "error": str(e)}), 500
 
 
 @student_bp.route("/projects/<int:project_id>/submit", methods=["POST"])

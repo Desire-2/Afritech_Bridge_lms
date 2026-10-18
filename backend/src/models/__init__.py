@@ -21,6 +21,7 @@ from .course_models import (
     Project,
     ProjectSubmission,
     TeamAssignmentEvent,
+    TeamChatMessage,
     Announcement
 )
 

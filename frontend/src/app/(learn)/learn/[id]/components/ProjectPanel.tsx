@@ -13,6 +13,7 @@ import StudentSubmissionService, {
 } from '@/services/student-submission.service';
 import { FileUploadService } from '@/services/file-upload.service';
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
+import { TeamSection } from './TeamSection';
 import {
   getSubmissionRequirements,
   getFileRules,
@@ -376,6 +377,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           </Alert>
         )}
       </div>
+
+      {/* Team roster + team chat room */}
+      {project.collaboration_allowed && <TeamSection projectId={projectId} />}
 
       {/* Submission status / result */}
       {isSubmitted && submission && (

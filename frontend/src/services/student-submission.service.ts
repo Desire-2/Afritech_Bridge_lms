@@ -123,6 +123,21 @@ export interface TeamDashboardData {
   };
 }
 
+export interface TeamChatMessage {
+  id: number;
+  submission_id: number;
+  sender_id: number;
+  sender_name: string;
+  body: string;
+  created_at: string | null;
+}
+
+export interface TeamChatPage {
+  submission_id: number | null;
+  viewer_id: number;
+  messages: TeamChatMessage[];
+}
+
 export interface SubmissionDetail {
   assignment?: AssignmentWithStatus;
   project?: ProjectWithStatus;
@@ -225,6 +240,45 @@ export class StudentSubmissionService {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/projects/${projectId}/my-team`);
       return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Read this student's team chat room.
+   * Pass `after` (the last message id held client-side) while polling so the
+   * server only sends what is new.
+   */
+  static async getTeamChat(
+    projectId: number,
+    options: { after?: number; limit?: number } = {}
+  ): Promise<TeamChatPage> {
+    try {
+      const params: Record<string, string> = {};
+      if (options.after) params.after = String(options.after);
+      if (options.limit) params.limit = String(options.limit);
+      const response = await apiClient.get(
+        `${this.BASE_PATH}/projects/${projectId}/team/chat`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Post a message to this student's team chat room. */
+  static async sendTeamChatMessage(
+    projectId: number,
+    body: string
+  ): Promise<TeamChatMessage> {
+    try {
+      const response = await apiClient.post(
+        `${this.BASE_PATH}/projects/${projectId}/team/chat`,
+        { body }
+      );
+      return response.data.message;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }
