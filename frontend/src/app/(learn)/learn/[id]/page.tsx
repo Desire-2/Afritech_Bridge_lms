@@ -32,6 +32,12 @@ import { mixedVideoCount } from '@/lib/lesson-content';
 import { useNotesAutosave } from './hooks/useNotesAutosave';
 import * as NavUtils from './utils/navigationUtils';
 import {
+  buildUnlockErrorInfo,
+  failedLessonsFromEligibility,
+  mergeMissingItems,
+  summarizeRequirementLabels,
+} from './utils/moduleUnlockGaps';
+import {
   LESSON_PASSING_THRESHOLD,
   MODULE_PASSING_THRESHOLD,
   CERTIFICATE_PASSING_THRESHOLD,
@@ -399,7 +405,7 @@ const LearningPage = () => {
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement | null>(null);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
+  const checkAndUnlockNextModuleRef = useRef<((showBlockers?: boolean) => Promise<void>) | null>(null);
   const certificateIssuedRef = useRef<boolean>(false);
   const unlockingRef = useRef<boolean>(false);
   const contentRequestRef = useRef(0);
@@ -1374,7 +1380,7 @@ const LearningPage = () => {
         const runUnlock = async () => {
           try {
             if (checkAndUnlockNextModuleRef.current) {
-              await checkAndUnlockNextModuleRef.current();
+              await checkAndUnlockNextModuleRef.current(true);
             } else {
               await EnhancedModuleUnlockService.attemptModuleUnlock(nextModule.id);
               handleModuleUnlock(nextModule.title || 'Next Module');
@@ -2126,14 +2132,51 @@ const LearningPage = () => {
   }, [showLockedModuleModal, lockedModuleInfo]);
 
   // Auto-unlock next module when current module is completed with passing score
-  const checkAndUnlockNextModule = useCallback(async () => {
+  // `showBlockers` marks explicit user actions (manual unlock button,
+  // advancing past the last lesson): when the check bails because lessons
+  // are still open, name them instead of failing silently in the console.
+  const checkAndUnlockNextModule = useCallback(async (showBlockers = false) => {
     if (unlockingRef.current) return;
     if (!courseData?.course?.modules || !currentModuleId) return;
-    
+
+    // Find current module and next module (needed for blocker messaging too)
+    const modules = courseData.course.modules;
+    const currentModuleIndex = modules.findIndex((m: any) => m.id === currentModuleId);
+    const currentModule = modules[currentModuleIndex];
+    const nextModule = modules[currentModuleIndex + 1];
+
     // Check if all lessons are completed
     const allLessonsCompleted = checkModuleCompletion();
     if (!allLessonsCompleted) {
       console.log('⏭️ Not all lessons completed, skipping module unlock check');
+      // Explicit user action: list the lessons that are still open instead
+      // of a silent no-op ("lessons not completed" without saying which).
+      if (showBlockers) {
+        const incompleteLessons = ((currentModule?.lessons || []) as any[]).filter(
+          (lesson) => lessonCompletionStatus[lesson.id] !== true
+        );
+        if (incompleteLessons.length > 0) {
+          const missingItems = incompleteLessons.map(
+            (lesson) => `Lesson “${lesson.title}” — not completed yet`
+          );
+          setModuleProgressInfo({
+            moduleName: currentModule?.title || 'Current Module',
+            nextModuleName: nextModule?.title || 'Next Module',
+            currentScore: moduleScoring?.cumulativeScore || 0,
+            requiredScore: MODULE_PASSING_THRESHOLD,
+            missingItems,
+            breakdown: moduleScoring?.breakdown || {
+              courseContribution: 0,
+              quizzes: 0,
+              assignments: 0,
+              projects: 0,
+              finalAssessment: 0,
+            },
+            assessmentInfo: undefined,
+          });
+          setShowModuleProgressModal(true);
+        }
+      }
       return;
     }
     
@@ -2150,12 +2193,6 @@ const LearningPage = () => {
     const currentScore = freshScoring?.cumulativeScore ?? moduleScoring?.cumulativeScore ?? 0;
     const isPassing = currentScore >= passingThreshold;
     
-    // Find current module and next module
-    const modules = courseData.course.modules;
-    const currentModuleIndex = modules.findIndex((m: any) => m.id === currentModuleId);
-    const currentModule = modules[currentModuleIndex];
-    const nextModule = modules[currentModuleIndex + 1];
-    
     console.log(`📊 Module ${currentModuleId} score check:`, {
       cumulativeScore: currentScore,
       passingThreshold,
@@ -2165,10 +2202,13 @@ const LearningPage = () => {
     if (!isPassing) {
       console.log(`⚠️ Module score ${currentScore.toFixed(1)}% is below passing threshold ${passingThreshold}%`);
       
-      // Try enhanced eligibility for richer guidance
+      // Try enhanced eligibility for richer guidance. Target the NEXT module
+      // (the one we want unlocked) so its previous-module check evaluates the
+      // module the student is actually finishing, not the one before it.
       let eligibility: any = null;
       try {
-        eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(currentModuleId);
+        const targetModuleId = nextModule ? nextModule.id : currentModuleId;
+        eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(targetModuleId);
       } catch (e) {
         // Non-fatal: continue with local breakdown/weights
       }
@@ -2221,9 +2261,11 @@ const LearningPage = () => {
         finalAssessment: 0
       };
       
-      // Prefer backend recommendations if available
-      if (eligibility?.recommendations?.length) {
-        missingItems.push(...eligibility.recommendations);
+      // Prefer backend guidance when available: named failed lessons first,
+      // then recommendations (the helper strips duplicate `Lesson '…'` lines).
+      const eligibilityItems = mergeMissingItems(eligibility);
+      if (eligibilityItems.length) {
+        missingItems.push(...eligibilityItems);
       } else {
         // Check each component and suggest improvements (only for available components)
         if (weights.courseContribution > 0 && breakdown.courseContribution < MODULE_PASSING_THRESHOLD) {
@@ -2292,7 +2334,7 @@ const LearningPage = () => {
       // If enhanced unlock failed, surface eligibility guidance
       try {
         const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(nextModule.id);
-        const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
+        const fallbackMissing = mergeMissingItems(eligibility);
         const breakdown = freshScoring?.breakdown || moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, projects: 0, finalAssessment: 0 };
 
         // Fetch dynamic weights so the modal reflects correct percentages
@@ -2688,9 +2730,10 @@ const LearningPage = () => {
         await moduleScoring.recalculate();
       }
       
-      // Call the existing checkAndUnlockNextModule function
+      // Call the existing checkAndUnlockNextModule function. This is an
+      // explicit user action, so blockers must be listed if it bails.
       if (checkAndUnlockNextModuleRef.current) {
-        await checkAndUnlockNextModuleRef.current();
+        await checkAndUnlockNextModuleRef.current(true);
       }
       
       // Refresh progress to get updated module statuses
@@ -3604,6 +3647,56 @@ const LearningPage = () => {
                           </div>
                         </div>
                       )}
+                      {/* Named blockers from the backend eligibility check —
+                          a lesson can show "completed" yet fail the live
+                          re-check (score/requirements), so list each one
+                          with what is actually missing. */}
+                      {failedLessonsFromEligibility(lockedModuleEligibility).length > 0 && (
+                        <div className="sm:col-span-2 bg-red-900/20 p-3 rounded-lg border border-red-700/30">
+                          <div className="flex items-start gap-3">
+                            <div className="w-2 h-2 rounded-full bg-red-400 mt-2 shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm sm:text-base text-red-300 font-medium">
+                                Lessons blocking this unlock
+                              </p>
+                              <p className="text-xs text-red-400/70 mb-2">
+                                Completed lessons are re-checked live — here is exactly what is missing
+                              </p>
+                              <ul className="space-y-2">
+                                {failedLessonsFromEligibility(lockedModuleEligibility).map((lesson) => {
+                                  const lessonScore = lesson.score ?? lesson.current_score;
+                                  return (
+                                    <li key={lesson.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                                      <span className="text-white font-medium truncate max-w-[14rem]">
+                                        {lesson.title || `Lesson ${lesson.id}`}
+                                      </span>
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded border text-[11px] font-medium ${
+                                          lesson.completed === true
+                                            ? 'bg-yellow-500/10 text-yellow-300 border-yellow-500/30'
+                                            : 'bg-red-500/10 text-red-300 border-red-500/30'
+                                        }`}
+                                      >
+                                        {lesson.completed === true
+                                          ? 'Completed — re-check failed'
+                                          : 'Not completed'}
+                                      </span>
+                                      <span className="text-red-200/80">
+                                        {summarizeRequirementLabels(lesson.requirements).join(', ')}
+                                      </span>
+                                      {typeof lessonScore === 'number' && (
+                                        <span className="text-gray-400 tabular-nums">
+                                          {lessonScore.toFixed(0)}% / 80%
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {(lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) < lockedModuleInfo.requiredScore && (
                         <div className="flex items-start gap-3 bg-orange-900/20 p-3 rounded-lg border border-orange-700/30">
                           <div className="w-2 h-2 rounded-full bg-orange-400 mt-2 shrink-0" />
@@ -3618,7 +3711,8 @@ const LearningPage = () => {
                         </div>
                       )}
                       {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                       (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore && (
+                       (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore &&
+                       (!lockedModuleEligibility || lockedModuleEligibility.eligible) && (
                         <div className="flex items-start gap-3 bg-green-900/20 p-3 rounded-lg border border-green-700/30 sm:col-span-2">
                           <CheckCircle className="h-5 w-5 text-green-400 shrink-0 mt-0.5" />
                           <div>
@@ -3746,9 +3840,12 @@ const LearningPage = () => {
                   transition={{ delay: 0.4 }}
                   className="space-y-3"
                 >
-                  {/* Unlock Button - Show only when all requirements are met */}
-                  {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                   (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore && (
+                  {/* Unlock Button - shown when the backend says eligible, or
+                      (eligibility not loaded yet) the local counts say ready */}
+                  {(lockedModuleEligibility?.eligible ||
+                    (!lockedModuleEligibility &&
+                     lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons &&
+                     (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore)) && (
                     <Button
                       className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 shadow-lg hover:shadow-xl"
                       disabled={modalUnlocking}
@@ -3796,6 +3893,28 @@ const LearningPage = () => {
                       <div className="flex items-center justify-center gap-2 sm:gap-3">
                         <Unlock className="h-4 w-4 sm:h-5 sm:w-5" />
                         <span>Unlock Module {lockedModuleInfo.moduleIndex + 1}</span>
+                      </div>
+                    </Button>
+                  )}
+
+                  {/* Not eligible + named blockers: open the detailed dialog
+                      (it lists every failed lesson and its requirements) even
+                      though the Unlock button itself is hidden. */}
+                  {lockedModuleEligibility && !lockedModuleEligibility.eligible &&
+                   failedLessonsFromEligibility(lockedModuleEligibility).length > 0 && (
+                    <Button
+                      className="w-full border border-orange-600/60 bg-gray-900 text-orange-300 hover:bg-gray-800 font-semibold py-3 sm:py-4 text-sm sm:text-base transition-all duration-200"
+                      onClick={() => {
+                        setUnlockErrorInfo(buildUnlockErrorInfo(lockedModuleEligibility));
+                        setUnlockTargetModuleId(lockedModuleInfo.moduleId);
+                        setShowUnlockErrorDialog(true);
+                      }}
+                    >
+                      <div className="flex items-center justify-center gap-2 sm:gap-3">
+                        <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5" />
+                        <span>
+                          See exactly what’s missing ({failedLessonsFromEligibility(lockedModuleEligibility).length} lesson{failedLessonsFromEligibility(lockedModuleEligibility).length === 1 ? '' : 's'})
+                        </span>
                       </div>
                     </Button>
                   )}

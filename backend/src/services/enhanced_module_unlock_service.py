@@ -488,7 +488,8 @@ class EnhancedModuleUnlockService:
                     "status": "not_started",
                     "requirements": ["lesson_must_be_started"],
                     "critical": True,
-                    "score": 0.0
+                    "score": 0.0,
+                    "completed": False
                 }
                 failed_lessons.append(failure_info)
                 critical_failures.append(failure_info)
@@ -527,7 +528,8 @@ class EnhancedModuleUnlockService:
                         "requirements": [f"lesson_score_must_be_at_least_{EnhancedModuleUnlockService.LESSON_PASSING_SCORE}%"],
                         "current_score": lesson_score,
                         "required_score": EnhancedModuleUnlockService.LESSON_PASSING_SCORE,
-                        "critical": True
+                        "critical": True,
+                        "completed": bool(completion.completed)
                     }
                     failed_lessons.append(failure_info)
                     critical_failures.append(failure_info)
@@ -544,7 +546,8 @@ class EnhancedModuleUnlockService:
                     "status": "requirements_not_met",
                     "requirements": missing_requirements,
                     "detailed_status": requirements_status,
-                    "critical": is_critical
+                    "critical": is_critical,
+                    "completed": bool(completion.completed)
                 }
                 failed_lessons.append(failure_info)
                 
@@ -640,6 +643,40 @@ class EnhancedModuleUnlockService:
         }
     
     @staticmethod
+    def _summarize_lesson_requirements(requirements: Optional[List[str]]) -> List[str]:
+        """Short human labels for one failed lesson's requirement strings.
+
+        Every requirement must yield a label. The previous keyword-only
+        filter silently dropped messages it did not recognise — e.g. the
+        "Watch at least 90% of the lesson video content" rule and the
+        "Start reading the lesson content" message — so those lessons were
+        never named in recommendations and the student only saw
+        "Complete N lesson(s)" with no way to tell which.
+        """
+        labels: List[str] = []
+        seen = set()
+        for req in requirements or []:
+            low = (req or "").lower()
+            if "started" in low:
+                label = "start the lesson"
+            elif "video" in low or "watch" in low:
+                label = "watch 90%+ of the video"
+            elif "quiz" in low:
+                label = "pass the quiz"
+            elif "assignment" in low:
+                label = "pass the assignment"
+            elif "reading" in low or "engagement" in low:
+                label = "finish reading & engagement"
+            elif "score" in low or "80%" in low:
+                label = "reach an 80% lesson score"
+            else:
+                label = (req or "").strip()[:80] or "complete lesson requirements"
+            if label not in seen:
+                seen.add(label)
+                labels.append(label)
+        return labels or ["complete lesson requirements"]
+
+    @staticmethod
     def _generate_unlock_recommendations(prerequisite_status: Dict, lesson_requirements: Dict, scoring_breakdown: Dict, previous_module: Module = None) -> List[str]:
         """Generate actionable recommendations for module unlock based on previous module completion."""
         recommendations = []
@@ -652,19 +689,11 @@ class EnhancedModuleUnlockService:
                 failed_count = len(lesson_requirements["failed_lessons"])
                 recommendations.append(f"Complete {failed_count} lesson(s) with requirements in {module_name}")
                 for failed_lesson in lesson_requirements["failed_lessons"][:3]:  # Show top 3
-                    if failed_lesson.get("requirements"):
-                        req_summary = []
-                        for req in failed_lesson['requirements']:
-                            if 'quiz' in req.lower():
-                                req_summary.append('complete quiz')
-                            elif 'assignment' in req.lower():
-                                req_summary.append('submit assignment')
-                            elif 'score' in req.lower():
-                                req_summary.append('achieve 80%+ score')
-                            elif 'must_be_started' in req.lower():
-                                req_summary.append('start lesson')
-                        if req_summary:
-                            recommendations.append(f"Lesson '{failed_lesson['title']}': {', '.join(req_summary)}")
+                    title = failed_lesson.get("title") or f"Lesson {failed_lesson.get('id', '?')}"
+                    labels = EnhancedModuleUnlockService._summarize_lesson_requirements(
+                        failed_lesson.get("requirements")
+                    )
+                    recommendations.append(f"Lesson '{title}': {', '.join(labels)}")
             
             current_score = scoring_breakdown["total_score"]
             required_score = EnhancedModuleUnlockService.MODULE_PASSING_SCORE
@@ -682,8 +711,11 @@ class EnhancedModuleUnlockService:
             if not lesson_requirements["all_lessons_passed"]:
                 recommendations.append(f"Complete {len(lesson_requirements['failed_lessons'])} lesson(s) with requirements")
                 for failed_lesson in lesson_requirements["failed_lessons"][:2]:  # Show top 2
-                    if failed_lesson.get("requirements"):
-                        recommendations.append(f"Lesson '{failed_lesson['title']}': {', '.join(failed_lesson['requirements'])}")
+                    title = failed_lesson.get("title") or f"Lesson {failed_lesson.get('id', '?')}"
+                    labels = EnhancedModuleUnlockService._summarize_lesson_requirements(
+                        failed_lesson.get("requirements")
+                    )
+                    recommendations.append(f"Lesson '{title}': {', '.join(labels)}")
             
             current_score = scoring_breakdown["total_score"]
             required_score = EnhancedModuleUnlockService.MODULE_PASSING_SCORE

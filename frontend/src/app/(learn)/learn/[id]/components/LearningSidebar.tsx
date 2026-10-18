@@ -629,7 +629,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       const statusText = getLessonStatusText(isLessonCompleted, canAccessLesson);
                       const statusColor = getLessonStatusColor(isLessonCompleted, canAccessLesson);
                       const lessonLockReasonId = `lock-reason-lesson-${lesson.id}`;
-                      const lessonLockReason = 'Complete previous lessons or unlock this module first to open this lesson.';
+                      // Name the actual blockers: which lessons of the previous
+                      // module are still open. Fallback keeps the module-level
+                      // requirement (score may be the blocker, not lessons).
+                      const prevIncompleteTitles = previousModule
+                        ? ((previousModule.lessons || []) as any[])
+                            .filter((prevLesson) => !lessonCompletionStatus[prevLesson.id])
+                            .map((prevLesson) => prevLesson.title)
+                        : [];
+                      const lessonLockReason = !previousModule
+                        ? 'This lesson is locked until its module unlocks.'
+                        : prevIncompleteTitles.length > 0
+                          ? `Locked: complete ${prevIncompleteTitles.slice(0, 3).map((title) => `“${title}”`).join(', ')}${prevIncompleteTitles.length > 3 ? ` and ${prevIncompleteTitles.length - 3} more` : ''} in Module ${moduleIndex}: ${previousModule.title} first.`
+                          : `Locked: finish Module ${moduleIndex}: ${previousModule.title} — all lessons plus a passing module score — to unlock this lesson.`;
                       
                       return (
                         <div key={lesson.id} className="space-y-1">
@@ -705,7 +717,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     )}
                                     {!canAccessLesson && !isLessonCompleted && (
                                       <p className="text-xs text-orange-400 mt-1">
-                                        Complete previous lessons or unlock the module first
+                                        {lessonLockReason}
                                       </p>
                                     )}
                                     {canAccessLesson && !isLessonCompleted && (

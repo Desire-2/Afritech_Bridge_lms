@@ -236,7 +236,8 @@ export const ModuleUnlockErrorDialog: React.FC<ModuleUnlockErrorDialogProps> = (
             <div className="space-y-3">
               <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-red-100 to-orange-100 border-l-4 border-red-500 rounded-r-lg">
                 <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 animate-pulse" />
-                <div className="flex-1">\n                  <h3 className="font-bold text-red-900 text-lg">
+                <div className="flex-1">
+                  <h3 className="font-bold text-red-900 text-lg">
                     Complete These Lessons to Unlock
                   </h3>
                   <p className="text-sm text-red-700">
