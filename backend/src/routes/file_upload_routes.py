@@ -366,7 +366,7 @@ def submit_project_with_files(project_id):
         # Get project
         project = Project.query.get_or_404(project_id)
         
-        # Check if student is enrolled
+        # Check if student is enrolled AND active
         enrollment = Enrollment.query.filter_by(
             student_id=current_user_id,
             course_id=project.course_id
@@ -376,6 +376,11 @@ def submit_project_with_files(project_id):
             return jsonify({
                 "success": False,
                 "error": "Not enrolled in this course"
+            }), 403
+        if enrollment.status != 'active':
+            return jsonify({
+                "success": False,
+                "error": "Your enrollment is not active, so you cannot submit this project"
             }), 403
         
         # Check if already submitted
@@ -428,7 +433,11 @@ def submit_project_with_files(project_id):
         # Handle team members if collaboration is allowed
         team_members = data.get('team_members', [])
         if project.collaboration_allowed and team_members:
-            if len(team_members) > project.max_team_size:
+            # team_members holds the OTHER members (the submitter is not in the
+            # list), so the real team size is one more. The previous check
+            # compared the list length alone and let a team of max+1 through.
+            total_team_size = len(team_members) + 1
+            if total_team_size > project.max_team_size:
                 return jsonify({
                     "success": False,
                     "error": f"Team size exceeds maximum of {project.max_team_size} members"

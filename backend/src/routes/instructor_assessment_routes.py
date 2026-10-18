@@ -1,4 +1,3 @@
-from ..utils.time_utils import now_local
 # Instructor Assessment API Routes for Afritec Bridge LMS
 # CODE UPDATED: 2025-11-02 09:56:00
 
@@ -17,7 +16,7 @@ from ..models.user_models import db, User, Role
 from ..models.course_models import (
     Course, Module, Lesson, Quiz, Question, Answer, 
     Assignment, AssignmentSubmission, Project, ProjectSubmission, 
-    Submission, Enrollment
+    Submission, Enrollment, TeamAssignmentEvent, ApplicationWindow
 )
 from ..models.quiz_progress_models import QuizAttempt
 from ..models.grading_models import Rubric, RubricCriterion
@@ -1551,6 +1550,90 @@ def delete_project(project_id):
 # TEAM ASSIGNMENT FOR COLLABORATIVE PROJECTS
 # =====================
 
+# A "team" is a ProjectSubmission row: student_id is the primary submitter and
+# team_members holds the OTHER member ids as JSON text. team_size therefore
+# always means the total including the primary — every helper below counts with
+# that convention so the instructor endpoints and the student submit endpoints
+# cannot drift apart by one.
+
+def _team_total_size(team_members):
+    """Total members on a team, including the primary submitter."""
+    return len(team_members or []) + 1
+
+
+def _build_team_chunks(students, team_size, max_team_size=None):
+    """Split a shuffled student list into balanced teams.
+
+    Guarantees, in order of priority:
+      1. every student appears in AT MOST one team (never duplicated);
+      2. no team exceeds ``team_size`` (itself capped by ``max_team_size``);
+      3. no team has a single member;
+      4. every student is placed, except when the count cannot satisfy 1-3 —
+         those leftovers are returned to the caller as unassigned rather than
+         silently forced onto a team.
+
+    Teams are balanced as evenly as possible (e.g. 7 students / size 3 gives
+    3,2,2 — not 3,3 and a dropped student, and never the old behaviour of
+    3,3 plus the trailing student appended onto an earlier team a second time).
+    """
+    if not students:
+        return []
+
+    cap = int(team_size)
+    if max_team_size:
+        cap = min(cap, int(max_team_size))
+    if cap < 2:
+        return []
+
+    n = len(students)
+    team_count = -(-n // cap)  # ceil(n / cap)
+
+    if team_count <= 1:
+        return [list(students)] if n >= 2 else []
+
+    base, extra = divmod(n, team_count)
+    if base < 2:
+        # An even split would create a team of one, and shrinking the team
+        # count would push a team over the cap. Place full teams plus any
+        # remainder >= 2, and leave the rest unassigned.
+        full, leftover = divmod(n, cap)
+        teams = [students[i * cap:(i + 1) * cap] for i in range(full)]
+        if leftover >= 2:
+            teams.append(students[full * cap:])
+        return teams
+
+    sizes = [base + 1] * extra + [base] * (team_count - extra)
+    teams = []
+    idx = 0
+    for size in sizes:
+        teams.append(students[idx:idx + size])
+        idx += size
+    return teams
+
+
+def _record_team_event(project_id, submission_id, cohort_id, actor_id, event_type,
+                       member_ids, team_size, details=None, affected_member_id=None):
+    """Append an audit row for a team membership change."""
+    try:
+        event = TeamAssignmentEvent(
+            project_id=project_id,
+            team_submission_id=submission_id,
+            cohort_id=cohort_id,
+            actor_id=actor_id,
+            event_type=event_type,
+            team_size=team_size,
+            details=details,
+            affected_member_id=affected_member_id,
+        )
+        event.set_member_ids(member_ids)
+        db.session.add(event)
+        return event
+    except Exception as audit_err:
+        # The audit trail must never break the operation it records.
+        logger.warning(f"Failed to record team assignment event: {audit_err}")
+        return None
+
+
 def _send_team_emails_async(app_instance, created_teams, current_user_id, project_title, course_title, project_description, due_date_str):
     """Send team assignment emails in a background thread after the response is returned.
     All strings are captured as plain values (not SQLAlchemy objects) to avoid DetachedInstanceError."""
@@ -1597,17 +1680,19 @@ def _send_team_emails_async(app_instance, created_teams, current_user_id, projec
 @instructor_required
 def assign_project_teams(project_id):
     """
-    Auto-assign students enrolled in the same cohort into random teams
-    for a collaborative project. Each team receives the project and
-    all team members are notified via email.
-    
-    Body (optional):
-        - team_size: int (default: project.max_team_size or 3)
-        - cohort_id: int (optional, use all course cohorts if not specified)
+    Auto-assign students from a single selected cohort into random teams for a
+    collaborative project. Only students whose enrollment in that cohort is
+    'active' are eligible. Each team is scaffolded as a ProjectSubmission with
+    submitted_at NULL until a member actually submits, and every membership is
+    written to the team_assignment_events audit trail.
+
+    Body:
+        - cohort_id: int (REQUIRED — the ApplicationWindow id to assign from)
+        - team_size: int (optional, defaults to project.max_team_size, clamped
+          to it, must be >= 2)
     """
     try:
         import random
-        from datetime import datetime
         
         current_user_id = int(get_jwt_identity())
         data = request.get_json() or {}
@@ -1622,26 +1707,59 @@ def assign_project_teams(project_id):
         if not project.collaboration_allowed:
             return jsonify({"message": "This project does not have collaboration enabled. Enable it in project settings first."}), 400
         
-        team_size = data.get('team_size', project.max_team_size)
+        max_team_size = project.max_team_size or 3
+
+        # ── team_size validation ──
+        team_size = data.get('team_size', max_team_size)
+        try:
+            team_size = int(team_size)
+        except (TypeError, ValueError):
+            return jsonify({"message": "team_size must be an integer"}), 400
         if team_size < 2:
             return jsonify({"message": "Team size must be at least 2"}), 400
-        
+        if team_size > max_team_size:
+            return jsonify({
+                "message": f"Team size cannot exceed the project's maximum of {max_team_size}. "
+                           f"Increase max_team_size in project settings first."
+            }), 400
+
+        # ── cohort scope (required) ──
         cohort_id = data.get('cohort_id')
-        
-        # Get enrolled students for this course, optionally filtered by cohort
-        enrollment_query = Enrollment.query.filter(
+        if not cohort_id:
+            return jsonify({
+                "message": "cohort_id is required. Select a cohort so teams are formed "
+                           "only from students active in that cohort."
+            }), 400
+        try:
+            cohort_id = int(cohort_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": "cohort_id must be an integer"}), 400
+
+        cohort = db.session.get(ApplicationWindow, cohort_id)
+        if not cohort:
+            return jsonify({"message": "Cohort not found"}), 404
+        if cohort.course_id != project.course_id:
+            return jsonify({"message": "Cohort does not belong to this project's course"}), 400
+
+        # ── Eligible pool: ACTIVE enrollments in the selected cohort only ──
+        enrollments = Enrollment.query.filter(
             Enrollment.course_id == project.course_id,
-            Enrollment.status.in_(['active', 'completed'])
-        )
-        
-        if cohort_id:
-            enrollment_query = enrollment_query.filter(Enrollment.application_window_id == cohort_id)
-        
-        enrollments = enrollment_query.all()
-        
-        if not enrollments:
-            return jsonify({"message": "No enrolled students found for this course"}), 404
-        
+            Enrollment.application_window_id == cohort_id,
+            Enrollment.status == 'active'
+        ).all()
+
+        students_by_id = {}
+        for e in enrollments:
+            student = e.student
+            if student is not None and student.id not in students_by_id:
+                students_by_id[student.id] = student
+
+        if not students_by_id:
+            return jsonify({
+                "message": f"No active students found in cohort "
+                           f"'{cohort.cohort_label or cohort_id}'."
+            }), 404
+
         # Get existing submissions to avoid reassigning students already in teams
         existing_submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
         already_assigned_student_ids = set()
@@ -1651,50 +1769,57 @@ def assign_project_teams(project_id):
         
         # Filter to only unassigned students
         unassigned_students = [
-            e.student for e in enrollments 
-            if e.student and e.student.id not in already_assigned_student_ids
+            student for sid, student in students_by_id.items()
+            if sid not in already_assigned_student_ids
         ]
+        unassigned_students.sort(key=lambda s: s.id)
         
         if not unassigned_students:
             # All students are already assigned
             return jsonify({
-                "message": "All students are already assigned to teams. No new teams created.",
+                "message": "All students in this cohort are already assigned to teams. "
+                           "No new teams created.",
                 "teams_created": 0,
                 "students_assigned": 0,
+                "left_unassigned": 0,
                 "total_teams": len(existing_submissions)
             }), 200
         
-        # Randomly shuffle and create teams
+        # Randomly shuffle and build balanced teams
         random.shuffle(unassigned_students)
-        teams = []
-        for i in range(0, len(unassigned_students), team_size):
-            team = unassigned_students[i:i + team_size]
-            if len(team) >= 2:  # Only create teams with at least 2 members
-                teams.append(team)
-        
-        # Handle leftovers: distribute remaining students (less than team_size) into existing teams
-        remaining = len(unassigned_students) % team_size
-        if remaining > 0 and teams:
-            leftover_students = unassigned_students[-remaining:]
-            for idx, student in enumerate(leftover_students):
-                target_team = teams[idx % len(teams)]
-                target_team.append(student)
+        teams = _build_team_chunks(unassigned_students, team_size, max_team_size)
+
+        placed_ids = {s.id for team in teams for s in team}
+        left_unassigned = [s for s in unassigned_students if s.id not in placed_ids]
         
         # Create ProjectSubmission records for each team
         created_teams = []
         for team in teams:
-            team_ids = [s.id for s in team]
-            # First student is the primary submitter
+            # First student is the primary submitter; the rest go in team_members.
             primary_student = team[0]
+            other_member_ids = [s.id for s in team[1:]]
             
+            # submitted_at stays NULL — this team has not submitted anything yet.
             submission = ProjectSubmission(
                 project_id=project_id,
                 student_id=primary_student.id,
-                submitted_at=now_local()
+                submitted_at=None
             )
-            submission.set_team_members(team_ids)
+            submission.set_team_members(other_member_ids)
             db.session.add(submission)
             db.session.flush()
+
+            _record_team_event(
+                project_id=project_id,
+                submission_id=submission.id,
+                cohort_id=cohort_id,
+                actor_id=current_user_id,
+                event_type='assign',
+                member_ids=[s.id for s in team],
+                team_size=len(team),
+                details=f"Auto-assigned team of {len(team)} from cohort "
+                        f"'{cohort.cohort_label or cohort_id}'",
+            )
             
             created_teams.append({
                 "submission_id": submission.id,
@@ -1720,26 +1845,47 @@ def assign_project_teams(project_id):
         # Capture plain string values first (SQLAlchemy objects can't be safely accessed in a new thread)
         import threading
         from flask import current_app
-        app_instance = current_app._get_current_object()
-        project_title = project.title
-        course_title = project.course.title if project.course else "Course"
-        project_description = project.description
-        due_date_str = project.due_date.strftime('%B %d, %Y') if project.due_date else "TBD"
-        email_thread = threading.Thread(
-            target=_send_team_emails_async,
-            args=(app_instance, created_teams, current_user_id, project_title, course_title, project_description, due_date_str),
-            daemon=True
-        )
-        email_thread.start()
-        logger.info(f"📧 Background email task started for {sum(len(t['members']) for t in created_teams)} recipients")
+        if created_teams:
+            app_instance = current_app._get_current_object()
+            project_title = project.title
+            course_title = project.course.title if project.course else "Course"
+            project_description = project.description
+            due_date_str = project.due_date.strftime('%B %d, %Y') if project.due_date else "TBD"
+            email_thread = threading.Thread(
+                target=_send_team_emails_async,
+                args=(app_instance, created_teams, current_user_id, project_title, course_title, project_description, due_date_str),
+                daemon=True
+            )
+            email_thread.start()
+            logger.info(f"📧 Background email task started for {sum(len(t['members']) for t in created_teams)} recipients")
         
+        students_assigned = sum(len(t['members']) for t in created_teams)
+        cohort_name = f"from cohort '{cohort.cohort_label or cohort_id}'"
+        if created_teams:
+            message = (f"Created {len(created_teams)} team(s) with {students_assigned} students "
+                       f"{cohort_name}. Emails are being sent in the background.")
+        elif left_unassigned:
+            message = (f"No teams created {cohort_name}: {len(left_unassigned)} student(s) cannot "
+                       f"form a team of at least 2 without exceeding max_team_size. "
+                       f"They remain unassigned.")
+        else:
+            message = f"No teams created {cohort_name}: there are no unassigned students left."
+        if left_unassigned and created_teams:
+            message += (f" {len(left_unassigned)} student(s) could not fit a team of at least 2 "
+                        f"without exceeding max_team_size and remain unassigned.")
+
+        # 201 only when something was actually created.
+        status_code = 201 if created_teams else 200
+
         return jsonify({
-            "message": f"Successfully created {len(created_teams)} team(s) with {sum(len(t['members']) for t in created_teams)} students. Emails are being sent in the background.",
+            "message": message,
             "teams_created": len(created_teams),
-            "students_assigned": sum(len(t['members']) for t in created_teams),
+            "students_assigned": students_assigned,
+            "left_unassigned": len(left_unassigned),
+            "cohort_id": cohort_id,
             "teams": created_teams,
-            "emails_scheduled": True
-        }), 201
+            "emails_scheduled": bool(created_teams)
+        }), status_code
         
     except Exception as e:
         db.session.rollback()
@@ -1763,31 +1909,69 @@ def list_project_teams(project_id):
         if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
-        submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at).all()
+        submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(
+            ProjectSubmission.created_at.asc(), ProjectSubmission.id.asc()
+        ).all()
+
+        # Batch-load every referenced user once instead of N+1 per member.
+        all_user_ids = set()
+        member_index = set()
+        for sub in submissions:
+            all_user_ids.add(sub.student_id)
+            sub_members = sub.get_team_members() or []
+            all_user_ids.update(sub_members)
+            member_index.update(sub_members)
+        users_by_id = {}
+        if all_user_ids:
+            for user in User.query.filter(User.id.in_(all_user_ids)).all():
+                users_by_id[user.id] = user
 
         teams = []
         for sub in submissions:
-            member_ids = sub.get_team_members() or []
-            all_member_ids = list(set(member_ids + [sub.student_id]))
+            sub_members = sub.get_team_members() or []
+            # Grade propagation creates a per-member row (team_members NULL) so
+            # the member sees the shared grade. That person is already listed on
+            # their real team, so skip the carrier row here instead of showing
+            # them twice. A genuine solo team (empty roster, student not on any
+            # other team) still shows.
+            if not sub_members and sub.student_id in member_index:
+                continue
+
+            # Preserve a stable order: primary first, then remaining member ids.
+            ordered_ids = [sub.student_id] + [
+                mid for mid in sub_members if mid != sub.student_id
+            ]
             members = []
-            for mid in all_member_ids:
-                user = User.query.get(mid)
-                if user:
-                    members.append({
-                        "id": user.id,
-                        "name": f"{user.first_name} {user.last_name}".strip() or user.username,
-                        "email": user.email,
-                        "phone": user.phone_number or "",
-                        "is_primary": user.id == sub.student_id,
-                        "joined_at": sub.submitted_at.isoformat() if sub.submitted_at else None
-                    })
+            primary_member = None
+            for mid in ordered_ids:
+                user = users_by_id.get(mid)
+                if not user:
+                    continue
+                is_primary = mid == sub.student_id
+                member = {
+                    "id": user.id,
+                    "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "email": user.email,
+                    "phone": user.phone_number or "",
+                    "is_primary": is_primary,
+                    "joined_at": (sub.created_at.isoformat() if sub.created_at
+                                  else (sub.submitted_at.isoformat() if sub.submitted_at else None))
+                }
+                members.append(member)
+                if is_primary:
+                    primary_member = member
 
             if members:
+                created_at = sub.created_at or sub.submitted_at
                 teams.append({
                     "submission_id": sub.id,
-                    "primary_student": members[0],
+                    # Always the is_primary member, not whatever the set() order
+                    # happened to produce.
+                    "primary_student": primary_member or members[0],
                     "members": members,
-                    "created_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+                    "team_size": _team_total_size(sub.get_team_members()),
                     "status": "active"
                 })
 
@@ -1803,6 +1987,11 @@ def list_project_teams(project_id):
 def list_unassigned_students(project_id):
     """
     List enrolled students not yet assigned to any team for this project.
+
+    Query params:
+        - cohort_id: int (optional) — scope to one ApplicationWindow. When
+          omitted, students from every cohort of the course are returned and
+          each entry carries its own cohort_label.
     """
     try:
         current_user_id = int(get_jwt_identity())
@@ -1811,33 +2000,51 @@ def list_unassigned_students(project_id):
         if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
+        cohort_id = request.args.get('cohort_id', type=int)
+
         # Get existing submissions and collect all assigned student IDs
         submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
         assigned_ids = set()
         for sub in submissions:
             assigned_ids.add(sub.student_id)
-            for mid in (sub.get_team_members() or []):
-                assigned_ids.add(mid)
+            assigned_ids.update(sub.get_team_members() or [])
 
-        # Get enrolled students
-        enrollments = Enrollment.query.filter(
+        # Get enrolled students — ACTIVE only, matching the assign-teams pool so
+        # the unassigned list and auto-assign can never disagree.
+        enrollment_query = Enrollment.query.filter(
             Enrollment.course_id == project.course_id,
-            Enrollment.status.in_(['active', 'completed'])
-        ).all()
+            Enrollment.status == 'active'
+        )
+        if cohort_id:
+            enrollment_query = enrollment_query.filter(
+                Enrollment.application_window_id == cohort_id
+            )
+
+        # Dedupe by student id: a student may hold enrollments in more than one
+        # cohort, and the same person must never appear twice.
+        students_by_id = {}
+        for e in enrollment_query.all():
+            student = e.student
+            if student is None or student.id in students_by_id:
+                continue
+            students_by_id[student.id] = e
 
         unassigned = []
-        for e in enrollments:
-            if e.student and e.student.id not in assigned_ids:
-                unassigned.append({
-                    "id": e.student.id,
-                    "name": f"{e.student.first_name} {e.student.last_name}".strip() or e.student.username,
-                    "email": e.student.email,
-                    "phone": e.student.phone_number or "",
-                    "cohort_label": e.cohort_label or (e.application_window.cohort_label if e.application_window else None),
-                    "enrollment_date": e.enrollment_date.isoformat() if e.enrollment_date else None
-                })
+        for student_id, e in students_by_id.items():
+            if student_id in assigned_ids:
+                continue
+            unassigned.append({
+                "id": e.student.id,
+                "name": f"{e.student.first_name} {e.student.last_name}".strip() or e.student.username,
+                "email": e.student.email,
+                "phone": e.student.phone_number or "",
+                "cohort_id": e.application_window_id,
+                "cohort_label": e.cohort_label or (e.application_window.cohort_label if e.application_window else None),
+                "enrollment_date": e.enrollment_date.isoformat() if e.enrollment_date else None
+            })
 
-        return jsonify({"students": unassigned}), 200
+        unassigned.sort(key=lambda s: s["name"].lower())
+        return jsonify({"students": unassigned, "cohort_id": cohort_id}), 200
 
     except Exception as e:
         logger.error(f"Error listing unassigned students: {str(e)}", exc_info=True)
@@ -1880,43 +2087,129 @@ def reassign_team_member(project_id, submission_id):
         if not member_user:
             return jsonify({"message": "Student not found"}), 404
 
+        max_team_size = project.max_team_size or 3
+
+        def _target_is_full():
+            return _team_total_size(target_sub.get_team_members()) >= max_team_size
+
+        def _already_in_another_team():
+            """True if the student already sits on a different team for this project."""
+            if member_id == target_sub.student_id or member_id in (target_sub.get_team_members() or []):
+                return False
+            for other in ProjectSubmission.query.filter_by(project_id=project_id).all():
+                if other.id in (source_sub.id, target_sub.id):
+                    continue
+                if other.student_id == member_id or member_id in (other.get_team_members() or []):
+                    return other.id
+            return False
+
         if is_new_student:
             # Add unassigned student directly to target team
-            target_members = target_sub.get_team_members() or []
-            if member_id not in target_members and member_id != target_sub.student_id:
-                target_members.append(member_id)
-                target_sub.set_team_members(target_members)
-                target_sub.submitted_at = now_local()  # Update timestamp to reflect change
-                message = f"Added {member_user.first_name or ''} {member_user.last_name or ''} to team"
-            else:
+            if member_id in (target_sub.get_team_members() or []) or member_id == target_sub.student_id:
                 return jsonify({"message": "Student is already in this team"}), 400
+            other_team_id = _already_in_another_team()
+            if other_team_id:
+                return jsonify({
+                    "message": "Student is already assigned to another team. "
+                               "Move them from that team first."
+                }), 400
+            if _target_is_full():
+                return jsonify({
+                    "message": f"Target team is already at the maximum size of {max_team_size}"
+                }), 400
+
+            target_members = target_sub.get_team_members() or []
+            target_members.append(member_id)
+            target_sub.set_team_members(target_members)
+
+            _record_team_event(
+                project_id=project_id,
+                submission_id=target_sub.id,
+                cohort_id=None,
+                actor_id=current_user_id,
+                event_type='assign',
+                member_ids=[target_sub.student_id] + target_members,
+                team_size=_team_total_size(target_members),
+                details=f"Added {member_user.first_name or ''} {member_user.last_name or ''} to team",
+                affected_member_id=member_id,
+            )
+            message = f"Added {member_user.first_name or ''} {member_user.last_name or ''} to team"
         else:
+            if member_id == target_sub.student_id:
+                return jsonify({"message": "Student is already the primary of the target team"}), 400
+
             # Remove member from source team
             source_members = source_sub.get_team_members() or []
             if member_id in source_members:
+                if _target_is_full():
+                    return jsonify({
+                        "message": f"Target team is already at the maximum size of {max_team_size}"
+                    }), 400
+                other_team_id = _already_in_another_team()
+                if other_team_id:
+                    return jsonify({
+                        "message": "Student is already assigned to another team."
+                    }), 400
+
                 source_members.remove(member_id)
                 source_sub.set_team_members(source_members)
 
                 # Add member to target team
                 target_members = target_sub.get_team_members() or []
-                if member_id not in target_members and member_id != target_sub.student_id:
-                    target_members.append(member_id)
-                    target_sub.set_team_members(target_members)
+                target_members.append(member_id)
+                target_sub.set_team_members(target_members)
+
+                _record_team_event(
+                    project_id=project_id,
+                    submission_id=target_sub.id,
+                    cohort_id=None,
+                    actor_id=current_user_id,
+                    event_type='reassign',
+                    member_ids=[target_sub.student_id] + target_members,
+                    team_size=_team_total_size(target_members),
+                    details=(f"Moved {member_user.first_name or ''} {member_user.last_name or ''} "
+                             f"from team {source_sub.id} to team {target_sub.id}"),
+                    affected_member_id=member_id,
+                )
                 message = f"Moved {member_user.first_name or ''} {member_user.last_name or ''} to another team"
             elif member_id == source_sub.student_id:
                 # The primary student is being moved - swap the primary to another member
                 other_members = [m for m in source_members if m != member_id]
                 if other_members:
+                    if _target_is_full():
+                        return jsonify({
+                            "message": f"Target team is already at the maximum size of {max_team_size}"
+                        }), 400
+                    other_team_id = _already_in_another_team()
+                    if other_team_id:
+                        return jsonify({
+                            "message": "Student is already assigned to another team."
+                        }), 400
+
                     # Promote next member to primary
                     source_sub.student_id = other_members[0]
                     source_members.remove(other_members[0])
                     source_sub.set_team_members(source_members)
 
-                    # Add the original primary to target
+                    # Add the original primary to target — same membership guard
+                    # used on every other branch.
                     target_members = target_sub.get_team_members() or []
-                    if member_id not in target_members:
+                    if member_id != target_sub.student_id and member_id not in target_members:
                         target_members.append(member_id)
                         target_sub.set_team_members(target_members)
+
+                    _record_team_event(
+                        project_id=project_id,
+                        submission_id=source_sub.id,
+                        cohort_id=None,
+                        actor_id=current_user_id,
+                        event_type='reassign',
+                        member_ids=[source_sub.student_id] + source_members,
+                        team_size=_team_total_size(source_members),
+                        details=(f"{member_user.first_name or ''} {member_user.last_name or ''} "
+                                 f"left team {source_sub.id}; member {other_members[0]} promoted to primary"),
+                        affected_member_id=member_id,
+                    )
                     message = f"Moved primary student to another team"
                 else:
                     return jsonify({"message": "Cannot move the only member of a team"}), 400
@@ -1960,6 +2253,8 @@ def remove_team_member(project_id, submission_id):
             return jsonify({"message": "Submission does not belong to this project"}), 400
 
         member_user = User.query.get(member_id)
+        if not member_user:
+            return jsonify({"message": "Student not found"}), 404
         member_name = f"{member_user.first_name or ''} {member_user.last_name or ''}".strip() or "Student"
 
         members = sub.get_team_members() or []
@@ -1967,17 +2262,54 @@ def remove_team_member(project_id, submission_id):
         if member_id == sub.student_id:
             # Removing the primary student - promote next member
             if members:
-                sub.student_id = members[0]
+                promoted = members[0]
+                sub.student_id = promoted
                 members = members[1:]
                 sub.set_team_members(members)
+                _record_team_event(
+                    project_id=project_id,
+                    submission_id=sub.id,
+                    cohort_id=None,
+                    actor_id=current_user_id,
+                    event_type='remove',
+                    member_ids=[sub.student_id] + members,
+                    team_size=_team_total_size(members),
+                    details=(f"Removed primary student {member_name}; "
+                             f"member {promoted} promoted to primary"),
+                    affected_member_id=member_id,
+                )
                 message = f"Removed primary student, promoted next member"
             else:
-                # Last member - delete the submission
+                # Last member - delete the submission. The audit row's
+                # team_submission_id is ON DELETE SET NULL, so the event
+                # survives as the remaining record of this team.
+                _record_team_event(
+                    project_id=project_id,
+                    submission_id=None,
+                    cohort_id=None,
+                    actor_id=current_user_id,
+                    event_type='remove',
+                    member_ids=[],
+                    team_size=0,
+                    details=f"Removed last member {member_name}; team disbanded",
+                    affected_member_id=member_id,
+                )
                 db.session.delete(sub)
                 message = f"Removed last member, deleted team"
         elif member_id in members:
             members.remove(member_id)
             sub.set_team_members(members)
+            _record_team_event(
+                project_id=project_id,
+                submission_id=sub.id,
+                cohort_id=None,
+                actor_id=current_user_id,
+                event_type='remove',
+                member_ids=[sub.student_id] + members,
+                team_size=_team_total_size(members),
+                details=f"Removed {member_name} from team",
+                affected_member_id=member_id,
+            )
             message = f"Removed {member_name} from team"
         else:
             return jsonify({"message": "Member not found in this team"}), 404
@@ -1999,7 +2331,13 @@ def remove_team_member(project_id, submission_id):
 @instructor_required
 def get_team_assignment_history(project_id):
     """
-    Get the team assignment history for a project, derived from submissions.
+    Get the team assignment history for a project.
+
+    Sourced from the team_assignment_events audit trail written by
+    assign/reassign/remove, so moves and removals are actually visible. Falls
+    back to a derived 'team_created' entry for projects with teams created
+    before the audit table existed (and for solo submissions, which never went
+    through the team endpoints).
     """
     try:
         current_user_id = int(get_jwt_identity())
@@ -2008,44 +2346,90 @@ def get_team_assignment_history(project_id):
         if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
-        submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at.desc()).all()
+        events = TeamAssignmentEvent.query.filter_by(project_id=project_id).order_by(
+            TeamAssignmentEvent.created_at.desc(), TeamAssignmentEvent.id.desc()
+        ).all()
 
         history = []
-        for idx, sub in enumerate(submissions):
-            primary_user = User.query.get(sub.student_id)
-            member_count = len(sub.get_team_members() or []) + 1
-            primary_name = f"{primary_user.first_name or ''} {primary_user.last_name or ''}".strip() or "Unknown" if primary_user else "Unknown"
+        audited_submission_ids = set()
 
-            # Look up grader name if graded
-            grader_name = None
-            if sub.graded_by:
-                grader = User.query.get(sub.graded_by)
-                if grader:
-                    grader_name = f"{grader.first_name or ''} {grader.last_name or ''}".strip() or grader.username
+        # Batch-load the users referenced by actor / affected / member ids.
+        user_ids = set()
+        for ev in events:
+            if ev.actor_id:
+                user_ids.add(ev.actor_id)
+            if ev.affected_member_id:
+                user_ids.add(ev.affected_member_id)
+            user_ids.update(ev.get_member_ids())
+        users_by_id = {}
+        if user_ids:
+            for user in User.query.filter(User.id.in_(user_ids)).all():
+                users_by_id[user.id] = user
 
-            # Build action and details
-            team_number = len(submissions) - idx
-            if sub.graded_at:
-                action = "team_graded"
-                details = f"Team {team_number} graded: {sub.grade}/{sub.project.points_possible if sub.project else 'N/A'} points"
-            elif member_count > 1:
+        def _name(uid):
+            user = users_by_id.get(uid)
+            if not user:
+                return None
+            return f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+
+        for ev in events:
+            if ev.team_submission_id:
+                audited_submission_ids.add(ev.team_submission_id)
+
+            member_names = [
+                _name(mid) or f"Student #{mid}"
+                for mid in ev.get_member_ids()
+            ]
+            history.append({
+                "id": ev.id,
+                "action": f"team_{ev.event_type}" if ev.event_type in ('assign', 'reassign', 'remove')
+                          else ev.event_type,
+                "event_type": ev.event_type,
+                "student_name": _name(ev.affected_member_id) or (member_names[0] if member_names else "Unknown"),
+                "performed_by": _name(ev.actor_id) or "System",
+                "team_size": ev.team_size,
+                "member_names": member_names,
+                "cohort_id": ev.cohort_id,
+                "created_at": ev.created_at.isoformat() if ev.created_at else None,
+                "details": ev.details
+            })
+
+        # ── Legacy fallback for submissions with no audit rows ──
+        # Pre-audit teams and solo submissions never went through the team
+        # endpoints, so synthesise one entry each.
+        legacy = ProjectSubmission.query.filter_by(project_id=project_id).order_by(
+            ProjectSubmission.created_at.desc(), ProjectSubmission.id.desc()
+        ).all()
+        for sub in legacy:
+            if sub.id in audited_submission_ids:
+                continue
+            primary_user = users_by_id.get(sub.student_id) or User.query.get(sub.student_id)
+            primary_name = (f"{primary_user.first_name or ''} {primary_user.last_name or ''}".strip()
+                            or primary_user.username) if primary_user else "Unknown"
+            member_count = _team_total_size(sub.get_team_members())
+            created_at = sub.created_at or sub.submitted_at
+
+            if member_count > 1:
                 action = "team_created"
-                details = f"Team {team_number} created with {member_count} members, led by {primary_name}"
+                details = f"Team of {member_count} led by {primary_name}"
             else:
                 action = "submission_created"
                 details = f"Submission by {primary_name}"
 
-            entry = {
+            history.append({
                 "id": sub.id,
                 "action": action,
+                "event_type": "legacy",
                 "student_name": primary_name,
-                "team_number": team_number,
-                "performed_by": grader_name or primary_name,
-                "created_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+                "performed_by": primary_name,
+                "team_size": member_count,
+                "member_names": [primary_name] if primary_user else [],
+                "cohort_id": None,
+                "created_at": created_at.isoformat() if created_at else None,
                 "details": details
-            }
-            history.append(entry)
+            })
 
+        history.sort(key=lambda h: h["created_at"] or "", reverse=True)
         return jsonify({"history": history}), 200
 
     except Exception as e:

@@ -1568,7 +1568,7 @@ class ProjectSubmission(db.Model):
     text_content = db.Column(db.Text, nullable=True)  # For text responses or project descriptions
     file_path = db.Column(db.String(500), nullable=True)  # Path to uploaded file
     file_name = db.Column(db.String(255), nullable=True)  # Original filename
-    submitted_at = db.Column(db.DateTime, default=now_local)
+    submitted_at = db.Column(db.DateTime, nullable=True)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
@@ -1580,10 +1580,24 @@ class ProjectSubmission(db.Model):
     resubmission_count = db.Column(db.Integer, default=0, nullable=False)
     submission_notes = db.Column(db.Text, nullable=True)  # Notes about why this is a resubmission
 
+    # When the submission row itself was created. Unlike submitted_at, this is
+    # ALWAYS set — a team scaffolded by the instructor has a created_at but no
+    # submitted_at until a member actually submits work.
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+
     # Relationships
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('project_submissions', lazy='dynamic'))
     grader = db.relationship('User', foreign_keys=[graded_by], backref=db.backref('graded_projects', lazy='dynamic'))
     original_submission = db.relationship('ProjectSubmission', remote_side=[id], backref='resubmissions')
+    # Audit rows intentionally survive deletion of the team row (the last
+    # member being removed deletes the submission, and the event is the only
+    # remaining record), so no cascade here — the FK is ON DELETE SET NULL.
+    assignment_events = db.relationship(
+        'TeamAssignmentEvent',
+        backref='submission',
+        lazy='dynamic',
+        foreign_keys='TeamAssignmentEvent.team_submission_id'
+    )
 
     def __repr__(self):
         return f'<ProjectSubmission {self.id} for Project {self.project_id}>'
@@ -1610,7 +1624,8 @@ class ProjectSubmission(db.Model):
             'text_content': self.text_content,
             'file_path': self.file_path,
             'file_name': self.file_name,
-            'submitted_at': self.submitted_at.isoformat(),
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
             'grade': self.grade,
             'feedback': self.feedback,
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
@@ -1644,6 +1659,74 @@ class ProjectSubmission(db.Model):
             })
         
         return status
+
+
+class TeamAssignmentEvent(db.Model):
+    """Append-only audit trail for collaborative-project team membership changes.
+
+    A 'team' in this application is a ProjectSubmission row whose student_id is
+    the primary submitter and whose team_members column holds the other member
+    ids as JSON text. Because there is no membership table to query historically,
+    every mutation is recorded here so the instructor can see who moved where.
+    """
+
+    __tablename__ = 'team_assignment_events'
+
+    EVENT_TYPES = ('assign', 'reassign', 'remove', 'create')
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False, index=True)
+    # The ProjectSubmission row acting as the team at the time of the event.
+    team_submission_id = db.Column(db.Integer, db.ForeignKey('project_submissions.id'), nullable=True, index=True)
+    # Cohort (application window) the event was scoped to, if any.
+    cohort_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)
+    actor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    event_type = db.Column(db.String(20), nullable=False)
+    # JSON list of member ids after the event.
+    member_ids = db.Column(db.Text, nullable=True)
+    # The member affected by a reassign/remove event, if applicable.
+    affected_member_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    team_size = db.Column(db.Integer, nullable=True)
+    details = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False, index=True)
+
+    project = db.relationship('Project', backref=db.backref('team_assignment_events', lazy='dynamic'))
+    actor = db.relationship('User', foreign_keys=[actor_id])
+    affected_member = db.relationship('User', foreign_keys=[affected_member_id])
+    cohort = db.relationship('ApplicationWindow')
+
+    def set_member_ids(self, member_list):
+        import json
+        self.member_ids = json.dumps(member_list or [])
+
+    def get_member_ids(self):
+        import json
+        try:
+            return json.loads(self.member_ids) if self.member_ids else []
+        except Exception:
+            return []
+
+    def to_dict(self, actor_name=None, member_names=None, affected_name=None):
+        return {
+            'id': self.id,
+            'project_id': self.project_id,
+            'team_submission_id': self.team_submission_id,
+            'cohort_id': self.cohort_id,
+            'actor_id': self.actor_id,
+            'actor_name': actor_name,
+            'event_type': self.event_type,
+            'member_ids': self.get_member_ids(),
+            'member_names': member_names or [],
+            'affected_member_id': self.affected_member_id,
+            'affected_member_name': affected_name,
+            'team_size': self.team_size,
+            'details': self.details,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+    def __repr__(self):
+        return f'<TeamAssignmentEvent {self.id} {self.event_type} project={self.project_id}>'
+
 
 class Announcement(db.Model):
     __tablename__ = 'announcements'

@@ -1432,35 +1432,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     }
   };
 
-  const handleAssignTeams = async (projectId: number) => {
-    if (!confirm('Assign teams for this project? Students will be randomly grouped and notified via email.')) return;
-    
-    setCardActionLoading(`teams-project-${projectId}`);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    try {
-      const response = await fetch(`${apiBase}/instructor/assessments/projects/${projectId}/assign-teams`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-        },
-        credentials: 'include',
-        body: JSON.stringify({})
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'Failed to assign teams');
-      
-      setSuccessMessage(`\u2705 ${result.message}`);
-      onAssessmentUpdate();
-      setTimeout(() => setSuccessMessage(null), 5000);
-    } catch (error: any) {
-      console.error('Error assigning teams:', error);
-      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to assign teams';
-      setErrorMessage(errorMsg);
-    } finally {
-      setCardActionLoading(null);
+  const handleAssignTeams = (projectId: number) => {
+    // Auto-assign is cohort-scoped: teams are formed only from students ACTIVE
+    // in one selected cohort, so the instructor has to pick that cohort first.
+    // The Team Manager modal owns that flow — never blind-assign here.
+    const project = (assessments?.projects || []).find((p: any) => p.id === projectId);
+    if (!project) {
+      setErrorMessage('Project not found');
+      return;
     }
+    if ((project.max_team_size || 0) < 2) {
+      setErrorMessage('Set max team size to 2 or more in project settings before assigning teams.');
+      return;
+    }
+    setTeamManagerProject(project);
   };
 
   const handleCreateQuiz = async () => {
@@ -4316,17 +4301,19 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                           <>
                           <button 
                             onClick={() => handleAssignTeams(project.id)}
-                            disabled={!!cardActionLoading}
-                            title={project.max_team_size >= 2 ? `Auto-assign teams of ${project.max_team_size} from same cohort` : 'Set max team size >= 2 first'}
+                            disabled={!!cardActionLoading || (project.max_team_size || 0) < 2}
+                            title={
+                              (project.max_team_size || 0) >= 2
+                                ? `Assign teams — pick a cohort first, then group its active students into teams of ${project.max_team_size}`
+                                : 'Set max team size to 2 or more in project settings first'
+                            }
                             className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
-                              project.max_team_size >= 2 
+                              (project.max_team_size || 0) >= 2 
                                 ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50' 
                                 : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
                             }`}
                           >
-                            {cardActionLoading === `teams-project-${project.id}` ? (
-                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-                            ) : '👥'}
+                            👥
                           </button>
                             <button
                               onClick={() => setTeamManagerProject(project)}

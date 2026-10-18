@@ -103,43 +103,6 @@ class InstructorAssignmentService extends BaseApiService {
   }): Promise<ApiResponse> {
     return this.post('/grading/assignments/bulk-grade', data);
   }
-
-  /**
-   * Export assignment data to CSV
-   */
-  async exportAssignmentData(assignmentId: number): Promise<Blob> {
-    return this.get(`/instructor/assessments/assignments/${assignmentId}/export`, {
-      responseType: 'blob'
-    });
-  }
-
-  /**
-   * Clone/duplicate an assignment
-   */
-  async cloneAssignment(assignmentId: number, newCourseId?: number): Promise<ApiResponse<Assignment>> {
-    return this.post(`/instructor/assessments/assignments/${assignmentId}/clone`, {
-      course_id: newCourseId
-    });
-  }
-
-  /**
-   * Get assignment analytics
-   */
-  async getAssignmentAnalytics(assignmentId: number): Promise<{
-    submission_rate: number;
-    average_grade: number;
-    grade_distribution: {
-      range: string;
-      count: number;
-    }[];
-    time_to_complete: {
-      average_hours: number;
-      median_hours: number;
-    };
-    common_issues: string[];
-  }> {
-    return this.get(`/instructor/assessments/assignments/${assignmentId}/analytics`);
-  }
 }
 
 export default new InstructorAssignmentService();

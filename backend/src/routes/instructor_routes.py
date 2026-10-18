@@ -1661,10 +1661,22 @@ def get_enrolled_students(course_id):
             return jsonify({"error": "Course not found or access denied"}), 404
         
         # Get all enrollments for this course
-        enrollments = Enrollment.query.filter_by(course_id=course_id, status='active').all()
+        # Active AND completed: the cohort cards count every enrollment, so a
+        # listing that only returned active ones made completed students
+        # invisible to tools like the full-credit manager.
+        enrollments = Enrollment.query.filter(
+            Enrollment.course_id == course_id,
+            Enrollment.status.in_(['active', 'completed'])
+        ).all()
         
         students = []
+        seen_student_ids = set()
         for enrollment in enrollments:
+            # A student may hold enrollments in more than one cohort — list
+            # them once.
+            if enrollment.student_id in seen_student_ids:
+                continue
+            seen_student_ids.add(enrollment.student_id)
             user = User.query.get(enrollment.student_id)
             if user:
                 students.append({

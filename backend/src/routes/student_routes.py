@@ -2909,8 +2909,8 @@ def get_student_projects():
             
             if submission:
                 submission_status['id'] = submission.id
-                submission_status['submitted_at'] = submission.submitted_at.isoformat()
-                submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
+                submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
+                submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at and project.due_date else False
                 
                 if project.modification_requested and project.can_resubmit:
                     submission_status['status'] = 'needs_revision'
@@ -3002,13 +3002,13 @@ def get_student_project_details(project_id):
         submission_data = None
         if submission:
             submission_data = submission.to_dict()
-            submission_data['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
+            submission_data['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at and project.due_date else False
             if submission.grader:
                 submission_data['grader_name'] = submission.grader.full_name
             
             submission_status['submitted'] = True
             submission_status['id'] = submission.id
-            submission_status['submitted_at'] = submission.submitted_at.isoformat()
+            submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
             submission_status['is_late'] = submission_data['is_late']
             
             if project.modification_requested and project.can_resubmit:
@@ -3178,13 +3178,14 @@ def submit_project(project_id):
     """Submit a project"""
     try:
         current_user_id = int(get_jwt_identity())
-        data = request.get_json()
-        
+        data = request.get_json() or {}
+
         project = Project.query.get(project_id)
         if not project:
             return jsonify({"message": "Project not found"}), 404
         
-        # Verify student is enrolled in the course
+        # Verify student has an ACTIVE enrollment. A terminated or suspended
+        # student still has an Enrollment row, so presence alone is not enough.
         enrollment = Enrollment.query.filter_by(
             student_id=current_user_id,
             course_id=project.course_id
@@ -3192,7 +3193,28 @@ def submit_project(project_id):
         
         if not enrollment:
             return jsonify({"message": "You are not enrolled in this course"}), 403
+        if enrollment.status != 'active':
+            return jsonify({
+                "message": "Your enrollment is not active, so you cannot submit this project."
+            }), 403
         
+        # Validate team_members against the project's cap before anything else.
+        # team_members holds the OTHER members, so the total is one more.
+        team_members = data.get('team_members') or []
+        if not isinstance(team_members, list):
+            return jsonify({"message": "team_members must be a list of student ids"}), 400
+        try:
+            team_members = [int(m) for m in team_members if int(m) != current_user_id]
+        except (TypeError, ValueError):
+            return jsonify({"message": "team_members must contain only student ids"}), 400
+        if project.collaboration_allowed and team_members:
+            max_team_size = project.max_team_size or 3
+            total = len(team_members) + 1  # + the submitter
+            if total > max_team_size:
+                return jsonify({
+                    "message": f"Team size exceeds the maximum of {max_team_size} members"
+                }), 400
+
         # Check if already submitted
         existing_submission = ProjectSubmission.query.filter_by(
             project_id=project_id,
@@ -3200,19 +3222,33 @@ def submit_project(project_id):
         ).first()
         
         if existing_submission:
-            return jsonify({"message": "Project already submitted"}), 400
+            # A scaffolded team row has submitted_at NULL — the instructor
+            # created the team but nobody has submitted work yet. Let the
+            # primary fill it in instead of rejecting with "already submitted".
+            if existing_submission.submitted_at is not None:
+                return jsonify({"message": "Project already submitted"}), 400
+            existing_submission.text_content = data.get('text_content')
+            existing_submission.file_path = data.get('file_url')
+            existing_submission.submitted_at = now_local()
+            db.session.commit()
+            return jsonify({
+                "message": "Project submitted successfully",
+                "submission": existing_submission.to_dict()
+            }), 200
         
-        # Create submission
+        # Create submission. submitted_at is set explicitly (not left to the
+        # model default) so a scaffolded team row is never mistaken for work.
         submission = ProjectSubmission(
             project_id=project_id,
             student_id=current_user_id,
             text_content=data.get('text_content'),
-            file_path=data.get('file_url')  # Frontend should handle file upload
+            file_path=data.get('file_url'),  # Frontend should handle file upload
+            submitted_at=now_local()
         )
         
-        # Handle team members if collaboration allowed
-        if project.collaboration_allowed and data.get('team_members'):
-            submission.set_team_members(data['team_members'])
+        # Handle team members if collaboration allowed (already validated above)
+        if project.collaboration_allowed and team_members:
+            submission.set_team_members(team_members)
         
         db.session.add(submission)
         db.session.commit()
@@ -3220,7 +3256,6 @@ def submit_project(project_id):
         # Email the instructor that a new project submission arrived (non-blocking)
         try:
             from ..utils.email_notifications import notify_instructor_of_submission
-            team_members = data.get('team_members') or []
             notify_instructor_of_submission(
                 submission,
                 is_project=True,

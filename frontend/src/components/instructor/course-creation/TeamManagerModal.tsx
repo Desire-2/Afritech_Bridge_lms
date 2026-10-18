@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
+import apiClient from '@/lib/api-client';
+import InstructorService from '@/services/instructor.service';
 
 interface TeamMember {
   id: number;
@@ -16,6 +18,8 @@ interface Team {
   primary_student: TeamMember;
   members: TeamMember[];
   created_at: string;
+  submitted_at?: string | null;
+  team_size?: number;
   status: string;
 }
 
@@ -24,6 +28,7 @@ interface UnassignedStudent {
   name: string;
   email: string;
   phone?: string;
+  cohort_id?: number | null;
   cohort_label?: string;
   enrollment_date?: string;
 }
@@ -31,11 +36,21 @@ interface UnassignedStudent {
 interface TeamHistoryEntry {
   id: number;
   action: string;
+  event_type?: string;
   student_name: string;
-  team_number: number;
+  team_number?: number;
   performed_by: string;
+  team_size?: number;
+  member_names?: string[];
   created_at: string;
   details?: string;
+}
+
+interface Cohort {
+  id: number | null;
+  cohort_label?: string;
+  status?: string;
+  student_count?: number;
 }
 
 interface TeamManagerModalProps {
@@ -51,6 +66,8 @@ interface TeamManagerModalProps {
   onTeamsUpdated: () => void;
 }
 
+const TEAMS_BASE = (projectId: number) => `/instructor/assessments/projects/${projectId}`;
+
 export default function TeamManagerModal({
   isOpen,
   onClose,
@@ -63,12 +80,19 @@ export default function TeamManagerModal({
   const [teamHistory, setTeamHistory] = useState<TeamHistoryEntry[]>([]);
   const [isLoadingTeams, setIsLoadingTeams] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingCohorts, setIsLoadingCohorts] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Auto-assign state
-  const [teamSize, setTeamSize] = useState(project.max_team_size || 3);
+  // Cohort scoping — assignment is always performed against ONE cohort.
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [selectedCohortId, setSelectedCohortId] = useState<number | null>(null);
+
+  // Auto-assign state. Clamped to the project's configured maximum so the
+  // request can never exceed what the backend will accept.
+  const maxTeamSize = project.max_team_size || 3;
+  const [teamSize, setTeamSize] = useState(maxTeamSize);
   const [isAutoAssigning, setIsAutoAssigning] = useState(false);
 
   // Drag/drop state
@@ -78,91 +102,134 @@ export default function TeamManagerModal({
   // Remove member confirmation
   const [confirmRemove, setConfirmRemove] = useState<{ submissionId: number; memberId: number; memberName: string } | null>(null);
 
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+  // Clamp the requested size if the project's max changed since mount.
+  useEffect(() => {
+    setTeamSize((prev) => Math.min(Math.max(prev, 2), maxTeamSize));
+  }, [maxTeamSize]);
+
+  const fetchCohorts = useCallback(async () => {
+    setIsLoadingCohorts(true);
+    try {
+      const data = await InstructorService.getCourseCohorts(project.course_id);
+      // Entries with a null id are legacy label-only or unlabelled groups and
+      // cannot be used to scope assignment — the backend needs a real window id.
+      const usable = (Array.isArray(data) ? data : []).filter(
+        (c: Cohort) => typeof c.id === 'number'
+      );
+      setCohorts(usable);
+      setSelectedCohortId((prev) => {
+        if (prev !== null && usable.some((c: Cohort) => c.id === prev)) return prev;
+        return usable.length > 0 ? usable[0].id : null;
+      });
+    } catch {
+      setCohorts([]);
+      setSelectedCohortId(null);
+    } finally {
+      setIsLoadingCohorts(false);
+    }
+  }, [project.course_id]);
 
   const fetchTeams = useCallback(async () => {
     setIsLoadingTeams(true);
-    setErrorMessage(null);
     try {
-      const response = await fetch(`${apiBase}/instructor/assessments/projects/${project.id}/teams`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` },
-        credentials: 'include'
-      });
-      if (!response.ok) throw new Error('Failed to fetch teams');
-      const result = await response.json();
-      setTeams(result.teams || []);
+      const response = await apiClient.get(`${TEAMS_BASE(project.id)}/teams`);
+      setTeams(response.data.teams || []);
     } catch (error: any) {
-      setErrorMessage(error.message || 'Failed to load teams');
+      setErrorMessage(error?.response?.data?.message || error.message || 'Failed to load teams');
     } finally {
       setIsLoadingTeams(false);
     }
-  }, [apiBase, project.id]);
+  }, [project.id]);
 
-  const fetchUnassignedStudents = useCallback(async () => {
+  const fetchUnassignedStudents = useCallback(async (cohortId: number | null) => {
     try {
-      const response = await fetch(`${apiBase}/instructor/assessments/projects/${project.id}/unassigned-students`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` },
-        credentials: 'include'
-      });
-      if (!response.ok) throw new Error('Failed to fetch unassigned students');
-      const result = await response.json();
-      setUnassignedStudents(result.students || []);
+      const params: Record<string, string> = {};
+      if (cohortId !== null) params.cohort_id = String(cohortId);
+      const response = await apiClient.get(
+        `${TEAMS_BASE(project.id)}/unassigned-students`,
+        { params }
+      );
+      setUnassignedStudents(response.data.students || []);
     } catch (error: any) {
-      console.error('Error fetching unassigned students:', error);
+      // Surface this instead of swallowing it — an empty list with no message
+      // is indistinguishable from "nobody left to assign".
+      setErrorMessage(
+        error?.response?.data?.message || error.message || 'Failed to load unassigned students'
+      );
     }
-  }, [apiBase, project.id]);
+  }, [project.id]);
 
   const fetchTeamHistory = useCallback(async () => {
     setIsLoadingHistory(true);
     try {
-      const response = await fetch(`${apiBase}/instructor/assessments/projects/${project.id}/team-history`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` },
-        credentials: 'include'
-      });
-      if (!response.ok) throw new Error('Failed to fetch team history');
-      const result = await response.json();
-      setTeamHistory(result.history || []);
+      const response = await apiClient.get(`${TEAMS_BASE(project.id)}/team-history`);
+      setTeamHistory(response.data.history || []);
     } catch (error: any) {
-      console.error('Error fetching team history:', error);
+      setErrorMessage(
+        error?.response?.data?.message || error.message || 'Failed to load team history'
+      );
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [apiBase, project.id]);
+  }, [project.id]);
 
   useEffect(() => {
     if (isOpen) {
+      fetchCohorts();
       fetchTeams();
-      fetchUnassignedStudents();
+      fetchUnassignedStudents(selectedCohortId);
       fetchTeamHistory();
     }
-  }, [isOpen, fetchTeams, fetchUnassignedStudents, fetchTeamHistory]);
+    // Only re-run when the modal opens or the cohort changes — not on every
+    // history refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, selectedCohortId, fetchCohorts, fetchTeams, fetchUnassignedStudents, fetchTeamHistory]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      fetchTeams(),
+      fetchUnassignedStudents(selectedCohortId),
+      fetchTeamHistory()
+    ]);
+  }, [fetchTeams, fetchUnassignedStudents, fetchTeamHistory, selectedCohortId]);
+
+  const handleCohortChange = (value: string) => {
+    const cohortId = value === '' ? null : parseInt(value, 10);
+    setSelectedCohortId(Number.isNaN(cohortId) ? null : cohortId);
+    setErrorMessage(null);
+  };
 
   const handleAutoAssign = async () => {
-    if (!confirm(`Auto-assign teams of ${teamSize} members? Existing teams will be preserved and only unassigned students will be grouped.`)) return;
+    if (selectedCohortId === null) {
+      setErrorMessage('Select a cohort first — teams are formed from students active in one cohort.');
+      return;
+    }
+    const cohort = cohorts.find((c) => c.id === selectedCohortId);
+    const cohortLabel = cohort?.cohort_label || `#${selectedCohortId}`;
+    if (
+      !confirm(
+        `Auto-assign teams of ${teamSize} from cohort "${cohortLabel}"?\n\n` +
+          `Only students ACTIVE in that cohort are eligible. ` +
+          `Existing teams are preserved; only unassigned students are grouped.`
+      )
+    ) {
+      return;
+    }
 
     setIsAutoAssigning(true);
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const response = await fetch(`${apiBase}/instructor/assessments/projects/${project.id}/assign-teams`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-        },
-        credentials: 'include',
-        body: JSON.stringify({ team_size: teamSize })
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'Auto-assign failed');
-      setSuccessMessage(`✅ ${result.message}`);
-      fetchTeams();
-      fetchUnassignedStudents();
-      fetchTeamHistory();
+      const response = await apiClient.post(
+        `${TEAMS_BASE(project.id)}/assign-teams`,
+        { team_size: teamSize, cohort_id: selectedCohortId }
+      );
+      setSuccessMessage(`✅ ${response.data.message}`);
+      await refreshAll();
       onTeamsUpdated();
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (error: any) {
-      setErrorMessage(error.message || 'Auto-assign failed');
+      setErrorMessage(error?.response?.data?.message || 'Auto-assign failed');
     } finally {
       setIsAutoAssigning(false);
     }
@@ -173,28 +240,41 @@ export default function TeamManagerModal({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const response = await fetch(
-        `${apiBase}/instructor/assessments/projects/${project.id}/teams/${submissionId}/reassign`,
-        {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-          },
-          credentials: 'include',
-          body: JSON.stringify({ member_id: memberId, target_team_id: targetTeamId })
-        }
+      const response = await apiClient.post(
+        `${TEAMS_BASE(project.id)}/teams/${submissionId}/reassign`,
+        { member_id: memberId, target_team_id: targetTeamId }
       );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'Reassign failed');
-      setSuccessMessage(`✅ ${result.message}`);
-      fetchTeams();
-      fetchUnassignedStudents();
-      fetchTeamHistory();
+      setSuccessMessage(`✅ ${response.data.message}`);
+      await refreshAll();
       onTeamsUpdated();
       setTimeout(() => setSuccessMessage(null), 4000);
     } catch (error: any) {
-      setErrorMessage(error.message || 'Reassign failed');
+      setErrorMessage(error?.response?.data?.message || 'Reassign failed');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleAddUnassignedStudent = async (student: UnassignedStudent, targetTeamId: number) => {
+    setActionLoading(`assign-${student.id}`);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const response = await apiClient.post(
+        `${TEAMS_BASE(project.id)}/teams/${targetTeamId}/reassign`,
+        {
+          member_id: student.id,
+          target_team_id: targetTeamId,
+          is_new_student: true
+        }
+      );
+      const teamNumber = teams.findIndex((t) => t.submission_id === targetTeamId) + 1;
+      setSuccessMessage(`✅ ${response.data.message || `${student.name} added to Team ${teamNumber}`}`);
+      await refreshAll();
+      onTeamsUpdated();
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (error: any) {
+      setErrorMessage(error?.response?.data?.message || 'Failed to add student');
     } finally {
       setActionLoading(null);
     }
@@ -206,29 +286,17 @@ export default function TeamManagerModal({
     setErrorMessage(null);
     setSuccessMessage(null);
     try {
-      const response = await fetch(
-        `${apiBase}/instructor/assessments/projects/${project.id}/teams/${confirmRemove.submissionId}/remove-member`,
-        {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-          },
-          credentials: 'include',
-          body: JSON.stringify({ member_id: confirmRemove.memberId })
-        }
+      const response = await apiClient.post(
+        `${TEAMS_BASE(project.id)}/teams/${confirmRemove.submissionId}/remove-member`,
+        { member_id: confirmRemove.memberId }
       );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || 'Remove failed');
-      setSuccessMessage(`✅ ${result.message}`);
+      setSuccessMessage(`✅ ${response.data.message}`);
       setConfirmRemove(null);
-      fetchTeams();
-      fetchUnassignedStudents();
-      fetchTeamHistory();
+      await refreshAll();
       onTeamsUpdated();
       setTimeout(() => setSuccessMessage(null), 4000);
     } catch (error: any) {
-      setErrorMessage(error.message || 'Remove failed');
+      setErrorMessage(error?.response?.data?.message || 'Remove failed');
     } finally {
       setActionLoading(null);
     }
@@ -259,10 +327,19 @@ export default function TeamManagerModal({
     setDragOverTeamId(null);
   };
 
+  const historyIcon = (entry: TeamHistoryEntry) => {
+    const type = entry.event_type || entry.action;
+    if (type === 'team_assign' || type === 'assign' || entry.action === 'team_created') return '👥';
+    if (type === 'team_reassign' || type === 'reassign' || entry.action === 'member_moved') return '🔄';
+    if (type === 'team_remove' || type === 'remove' || entry.action === 'member_removed') return '➖';
+    return '📝';
+  };
+
   if (!isOpen) return null;
 
   const totalStudentsInTeams = teams.reduce((sum, t) => sum + t.members.length, 0);
   const totalUnassigned = unassignedStudents.length;
+  const selectedCohort = cohorts.find((c) => c.id === selectedCohortId);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -285,6 +362,36 @@ export default function TeamManagerModal({
             </div>
           </div>
 
+          {/* Cohort Selector */}
+          <div className="bg-indigo-50 dark:bg-indigo-900/20 px-6 py-3 border-b border-indigo-200 dark:border-indigo-800">
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="text-sm font-semibold text-indigo-800 dark:text-indigo-300">
+                Cohort:
+              </label>
+              <select
+                value={selectedCohortId === null ? '' : String(selectedCohortId)}
+                onChange={(e) => handleCohortChange(e.target.value)}
+                disabled={isLoadingCohorts}
+                className="px-3 py-1.5 border border-indigo-300 dark:border-indigo-600 rounded-lg text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              >
+                <option value="" disabled>
+                  {isLoadingCohorts ? 'Loading cohorts…' : 'Select a cohort…'}
+                </option>
+                {cohorts.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.cohort_label || `Cohort #${c.id}`}
+                    {typeof c.student_count === 'number' ? ` (${c.student_count} enrolled)` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                {selectedCohort
+                  ? `Teams are formed from students ACTIVE in "${selectedCohort.cohort_label || `Cohort #${selectedCohort.id}`}"`
+                  : 'Select a cohort to see who can be assigned'}
+              </p>
+            </div>
+          </div>
+
           {/* Stats Bar */}
           <div className="bg-slate-50 dark:bg-slate-700/50 px-6 py-3 border-b border-slate-200 dark:border-slate-700">
             <div className="flex items-center gap-6 flex-wrap">
@@ -301,8 +408,8 @@ export default function TeamManagerModal({
                 <span className="text-lg font-bold text-orange-600 dark:text-orange-400">{totalUnassigned}</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Team Size:</span>
-                <span className="text-lg font-bold text-purple-600 dark:text-purple-400">{project.max_team_size}</span>
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Max Team Size:</span>
+                <span className="text-lg font-bold text-purple-600 dark:text-purple-400">{maxTeamSize}</span>
               </div>
             </div>
           </div>
@@ -357,7 +464,9 @@ export default function TeamManagerModal({
                     <div className="flex-1">
                       <h4 className="text-sm font-semibold text-indigo-800 dark:text-indigo-300">Auto-Assign Teams</h4>
                       <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-0.5">
-                        Randomly group {totalUnassigned} unassigned students into teams
+                        {selectedCohortId === null
+                          ? 'Select a cohort above to enable auto-assign'
+                          : `Randomly group ${totalUnassigned} unassigned student${totalUnassigned === 1 ? '' : 's'} from the selected cohort into teams`}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -365,14 +474,23 @@ export default function TeamManagerModal({
                       <input
                         type="number"
                         min={2}
-                        max={10}
+                        max={maxTeamSize}
                         value={teamSize}
-                        onChange={(e) => setTeamSize(Math.max(2, parseInt(e.target.value) || 2))}
+                        onChange={(e) =>
+                          setTeamSize(Math.min(Math.max(parseInt(e.target.value) || 2, 2), maxTeamSize))
+                        }
                         className="w-16 px-2 py-1.5 border border-indigo-300 dark:border-indigo-600 rounded-md text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-700 dark:text-white"
                       />
                       <button
                         onClick={handleAutoAssign}
-                        disabled={isAutoAssigning || totalUnassigned === 0}
+                        disabled={isAutoAssigning || totalUnassigned === 0 || selectedCohortId === null}
+                        title={
+                          selectedCohortId === null
+                            ? 'Select a cohort first'
+                            : totalUnassigned === 0
+                              ? 'No unassigned students in this cohort'
+                              : undefined
+                        }
                         className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed flex items-center gap-1.5"
                       >
                         {isAutoAssigning ? (
@@ -399,13 +517,15 @@ export default function TeamManagerModal({
                     <div className="text-5xl mb-4">👥</div>
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No Teams Yet</h3>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                      Use the Auto-Assign button above to create teams from enrolled students,{'\n'}
+                      Select a cohort and use the Auto-Assign button above to create teams from students active in it,{'\n'}
                       or teams will appear here once students are grouped.
                     </p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {teams.map((team, teamIndex) => (
+                    {teams.map((team, teamIndex) => {
+                      const isFull = team.members.length >= maxTeamSize;
+                      return (
                       <div
                         key={team.submission_id}
                         className={`bg-white dark:bg-slate-700 border-2 rounded-xl overflow-hidden transition-all duration-200 ${
@@ -423,6 +543,7 @@ export default function TeamManagerModal({
                             <span className="text-white font-bold text-sm">Team {teamIndex + 1}</span>
                             <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full">
                               {team.members.length} member{team.members.length !== 1 ? 's' : ''}
+                              {isFull ? ' · full' : ''}
                             </span>
                           </div>
                           <span className="text-white/70 text-xs">
@@ -480,15 +601,19 @@ export default function TeamManagerModal({
                                         e.target.value = '';
                                       }
                                     }}
-                                    className="text-xs px-1.5 py-1 border border-slate-300 dark:border-slate-500 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-700 dark:text-white bg-transparent"
-                                    title="Move to team..."
+                                    disabled={!!actionLoading}
+                                    className="text-xs px-1.5 py-1 border border-slate-300 dark:border-slate-500 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:bg-slate-700 dark:text-white bg-transparent disabled:opacity-50"
+                                    title={isFull ? `This team is at the maximum size of ${maxTeamSize}` : 'Move to team...'}
                                   >
                                     <option value="">⇄ Move</option>
-                                    {teams.filter(t => t.submission_id !== team.submission_id).map((t, i) => (
-                                      <option key={t.submission_id} value={t.submission_id}>
-                                        Team {teams.findIndex(t2 => t2.submission_id === t.submission_id) + 1}
-                                      </option>
-                                    ))}
+                                    {teams
+                                      .filter((t) => t.submission_id !== team.submission_id)
+                                      .map((t) => (
+                                        <option key={t.submission_id} value={t.submission_id}>
+                                          Team {teams.findIndex((t2) => t2.submission_id === t.submission_id) + 1}
+                                          {t.members.length >= maxTeamSize ? ' (full)' : ''}
+                                        </option>
+                                      ))}
                                   </select>
                                 )}
                                 <button
@@ -513,7 +638,8 @@ export default function TeamManagerModal({
                           {dragOverTeamId === team.submission_id ? '📥 Drop student here' : '⬡ Drag & drop students between teams'}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -523,6 +649,11 @@ export default function TeamManagerModal({
                     <h4 className="text-sm font-semibold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-orange-400"></span>
                       Unassigned Students ({unassignedStudents.length})
+                      {selectedCohort && (
+                        <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
+                          in {selectedCohort.cohort_label || `Cohort #${selectedCohort.id}`}
+                        </span>
+                      )}
                     </h4>
                     <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-800 rounded-xl overflow-hidden">
                       <div className="divide-y divide-orange-100 dark:divide-orange-800/50">
@@ -545,54 +676,20 @@ export default function TeamManagerModal({
                             {teams.length > 0 && (
                               <select
                                 value=""
+                                disabled={!!actionLoading}
                                 onChange={async (e) => {
                                   if (e.target.value) {
-                                    // Reassign unassigned student into a team by creating new submission
-                                    const targetTeamId = parseInt(e.target.value);
-                                    // For unassigned students, we add them by picking the primary student's team
-                                    const targetTeam = teams.find(t => t.submission_id === targetTeamId);
-                                    if (targetTeam) {
-                                      setActionLoading(`assign-${student.id}`);
-                                      try {
-                                        const response = await fetch(
-                                          `${apiBase}/instructor/assessments/projects/${project.id}/teams/${targetTeamId}/reassign`,
-                                          {
-                                            method: 'POST',
-                                            headers: { 
-                                              'Content-Type': 'application/json',
-                                              'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
-                                            },
-                                            credentials: 'include',
-                                            body: JSON.stringify({ 
-                                              member_id: student.id, 
-                                              target_team_id: targetTeamId,
-                                              is_new_student: true
-                                            })
-                                          }
-                                        );
-                                        const result = await response.json();
-                                        if (!response.ok) throw new Error(result.message || 'Failed to add student');
-                                        setSuccessMessage(`✅ ${student.name} added to Team ${teams.findIndex(t => t.submission_id === targetTeamId) + 1}`);
-                                        fetchTeams();
-                                        fetchUnassignedStudents();
-                                        fetchTeamHistory();
-                                        onTeamsUpdated();
-                                        setTimeout(() => setSuccessMessage(null), 4000);
-                                      } catch (error: any) {
-                                        setErrorMessage(error.message || 'Failed to add student');
-                                      } finally {
-                                        setActionLoading(null);
-                                      }
-                                    }
+                                    const targetTeamId = parseInt(e.target.value, 10);
+                                    await handleAddUnassignedStudent(student, targetTeamId);
                                     e.target.value = '';
                                   }
                                 }}
-                                className="text-xs px-2 py-1 border border-orange-300 dark:border-orange-600 rounded focus:outline-none focus:ring-1 focus:ring-orange-500 dark:bg-slate-700 dark:text-white bg-white"
+                                className="text-xs px-2 py-1 border border-orange-300 dark:border-orange-600 rounded focus:outline-none focus:ring-1 focus:ring-orange-500 dark:bg-slate-700 dark:text-white bg-white disabled:opacity-50"
                               >
                                 <option value="">➕ Add to team...</option>
                                 {teams.map((t, i) => (
                                   <option key={t.submission_id} value={t.submission_id}>
-                                    Team {i + 1} ({t.members.length} members)
+                                    Team {i + 1} ({t.members.length} member{t.members.length !== 1 ? 's' : ''}{t.members.length >= maxTeamSize ? ', full' : ''})
                                   </option>
                                 ))}
                               </select>
@@ -625,19 +722,24 @@ export default function TeamManagerModal({
                 ) : (
                   <div className="space-y-2">
                     {teamHistory.map((entry) => (
-                      <div key={entry.id} className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600">
+                      <div key={`${entry.id}-${entry.action}`} className="flex items-start gap-3 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600">
                         <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-sm shrink-0">
-                          {entry.action === 'team_created' ? '👥' : entry.action === 'member_added' ? '➕' : entry.action === 'member_removed' ? '➖' : entry.action === 'member_moved' ? '🔄' : '📝'}
+                          {historyIcon(entry)}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-medium text-slate-900 dark:text-white">
                               {entry.details || entry.action.replace(/_/g, ' ')}
                             </span>
-                            <span className="text-xs text-slate-400">
-                              {new Date(entry.created_at).toLocaleString()}
+                            <span className="text-xs text-slate-400 shrink-0">
+                              {entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}
                             </span>
                           </div>
+                          {entry.member_names && entry.member_names.length > 0 && (
+                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                              {entry.member_names.join(', ')}
+                            </div>
+                          )}
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                             by {entry.performed_by}
                           </div>
@@ -653,7 +755,7 @@ export default function TeamManagerModal({
           {/* Footer */}
           <div className="bg-slate-50 dark:bg-slate-700/50 px-6 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              💡 Drag & drop students between teams to reassign, or use dropdown to move members
+              💡 Drag &amp; drop students between teams to reassign, or use dropdown to move members
             </p>
             <button
               onClick={onClose}

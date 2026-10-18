@@ -182,7 +182,7 @@ export class InstructorService {
   // Grade submission
   static async gradeSubmission(submissionId: number, grade: number, feedback?: string): Promise<void> {
     try {
-      await apiClient.patch(`/v1/submissions/${submissionId}/grade`, {
+      await apiClient.patch(`/submissions/${submissionId}/grade`, {
         grade,
         feedback
       });

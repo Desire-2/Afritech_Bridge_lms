@@ -104,7 +104,7 @@ class InstructorApiService extends BaseApiService {
    * Bulk terminate students (optionally scoped to a course / cohort)
    */
   async bulkTerminateStudents(studentIds: number[], reason: string, courseId?: number, applicationWindowId?: number): Promise<any> {
-    return this.post('/instructor/bulk-terminate', { student_ids: studentIds, reason, course_id: courseId, application_window_id: applicationWindowId });
+    return this.post('/instructor/students/bulk-terminate', { student_ids: studentIds, reason, course_id: courseId, application_window_id: applicationWindowId });
   }
 
   /**

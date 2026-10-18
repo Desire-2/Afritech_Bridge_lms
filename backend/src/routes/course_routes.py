@@ -220,14 +220,23 @@ def _sync_application_windows(course, windows_data):
     # Delete windows that were not included in the payload
     for win_id, win_obj in existing_windows.items():
         if win_id not in incoming_ids:
-            # Check if there are enrollments referencing this window
-            enrollment_count = win_obj.enrollments.filter(
-                Enrollment.status.in_(['active', 'completed'])
-            ).count()
-            if enrollment_count == 0:
-                db.session.delete(win_obj)
-            else:
-                logger.warning(f"Keeping window {win_id} (has {enrollment_count} active enrollments)")
+            # Count enrollments of ANY status. Previously only active/completed
+            # were counted, so a window with terminated or suspended students
+            # still referenced by enrollments was deleted anyway and the FK
+            # blew up.
+            enrollment_count = win_obj.enrollments.count()
+            if enrollment_count > 0:
+                logger.warning(
+                    f"Keeping window {win_id} (has {enrollment_count} enrollments)"
+                )
+                continue
+
+            # CohortModuleRelease.cohort_id is non-nullable with no ON DELETE
+            # cascade, so those rows must go first or the delete IntegrityErrors.
+            CohortModuleRelease.query.filter_by(cohort_id=win_id).delete(
+                synchronize_session=False
+            )
+            db.session.delete(win_obj)
 
 
 # ── Cohort CRUD endpoints ──

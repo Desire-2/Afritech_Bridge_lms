@@ -1004,12 +1004,16 @@ def get_project_submissions():
         
         # Enhanced status filter
         if status == 'pending':
-            # Regular pending submissions (not resubmissions, not modification requested)
+            # Regular pending submissions (not resubmissions, not modification
+            # requested). submitted_at IS NOT NULL excludes team rows the
+            # instructor scaffolded via assign-teams — those are placeholders
+            # with no work on them and must not appear in the grading queue.
             query = query.filter(
                 and_(
                     ProjectSubmission.grade.is_(None),
                     ProjectSubmission.is_resubmission == False,
-                    Project.modification_requested == False
+                    Project.modification_requested == False,
+                    ProjectSubmission.submitted_at.isnot(None)
                 )
             )
         elif status == 'resubmitted':
@@ -1201,8 +1205,11 @@ def grade_project_submission(submission_id):
         if not submission:
             return jsonify({"message": "Submission not found"}), 404
         
-        # Verify instructor owns the course
-        if submission.project.course.instructor_id != current_user_id:
+        # Verify instructor owns the course (admins may grade any course —
+        # every other team/project route in this area already bypasses)
+        grader = User.query.get(current_user_id)
+        is_admin = grader and grader.role and grader.role.name.lower() == 'admin'
+        if submission.project.course.instructor_id != current_user_id and not is_admin:
             return jsonify({"message": "Access denied"}), 403
         
         # Validate grade with improved error handling
@@ -1575,21 +1582,19 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
         ).first()
         
         if not member_submission:
-            # Create a submission record for the team member so they see the grade
+            # Create a grade-carrier record for the team member so they see the
+            # grade. team_members is deliberately left NULL: the member already
+            # belongs to the source team, and copying that roster here used to
+            # make the member's row look like a second team containing the same
+            # people (cross-team contamination in the instructor's team list).
             member_submission = ProjectSubmission(
                 project_id=project.id,
                 student_id=member_id,
-                team_members=None,  # Will be set below
+                team_members=None,
                 text_content=None,
                 file_path=None,
-                submitted_at=now_local(),
+                submitted_at=None,
             )
-            # Copy team members from an existing submission
-            existing_sub = ProjectSubmission.query.filter_by(
-                project_id=project.id
-            ).filter(ProjectSubmission.team_members.isnot(None)).first()
-            if existing_sub:
-                member_submission.set_team_members(existing_sub.get_team_members())
             db.session.add(member_submission)
             db.session.flush()
             logger.info(f"✅ Created ProjectSubmission {member_submission.id} for team member {member_id}")

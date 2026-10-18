@@ -20,6 +20,7 @@ from .course_models import (
     AssignmentSubmission,
     Project,
     ProjectSubmission,
+    TeamAssignmentEvent,
     Announcement
 )
 
