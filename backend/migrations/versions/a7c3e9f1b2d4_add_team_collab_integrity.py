@@ -1,7 +1,7 @@
 """Add team-collaboration integrity columns and the assignment audit trail.
 
 Revision ID: a7c3e9f1b2d4
-Revises: d4e5f6a7b8c9
+Revises: c3d4e5f6a7b8
 Create Date: 2026-10-18 10:00:00.000000
 
 Two changes:
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a7c3e9f1b2d4'
-down_revision = 'd4e5f6a7b8c9'
+down_revision = 'c3d4e5f6a7b8'
 branch_labels = None
 depends_on = None
 
