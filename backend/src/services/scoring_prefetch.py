@@ -388,10 +388,47 @@ def get_project_best_pct(project_id: int) -> float:
     return best
 
 
-def module_has_projects(course_id: int, module_id: int) -> bool:
+def project_gate_map(course_id: int) -> dict:
+    """{project_id: gate_module_id} for every published project in the course.
+
+    A project assigned to several modules only gates the LAST one of them (see
+    ``Project.get_gate_module_id``), so the earlier modules it spans are never
+    held back by it.
+    """
+    from ..models.course_models import Module
+
     projects = get_course_projects(course_id)
+    if not projects:
+        return {}
+    modules = (
+        Module.query.filter_by(course_id=course_id)
+        .order_by(Module.order, Module.id)
+        .all()
+    )
+    gates = {}
     for project in projects:
-        covered = project.get_modules()
-        if not covered or module_id in covered:
-            return True
-    return False
+        gate = project.get_gate_module_id(modules)
+        if gate is not None:
+            gates[project.id] = gate
+    return gates
+
+
+def gating_project_ids(course_id: int, module_id: int) -> set:
+    """Ids of the published projects that gate this module (their last one)."""
+    if not module_id:
+        return set()
+    return {
+        project_id
+        for project_id, gate in project_gate_map(course_id).items()
+        if gate == module_id
+    }
+
+
+def module_has_projects(course_id: int, module_id: int) -> bool:
+    """True only when a project GATES this module — i.e. the module is the
+    last module that project is assigned to.
+
+    Earlier modules a project spans count as having no project, so a project
+    assigned to modules 1-3 can only hold a student back in module 3.
+    """
+    return bool(gating_project_ids(course_id, module_id))

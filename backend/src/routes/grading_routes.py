@@ -1281,11 +1281,12 @@ def grade_project_submission(submission_id):
                     else:
                         percentage_score = 0
                     
-                    # Get all modules this project covers
-                    project_module_ids = project.get_modules()
-                    if not project_module_ids:
-                        all_modules = Module.query.filter_by(course_id=course_id).all()
-                        project_module_ids = [m.id for m in all_modules]
+                    # A project counts toward the LAST module it is assigned
+                    # to only — grading it must not move the score of the
+                    # earlier modules it spans, or those could not be passed
+                    # before the project is done.
+                    gate_module_id = project.get_gate_module_id()
+                    project_module_ids = [gate_module_id] if gate_module_id else []
                     
                     for member_id in team_ids:
                         # Skip the primary submitter — already graded above
@@ -1332,13 +1333,11 @@ def grade_project_submission(submission_id):
             else:
                 percentage_score = 0
             
-            # Get all modules this project covers
-            project_module_ids = project.get_modules()
-            
-            if not project_module_ids:
-                # Course-level project — update all course modules
-                all_modules = Module.query.filter_by(course_id=course_id).all()
-                project_module_ids = [m.id for m in all_modules]
+            # A project (including a course-level one with no module
+            # assignment) counts toward the LAST module it is assigned to
+            # only, so earlier modules it spans are free to proceed.
+            gate_module_id = project.get_gate_module_id()
+            project_module_ids = [gate_module_id] if gate_module_id else []
             
             # Get student's enrollment
             enrollment = Enrollment.query.filter_by(

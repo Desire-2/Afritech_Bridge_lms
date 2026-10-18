@@ -315,12 +315,14 @@ def get_module_score_breakdown(module_id):
             Quiz.is_published == True
         ).first() is not None
         
-        # Check for published projects covering this module (whole-course
-        # projects with no module assignment cover every module)
+        # Check for published projects that GATE this module (the last module
+        # each project is assigned to). Earlier modules a project spans count
+        # as having none, so the project never holds a student back there.
         has_projects = False
+        ordered_modules = Module.query.filter_by(course_id=module.course_id) \
+            .order_by(Module.order, Module.id).all()
         for project in Project.query.filter_by(course_id=module.course_id, is_published=True).all():
-            covered = project.get_modules()
-            if not covered or module_id in covered:
+            if project.gates_module(module_id, ordered_modules):
                 has_projects = True
                 break
         

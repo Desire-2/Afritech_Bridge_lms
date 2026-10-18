@@ -609,16 +609,15 @@ class EnhancedModuleUnlockService:
         total_score = module_progress.calculate_module_weighted_score()
         lessons_score = module_progress.calculate_module_score()
         
-        # Does this module have published projects covering it?
+        # Does a project GATE this module? Only the last module a project is
+        # assigned to is held to it, so earlier ones never wait on it.
         has_projects = False
         module = module_progress.module
         if module:
-            from ..models.course_models import Project
-            for project in Project.query.filter_by(course_id=module.course_id, is_published=True).all():
-                covered = project.get_modules()
-                if not covered or module_progress.module_id in covered:
-                    has_projects = True
-                    break
+            from .scoring_prefetch import module_has_projects
+            has_projects = module_has_projects(
+                module.course_id, module_progress.module_id
+            )
         
         return {
             "total_score": total_score,

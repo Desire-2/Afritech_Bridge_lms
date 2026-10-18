@@ -583,17 +583,23 @@ class ProgressionService:
                     AssignmentSubmission.assignment_id.in_(assignment_ids)
                 ).delete(synchronize_session='fetch')
             
-            # Invalidate project submissions for projects covering this module
+            # Invalidate submissions only for projects this module is held to
+            # — the last module each is assigned to. Retaking an earlier module
+            # that a shared project spans must not wipe the work a later module
+            # still counts.
             if module:
+                ordered_modules = Module.query.filter_by(
+                    course_id=module.course_id
+                ).order_by(Module.order, Module.id).all()
                 for project in Project.query.filter_by(
                     course_id=module.course_id
                 ).all():
-                    covered = project.get_modules()
-                    if not covered or module_id in covered:
-                        ProjectSubmission.query.filter(
-                            ProjectSubmission.student_id == student_id,
-                            ProjectSubmission.project_id == project.id
-                        ).delete(synchronize_session='fetch')
+                    if not project.gates_module(module_id, ordered_modules):
+                        continue
+                    ProjectSubmission.query.filter(
+                        ProjectSubmission.student_id == student_id,
+                        ProjectSubmission.project_id == project.id
+                    ).delete(synchronize_session='fetch')
             
             db.session.commit()
             

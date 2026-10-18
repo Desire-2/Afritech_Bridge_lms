@@ -99,13 +99,17 @@ class FullCreditService:
                     logger.error(f"Error awarding assignment {assignment.id} credit: {str(assignment_error)}")
                     raise assignment_error
             
-            # 3b. Award full credit for published projects covering this module
+            # 3b. Award full credit for published projects that GATE this
+            # module — the last module each project is assigned to, so a grant
+            # here can never stand in for progress in the earlier ones.
             from ..models.course_models import Project, ProjectSubmission
+            ordered_modules = Module.query.filter_by(
+                course_id=module.course_id
+            ).order_by(Module.order, Module.id).all()
             for project in Project.query.filter_by(
                 course_id=module.course_id, is_published=True
             ).all():
-                covered = project.get_modules()
-                if covered and module_id not in covered:
+                if not project.gates_module(module_id, ordered_modules):
                     continue
                 try:
                     FullCreditService._award_project_full_credit(

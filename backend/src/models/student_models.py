@@ -1038,8 +1038,10 @@ class ModuleProgress(db.Model):
             module_has_final_assessment(self.module_id) if self.module else False
         )
         
-        # Published projects covering this module (whole-course projects with
-        # no module assignment cover every module).
+        # Published projects that GATE this module: the last module each
+        # project is assigned to (see Project.get_gate_module_id). A project
+        # spanning modules 1-3 counts only in module 3, so the earlier ones
+        # are never held back by it.
         has_projects = (
             module_has_projects(self.module.course_id, self.module_id)
             if self.module else False
@@ -1143,7 +1145,10 @@ class ModuleProgress(db.Model):
 
         Policy: best-attempt across published assessments only. Draft lessons
         and unpublished assessments never influence student scores. Safe to
-        run repeatedly; only raises stored scores, never lowers them.
+        run repeatedly; only raises stored scores, never lowers them — except
+        a ``project_score`` left in a module the project no longer gates (it
+        only gates the last module it is assigned to), which is stale and gets
+        cleared instead of counted.
         """
         from .course_models import (
             Assignment, AssignmentSubmission, Project, ProjectSubmission
@@ -1196,16 +1201,24 @@ class ModuleProgress(db.Model):
                 if best_final > (self.final_assessment_score or 0.0):
                     self.final_assessment_score = best_final
 
+            # Only the LAST module a project is assigned to is held to it, so
+            # earlier modules it spans never count it — and any score stored
+            # there from before that rule is cleared rather than dragged along.
+            gating = scoring_prefetch.gating_project_ids(
+                self.module.course_id, self.module_id
+            )
             best_project = 0.0
             for project in scoring_prefetch.get_course_projects(self.module.course_id):
-                covered = project.get_modules()
-                if covered and self.module_id not in covered:
+                if project.id not in gating:
                     continue
                 pct = scoring_prefetch.get_project_best_pct(project.id)
                 if pct > best_project:
                     best_project = pct
-            if best_project > (self.project_score or 0.0):
-                self.project_score = best_project
+            if gating:
+                if best_project > (self.project_score or 0.0):
+                    self.project_score = best_project
+            elif self.project_score:
+                self.project_score = 0.0
 
             # Recompute cumulative with the healed fields
             self.calculate_cumulative_score()
@@ -1275,14 +1288,22 @@ class ModuleProgress(db.Model):
         if best_final > (self.final_assessment_score or 0.0):
             self.final_assessment_score = best_final
 
-        # ── projects: best graded percentage across covering projects ─────
+        # ── projects: only the LAST module a project is assigned to counts ──
+        # A project spanning modules 1-3 must not hold a student back in 1 or
+        # 2, so only the module it ends at is held to it; stale scores stored
+        # in earlier modules are cleared instead of counted.
+        ordered_modules = Module.query.filter_by(
+            course_id=self.module.course_id
+        ).order_by(Module.order, Module.id).all()
+        gating_projects = [
+            project
+            for project in Project.query.filter_by(
+                course_id=self.module.course_id, is_published=True
+            ).all()
+            if project.gates_module(self.module_id, ordered_modules)
+        ]
         best_project = 0.0
-        for project in Project.query.filter_by(
-            course_id=self.module.course_id, is_published=True
-        ).all():
-            covered = project.get_modules()
-            if covered and self.module_id not in covered:
-                continue
+        for project in gating_projects:
             submissions = ProjectSubmission.query.filter_by(
                 project_id=project.id,
                 student_id=self.student_id
@@ -1292,8 +1313,11 @@ class ModuleProgress(db.Model):
                 for submission in submissions:
                     percentage = (submission.grade / points_possible) * 100
                     best_project = max(best_project, min(100.0, percentage))
-        if best_project > (self.project_score or 0.0):
-            self.project_score = best_project
+        if gating_projects:
+            if best_project > (self.project_score or 0.0):
+                self.project_score = best_project
+        elif self.project_score:
+            self.project_score = 0.0
 
         # Recompute cumulative with the healed fields
         self.calculate_cumulative_score()

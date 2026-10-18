@@ -1509,6 +1509,59 @@ class Project(db.Model):
         import json
         self.module_ids = json.dumps(module_list)
 
+    def get_covered_modules_in_order(self, course_modules=None):
+        """Ids of the modules this project covers, in course sequence order.
+
+        A project with no module assignment covers the whole course, so it
+        returns every module id. Pass ``course_modules`` (a Module list) when
+        calling this in a loop to avoid a query per project.
+        """
+        import json
+        try:
+            covered = json.loads(self.module_ids) if self.module_ids else []
+        except Exception:
+            covered = []
+        if not isinstance(covered, list):
+            covered = []
+
+        if course_modules is None:
+            course_modules = (
+                Module.query.filter_by(course_id=self.course_id)
+                .order_by(Module.order, Module.id)
+                .all()
+            )
+        ordered_ids = [m.id for m in course_modules]
+        if not ordered_ids:
+            return []
+        if not covered:
+            return ordered_ids
+
+        wanted = set()
+        for raw in covered:
+            try:
+                wanted.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+        return [mid for mid in ordered_ids if mid in wanted]
+
+    def get_gate_module_id(self, course_modules=None):
+        """The one module this project holds a student to: the LAST module it
+        is assigned to (course sequence order).
+
+        A project spanning several modules must not hold a student back in the
+        earlier ones — those modules are treated as having no project at all so
+        the learner can proceed — and the project only counts (and can only
+        block) where it ends. A whole-course project ends at the final module.
+        """
+        ordered = self.get_covered_modules_in_order(course_modules)
+        return ordered[-1] if ordered else None
+
+    def gates_module(self, module_id, course_modules=None):
+        """True when ``module_id`` is the last module this project is assigned to."""
+        if module_id is None:
+            return False
+        return self.get_gate_module_id(course_modules) == module_id
+
     def get_tasks(self):
         """Get the list of task objects for this project"""
         import json
