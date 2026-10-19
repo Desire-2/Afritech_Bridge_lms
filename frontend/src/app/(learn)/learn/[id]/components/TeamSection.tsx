@@ -179,180 +179,182 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
 
   return (
     <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6">
-      {/* Roster */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
-            <Users className="h-4 w-4" />
-          </span>
-          <div>
-            <h4 className="text-sm font-semibold text-white">Your team</h4>
-            <p className="text-xs text-gray-500">
-              {members.length} {members.length === 1 ? 'member' : 'members'}
-            </p>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] lg:items-start">
+        {/* Roster column */}
+        <div>
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
+              <Users className="h-4 w-4" />
+            </span>
+            <div>
+              <h4 className="text-sm font-semibold text-white">Your team</h4>
+              <p className="text-xs text-gray-500">
+                {members.length} {members.length === 1 ? 'member' : 'members'}
+              </p>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <ul className="mt-4 flex flex-wrap gap-3">
-        {members.map((member) => (
-          <li
-            key={member.id}
-            className="flex min-w-[15rem] flex-1 items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
-          >
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-sm font-semibold text-blue-300">
-              {member.name?.charAt(0)?.toUpperCase() || '?'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-white">{member.name}</span>
-                {member.is_primary && (
-                  <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-300">
-                    <Crown className="h-3 w-3" />
-                    Lead
-                  </span>
-                )}
-                {member.is_me && (
-                  <span className="rounded border border-white/15 bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-300">
-                    You
-                  </span>
-                )}
-              </div>
-              <div className="mt-1.5 flex flex-col gap-1 text-xs text-gray-400">
-                {member.email && (
-                  <a
-                    href={`mailto:${member.email}`}
-                    className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
-                  >
-                    <Mail className="h-3.5 w-3.5 flex-shrink-0" />
-                    <span className="truncate">{member.email}</span>
-                  </a>
-                )}
-                {member.phone ? (
-                  <a
-                    href={`tel:${member.phone}`}
-                    className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
-                  >
-                    <Phone className="h-3.5 w-3.5 flex-shrink-0" />
-                    <span className="truncate">{member.phone}</span>
-                  </a>
-                ) : (
-                  <span className="flex items-center gap-1.5 text-gray-500">
-                    <Phone className="h-3.5 w-3.5 flex-shrink-0" />
-                    No phone number on file
-                  </span>
-                )}
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="my-5 h-px bg-white/[0.06]" />
-
-      {/* Chat room */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
-            <MessageSquare className="h-4 w-4" />
-          </span>
-          <h4 className="text-sm font-semibold text-white">Team chat</h4>
-        </div>
-        <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
-          <Lock className="h-3.5 w-3.5" />
-          Only your team can see this room
-        </span>
-      </div>
-
-      <div
-        ref={messagesRef}
-        className="mt-4 max-h-80 min-h-[5rem] space-y-2 overflow-y-auto pr-1"
-        aria-live="polite"
-      >
-        {messages.length === 0 ? (
-          <p className="py-6 text-center text-sm text-gray-500">
-            No messages yet — say hello to your team.
-          </p>
-        ) : (
-          messages.map((message) => {
-            const mine = message.sender_id === viewerId;
-            return (
-              <div
-                key={message.id}
-                className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+          <ul className="mt-4 space-y-3">
+            {members.map((member) => (
+              <li
+                key={member.id}
+                className="flex items-start gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"
               >
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3 py-2 ${
-                    mine
-                      ? 'bg-blue-600/90 text-white'
-                      : 'border border-white/[0.06] bg-white/[0.05] text-gray-200'
-                  }`}
-                >
-                  {!mine && (
-                    <p className="mb-0.5 text-[11px] font-medium text-blue-300">
-                      {message.sender_name || 'Teammate'}
-                    </p>
-                  )}
-                  <p className="whitespace-pre-wrap break-words text-sm">
-                    {message.body}
-                  </p>
-                  <p
-                    className={`mt-1 text-right text-[10px] ${
-                      mine ? 'text-blue-100/70' : 'text-gray-500'
-                    }`}
-                  >
-                    {formatTime(message.created_at)}
-                  </p>
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-sm font-semibold text-blue-300">
+                  {member.name?.charAt(0)?.toUpperCase() || '?'}
                 </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-white">{member.name}</span>
+                    {member.is_primary && (
+                      <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-300">
+                        <Crown className="h-3 w-3" />
+                        Lead
+                      </span>
+                    )}
+                    {member.is_me && (
+                      <span className="rounded border border-white/15 bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-300">
+                        You
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-col gap-1 text-xs text-gray-400">
+                    {member.email && (
+                      <a
+                        href={`mailto:${member.email}`}
+                        className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
+                      >
+                        <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+                        <span className="truncate">{member.email}</span>
+                      </a>
+                    )}
+                    {member.phone ? (
+                      <a
+                        href={`tel:${member.phone}`}
+                        className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
+                      >
+                        <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                        <span className="truncate">{member.phone}</span>
+                      </a>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-gray-500">
+                        <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                        No phone number on file
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
 
-      {chatError && (
-        <p className="mt-2 text-xs text-red-400" role="alert">
-          {chatError}
-        </p>
-      )}
+        {/* Chat column */}
+        <div className="lg:border-l lg:border-white/[0.06] lg:pl-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
+                <MessageSquare className="h-4 w-4" />
+              </span>
+              <h4 className="text-sm font-semibold text-white">Team chat</h4>
+            </div>
+            <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+              <Lock className="h-3.5 w-3.5" />
+              Only your team can see this room
+            </span>
+          </div>
 
-      <form
-        className="mt-3 flex items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void handleSend();
-        }}
-      >
-        <label htmlFor={`team-chat-input-${projectId}`} className="sr-only">
-          Message your team
-        </label>
-        <textarea
-          id={`team-chat-input-${projectId}`}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+          <div
+            ref={messagesRef}
+            className="mt-4 max-h-80 min-h-[5rem] space-y-2 overflow-y-auto pr-1"
+            aria-live="polite"
+          >
+            {messages.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-500">
+                No messages yet — say hello to your team.
+              </p>
+            ) : (
+              messages.map((message) => {
+                const mine = message.sender_id === viewerId;
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+                        mine
+                          ? 'bg-blue-600/90 text-white'
+                          : 'border border-white/[0.06] bg-white/[0.05] text-gray-200'
+                      }`}
+                    >
+                      {!mine && (
+                        <p className="mb-0.5 text-[11px] font-medium text-blue-300">
+                          {message.sender_name || 'Teammate'}
+                        </p>
+                      )}
+                      <p className="whitespace-pre-wrap break-words text-sm">
+                        {message.body}
+                      </p>
+                      <p
+                        className={`mt-1 text-right text-[10px] ${
+                          mine ? 'text-blue-100/70' : 'text-gray-500'
+                        }`}
+                      >
+                        {formatTime(message.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {chatError && (
+            <p className="mt-2 text-xs text-red-400" role="alert">
+              {chatError}
+            </p>
+          )}
+
+          <form
+            className="mt-3 flex items-end gap-2"
+            onSubmit={(event) => {
               event.preventDefault();
               void handleSend();
-            }
-          }}
-          rows={2}
-          placeholder="Message your team…"
-          className="flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-        />
-        <Button
-          type="submit"
-          disabled={sending || !draft.trim()}
-          className="h-[46px] bg-blue-600 text-white hover:bg-blue-500"
-        >
-          {sending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4" />
-          )}
-          <span className="ml-1.5 hidden sm:inline">Send</span>
-        </Button>
-      </form>
+            }}
+          >
+            <label htmlFor={`team-chat-input-${projectId}`} className="sr-only">
+              Message your team
+            </label>
+            <textarea
+              id={`team-chat-input-${projectId}`}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void handleSend();
+                }
+              }}
+              rows={2}
+              placeholder="Message your team…"
+              className="flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+            />
+            <Button
+              type="submit"
+              disabled={sending || !draft.trim()}
+              className="h-[46px] bg-blue-600 text-white hover:bg-blue-500"
+            >
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              <span className="ml-1.5 hidden sm:inline">Send</span>
+            </Button>
+          </form>
+        </div>
+      </div>
     </section>
   );
 };

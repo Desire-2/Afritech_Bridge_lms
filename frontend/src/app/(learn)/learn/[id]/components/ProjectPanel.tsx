@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Loader2, FolderOpen, UploadCloud, CheckCircle, Clock, AlertCircle,
-  Target, ListChecks, Calendar, Award, Link2, FileText, X, Check, Users
+  Target, ListChecks, Calendar, Award, Link2, FileText, X, Check, Users, Paperclip
 } from 'lucide-react';
 import { toast } from 'sonner';
 import StudentSubmissionService, {
@@ -48,6 +48,7 @@ const STATE_STYLES: Record<PanelState, {
   accent: string;
   stepDone: string;
   stepRing: string;
+  wash: string;
 }> = {
   not_submitted: {
     label: 'Not submitted',
@@ -58,6 +59,7 @@ const STATE_STYLES: Record<PanelState, {
     accent: 'text-gray-300',
     stepDone: 'bg-gray-600 text-white',
     stepRing: 'ring-gray-500/40',
+    wash: 'bg-[linear-gradient(90deg,rgba(107,114,128,0.08),transparent_55%)]',
   },
   submitted: {
     label: 'Submitted',
@@ -68,6 +70,7 @@ const STATE_STYLES: Record<PanelState, {
     accent: 'text-blue-300',
     stepDone: 'bg-blue-500/90 text-white',
     stepRing: 'ring-blue-500/40',
+    wash: 'bg-[linear-gradient(90deg,rgba(59,130,246,0.08),transparent_55%)]',
   },
   graded: {
     label: 'Graded',
@@ -78,6 +81,7 @@ const STATE_STYLES: Record<PanelState, {
     accent: 'text-emerald-300',
     stepDone: 'bg-emerald-500/90 text-white',
     stepRing: 'ring-emerald-500/40',
+    wash: 'bg-[linear-gradient(90deg,rgba(16,185,129,0.08),transparent_55%)]',
   },
   needs_revision: {
     label: 'Needs revision',
@@ -88,6 +92,7 @@ const STATE_STYLES: Record<PanelState, {
     accent: 'text-amber-300',
     stepDone: 'bg-amber-500/90 text-white',
     stepRing: 'ring-amber-500/40',
+    wash: 'bg-[linear-gradient(90deg,rgba(245,158,11,0.08),transparent_55%)]',
   },
   overdue: {
     label: 'Overdue',
@@ -98,6 +103,7 @@ const STATE_STYLES: Record<PanelState, {
     accent: 'text-red-300',
     stepDone: 'bg-red-500/90 text-white',
     stepRing: 'ring-red-500/40',
+    wash: 'bg-[linear-gradient(90deg,rgba(239,68,68,0.08),transparent_55%)]',
   },
 };
 
@@ -362,10 +368,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* ── Header: the project's identity and current situation ── */}
-      <header className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-gray-900">
+      {/* ── Header: identity, situation and workflow in one card ── */}
+      <header className={`relative overflow-hidden rounded-2xl border border-white/[0.07] bg-gray-900 ${stateStyles.wash}`}>
         <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${stateStyles.rail}`} />
-        <div className="flex flex-col gap-4 py-4 pl-6 pr-4 sm:py-5 sm:pl-7 sm:pr-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="relative flex flex-col gap-4 py-4 pl-6 pr-4 sm:py-5 sm:pl-7 sm:pr-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-3.5">
             <div className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border ${stateStyles.tile}`}>
               <FolderOpen className="h-5 w-5" />
@@ -425,7 +431,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   openForm();
                 }
               }}
-              className={`flex-shrink-0 self-start ${
+              className={`w-full flex-shrink-0 justify-center sm:w-auto lg:self-start ${
                 mode === 'submit'
                   ? 'border border-white/10 bg-transparent text-gray-300 hover:bg-white/[0.06] hover:text-white shadow-none'
                   : 'bg-blue-600 text-white hover:bg-blue-500'
@@ -435,41 +441,41 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             </Button>
           )}
         </div>
-      </header>
 
-      {/* ── Workflow strip: where this project stands ── */}
-      <nav className="rounded-2xl border border-white/[0.07] bg-gray-900 px-4 py-3 sm:px-6" aria-label="Project progress">
-        <div className="flex items-center gap-2 sm:gap-3">
-          {WORKFLOW_STEPS.map((label, index) => {
-            const done = index < currentStep;
-            const current = index === currentStep;
-            return (
-              <React.Fragment key={label}>
-                {index > 0 && <span aria-hidden className="h-px flex-1 bg-white/[0.08]" />}
-                <span
-                  className="flex items-center gap-2"
-                  aria-current={current ? 'step' : undefined}
-                >
+        {/* Workflow strip lives in the header so the state story reads as one object */}
+        <nav className="relative border-t border-white/[0.06] px-4 py-3 sm:px-7" aria-label="Project progress">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {WORKFLOW_STEPS.map((label, index) => {
+              const done = index < currentStep;
+              const current = index === currentStep;
+              return (
+                <React.Fragment key={label}>
+                  {index > 0 && <span aria-hidden className="h-px flex-1 bg-white/[0.08]" />}
                   <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
-                      done
-                        ? stateStyles.stepDone
-                        : current
-                          ? `bg-white/[0.06] ring-2 ${stateStyles.stepRing} ${stateStyles.accent}`
-                          : 'bg-white/[0.04] text-gray-500'
-                    }`}
+                    className="flex items-center gap-2"
+                    aria-current={current ? 'step' : undefined}
                   >
-                    {done ? <Check className="h-3 w-3" /> : index + 1}
+                    <span
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold ${
+                        done
+                          ? stateStyles.stepDone
+                          : current
+                            ? `bg-white/[0.06] ring-2 ${stateStyles.stepRing} ${stateStyles.accent}`
+                            : 'bg-white/[0.04] text-gray-500'
+                      }`}
+                    >
+                      {done ? <Check className="h-3 w-3" /> : index + 1}
+                    </span>
+                    <span className={`text-xs font-medium ${done || current ? 'text-gray-200' : 'text-gray-500'}`}>
+                      {label}
+                    </span>
                   </span>
-                  <span className={`text-xs font-medium ${done || current ? 'text-gray-200' : 'text-gray-500'}`}>
-                    {label}
-                  </span>
-                </span>
-              </React.Fragment>
-            );
-          })}
-        </div>
-      </nav>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </nav>
+      </header>
 
       {/* ── Revision request: impossible to miss, one click from the form ── */}
       {needsRevision && (
@@ -654,38 +660,40 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             </div>
           )}
 
-          {/* Brief: description, objectives, numbered task ladder */}
+          {/* Brief: description beside objectives, task ladder spread across */}
           <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
               <FileText className="h-4 w-4 text-blue-300" />
               Project brief
             </h4>
 
-            {project.description && (
-              <div className="mt-3 max-w-[68ch] text-sm leading-relaxed text-gray-300">
-                <MarkdownRenderer
-                  content={project.description}
-                  variant="compact"
-                  className="prose-sm leading-relaxed"
-                />
-              </div>
-            )}
-
-            {project.objectives && (
-              <div className="mt-5 max-w-[68ch] rounded-r-xl border-l-2 border-blue-500/40 bg-blue-500/[0.05] px-4 py-3">
-                <h5 className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Target className="h-4 w-4 text-blue-300" />
-                  Objectives
-                </h5>
-                <div className="mt-1.5 text-sm text-gray-300">
+            <div className="mt-3 grid gap-5 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
+              {project.description && (
+                <div className="max-w-[68ch] text-sm leading-relaxed text-gray-300">
                   <MarkdownRenderer
-                    content={project.objectives}
+                    content={project.description}
                     variant="compact"
                     className="prose-sm leading-relaxed"
                   />
                 </div>
-              </div>
-            )}
+              )}
+
+              {project.objectives && (
+                <div className="rounded-r-xl border-l-2 border-blue-500/40 bg-blue-500/[0.05] px-4 py-3">
+                  <h5 className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Target className="h-4 w-4 text-blue-300" />
+                    Objectives
+                  </h5>
+                  <div className="mt-1.5 max-w-[68ch] text-sm text-gray-300">
+                    <MarkdownRenderer
+                      content={project.objectives}
+                      variant="compact"
+                      className="prose-sm leading-relaxed"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             {project.tasks && project.tasks.length > 0 && (
               <div className="mt-5">
@@ -693,9 +701,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   <ListChecks className="h-4 w-4 text-blue-300" />
                   Tasks
                 </h5>
-                <ol className="mt-3 max-w-[68ch] space-y-3.5">
+                <ol className="mt-3 grid gap-x-8 gap-y-3.5 sm:grid-cols-2">
                   {project.tasks.map((task, index) => (
-                    <li key={index} className="flex gap-3">
+                    <li key={index} className="flex min-w-0 gap-3">
                       <span className="mt-0.5 w-5 flex-shrink-0 font-mono text-xs tabular-nums text-gray-500">
                         {String(index + 1).padStart(2, '0')}
                       </span>
@@ -812,12 +820,18 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             </p>
             <dl className="mt-3 divide-y divide-white/[0.06]">
               <div className="flex items-start justify-between gap-3 py-2">
-                <dt className="text-xs text-gray-500">Format</dt>
+                <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <Link2 className="h-3.5 w-3.5 text-gray-600" />
+                  Format
+                </dt>
                 <dd className="text-right text-xs font-medium text-gray-200">{requirements.label}</dd>
               </div>
               {needsFile && (
                 <div className="flex items-start justify-between gap-3 py-2">
-                  <dt className="text-xs text-gray-500">Files</dt>
+                  <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Paperclip className="h-3.5 w-3.5 text-gray-600" />
+                    Files
+                  </dt>
                   <dd className="text-right text-xs font-medium text-gray-200">
                     {allowedFileTypes.length > 0 ? allowedFileTypes.join(', ') : 'Any type'}
                     <span className="block font-normal text-gray-500">up to {maxFileSizeMB} MB</span>
@@ -826,13 +840,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               )}
               {project.points_possible > 0 && (
                 <div className="flex items-start justify-between gap-3 py-2">
-                  <dt className="text-xs text-gray-500">Points</dt>
+                  <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Award className="h-3.5 w-3.5 text-gray-600" />
+                    Points
+                  </dt>
                   <dd className="text-right text-xs font-medium text-gray-200">{project.points_possible}</dd>
                 </div>
               )}
               {dueDate && due && (
                 <div className="flex items-start justify-between gap-3 py-2">
-                  <dt className="text-xs text-gray-500">Due</dt>
+                  <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Calendar className="h-3.5 w-3.5 text-gray-600" />
+                    Due
+                  </dt>
                   <dd className="text-right text-xs font-medium text-gray-200">
                     {due.absolute}
                     <span className="block font-normal text-gray-500">{due.relative}</span>
@@ -841,14 +861,20 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               )}
               {project.collaboration_allowed && (
                 <div className="flex items-start justify-between gap-3 py-2">
-                  <dt className="text-xs text-gray-500">Team</dt>
+                  <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <Users className="h-3.5 w-3.5 text-gray-600" />
+                    Team
+                  </dt>
                   <dd className="text-right text-xs font-medium text-gray-200">
                     Up to {project.max_team_size} students
                   </dd>
                 </div>
               )}
               <div className="flex items-start justify-between gap-3 py-2">
-                <dt className="text-xs text-gray-500">Status</dt>
+                <dt className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className={`h-1.5 w-1.5 rounded-full ${stateStyles.dot}`} />
+                  Status
+                </dt>
                 <dd className={`text-right text-xs font-medium ${stateStyles.accent}`}>
                   {stateStyles.label}
                 </dd>
