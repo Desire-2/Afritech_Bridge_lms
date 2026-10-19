@@ -479,7 +479,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-amber-300">Revision requested</p>
-                <div className="mt-1 text-sm text-gray-300">
+                <div className="mt-1 max-w-[68ch] text-sm text-gray-300">
                   <MarkdownRenderer
                     content={submission?.modification_reason || status?.feedback || 'Your instructor asked for changes. Update your work and resubmit.'}
                     variant="compact"
@@ -656,12 +656,13 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
           {/* Brief: description, objectives, numbered task ladder */}
           <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+            <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+              <FileText className="h-4 w-4 text-blue-300" />
               Project brief
-            </p>
+            </h4>
 
             {project.description && (
-              <div className="mt-3 text-sm leading-relaxed text-gray-300">
+              <div className="mt-3 max-w-[68ch] text-sm leading-relaxed text-gray-300">
                 <MarkdownRenderer
                   content={project.description}
                   variant="compact"
@@ -671,11 +672,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             )}
 
             {project.objectives && (
-              <div className="mt-4 rounded-r-xl border-l-2 border-blue-500/40 bg-blue-500/[0.05] px-4 py-3">
-                <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+              <div className="mt-5 max-w-[68ch] rounded-r-xl border-l-2 border-blue-500/40 bg-blue-500/[0.05] px-4 py-3">
+                <h5 className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Target className="h-4 w-4 text-blue-300" />
                   Objectives
-                </h4>
+                </h5>
                 <div className="mt-1.5 text-sm text-gray-300">
                   <MarkdownRenderer
                     content={project.objectives}
@@ -688,11 +689,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
             {project.tasks && project.tasks.length > 0 && (
               <div className="mt-5">
-                <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                <h5 className="flex items-center gap-2 text-sm font-semibold text-white">
                   <ListChecks className="h-4 w-4 text-blue-300" />
                   Tasks
-                </h4>
-                <ol className="mt-3 space-y-3.5">
+                </h5>
+                <ol className="mt-3 max-w-[68ch] space-y-3.5">
                   {project.tasks.map((task, index) => (
                     <li key={index} className="flex gap-3">
                       <span className="mt-0.5 w-5 flex-shrink-0 font-mono text-xs tabular-nums text-gray-500">
@@ -762,7 +763,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               )}
 
               {submission.text_content && (
-                <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-sm text-gray-300">
+                <div className="max-w-[70ch] rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-sm text-gray-300">
                   <MarkdownRenderer
                     content={submission.text_content}
                     variant="compact"
@@ -786,7 +787,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     </span>
                   </div>
                   {(submission.feedback || status?.feedback) && (
-                    <div className="border-t border-emerald-500/15 pt-2.5 text-sm text-gray-300">
+                    <div className="max-w-[68ch] border-t border-emerald-500/15 pt-2.5 text-sm text-gray-300">
                       <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300/80">
                         Instructor feedback
                       </p>
