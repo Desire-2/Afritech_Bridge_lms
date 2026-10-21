@@ -130,7 +130,10 @@ class TestCatalogue:
         assert r.status_code == 403
 
     def test_seeded_catalogue_is_visible(self, client, admin_hdr):
-        r = client.get('/api/shop/products', headers=admin_hdr)
+        # Search, not page 1: the catalogue is far larger than a page now, so
+        # the seeded SKU has to be reachable the way the Products screen finds
+        # it — by its code.
+        r = client.get('/api/shop/products?q=PHN-SPARK-20', headers=admin_hdr)
         assert r.status_code == 200
         skus = [row['sku'] for row in r.get_json()['items']]
         assert 'PHN-SPARK-20' in skus, 'the dev seed should ship a catalogue'

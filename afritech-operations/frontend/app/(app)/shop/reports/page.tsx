@@ -8,7 +8,7 @@ import { P } from '@/lib/permissions';
 import { PageHeader, Loading, ErrorAlert, EmptyState, StatCard, Badge } from '@/components/ui';
 import { DateRange, SelectInput } from '@/components/form';
 
-type Tab = 'sales' | 'profitability' | 'stock' | 'slow-moving' | 'purchases' | 'tax';
+type Tab = 'sales' | 'brands' | 'profitability' | 'stock' | 'slow-moving' | 'purchases' | 'tax';
 
 const FINANCE_NOTICE = 'Financial reports require the appropriate permission.';
 
@@ -22,6 +22,7 @@ export default function ShopReportsPage() {
   const [groupBy, setGroupBy] = useState('day');
 
   const salesPath = tab === 'sales' ? '/api/shop/reports/sales' : '';
+  const brandPath = tab === 'brands' ? '/api/shop/reports/brands' : '';
   const profPath = tab === 'profitability' && canFinancial ? '/api/shop/reports/profitability' : '';
   const stockPath = tab === 'stock' ? '/api/shop/reports/stock' : '';
   const slowPath = tab === 'slow-moving' ? '/api/shop/reports/slow-moving' : '';
@@ -30,6 +31,8 @@ export default function ShopReportsPage() {
 
   const { data: sales, error: sErr, loading: sLd, reload: sReload } =
     useFetch(salesPath, [from, to, groupBy], { from, to, group_by: groupBy });
+  const { data: brands, error: bErr, loading: bLd, reload: bReload } =
+    useFetch(brandPath, [from, to], { from, to });
   const { data: prof, error: pErr, loading: pLd, reload: pReload } =
     useFetch(profPath, [from, to], { from, to });
   const { data: stock, error: kErr, loading: kLd, reload: kReload } =
@@ -43,6 +46,7 @@ export default function ShopReportsPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'sales', label: 'Sales' },
+    { key: 'brands', label: 'Brands' },
     { key: 'profitability', label: 'Profitability' },
     { key: 'stock', label: 'Stock' },
     { key: 'slow-moving', label: 'Slow-moving' },
@@ -52,6 +56,9 @@ export default function ShopReportsPage() {
 
   const salesRows = sales?.rows || [];
   const salesMoney = !!sales?.money;
+  const brandRows = brands?.rows || [];
+  const brandMoney = !!brands?.money;
+  const brandCosts = !!brands?.costs;
   const profRows = prof?.rows || [];
   const stockRows = stock?.rows || [];
   const slowRows = slow?.rows || [];
@@ -60,7 +67,7 @@ export default function ShopReportsPage() {
 
   return (
     <div>
-      <PageHeader title="Shop Reports" subtitle="Sales, profitability, stock, purchases and tax" />
+      <PageHeader title="Shop Reports" subtitle="Sales, brand analysis, profitability, stock, purchases and tax" />
 
       <div className="card mb-3">
         <div className="card-body d-flex flex-wrap gap-3 align-items-center">
@@ -151,6 +158,140 @@ export default function ShopReportsPage() {
                     </tfoot>
                   )}
                 </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'brands' && (
+        <div>
+          {bErr && <ErrorAlert message={bErr} onRetry={bReload} />}
+          {bLd && <Loading />}
+          {!bLd && !bErr && brands && brandRows.length === 0 && (
+            <EmptyState message="No brands in the catalogue"
+              hint="Add brands to the catalogue and every one of them shows up here with its own products." />
+          )}
+          {!bLd && !bErr && brands && brandRows.length > 0 && (
+            <div>
+              <div className="row g-3 mb-4">
+                <div className="col-6 col-md-3">
+                  <StatCard label="Brands" value={brands.totals?.brands ?? brandRows.length}
+                    icon="bi-bookmark-star" tone="primary" />
+                </div>
+                <div className="col-6 col-md-3">
+                  <StatCard label="Products" value={brands.totals?.products}
+                    icon="bi-box-seam" tone="warning" />
+                </div>
+                <div className="col-6 col-md-3">
+                  <StatCard label="Units on hand" value={brands.totals?.units_on_hand}
+                    icon="bi-stack" tone="primary" />
+                </div>
+                {brandMoney ? (
+                  <div className="col-6 col-md-3">
+                    <StatCard label="Revenue in period" value={fmtMoney(brands.totals?.revenue)}
+                      icon="bi-cash-stack" tone="success" />
+                  </div>
+                ) : (
+                  <div className="col-6 col-md-3">
+                    <StatCard label="Units sold" value={brands.totals?.units_sold}
+                      icon="bi-cart-check" tone="success" />
+                  </div>
+                )}
+              </div>
+
+              {!brandMoney && (
+                <div className="alert alert-secondary small">
+                  Revenue, share and margin are hidden — they need the financial
+                  reports permission.
+                </div>
+              )}
+
+              <div className="card">
+                <div className="table-responsive">
+                  <table className="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>Brand</th>
+                        <th className="text-end">Products</th>
+                        <th className="text-end">Active</th>
+                        <th>Categories</th>
+                        <th className="text-end">On hand</th>
+                        <th className="text-end">Sold</th>
+                        {brandMoney && <th className="text-end">Revenue</th>}
+                        {brandMoney && <th className="text-end">Share</th>}
+                        {brandMoney && <th className="text-end">Gross profit</th>}
+                        {brandMoney && <th className="text-end">Margin</th>}
+                        {brandCosts && <th className="text-end">Stock value</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {brandRows.map((r: any) => (
+                        <tr key={r.code || r.brand}>
+                          <td className="fw-semibold">
+                            {r.brand}
+                            {r.is_active === false && (
+                              <span className="badge bg-secondary-subtle text-body border ms-2">inactive</span>
+                            )}
+                          </td>
+                          <td className="text-end">{r.products}</td>
+                          <td className="text-end">{r.active_products}</td>
+                          <td className="small text-muted">
+                            {r.categories?.length ? r.categories.join(', ') : '—'}
+                          </td>
+                          <td className="text-end">{r.units_on_hand}</td>
+                          <td className="text-end">{r.units_sold}</td>
+                          {brandMoney && (
+                            <td className="text-end money fw-semibold">
+                              {r.revenue != null ? fmtMoney(r.revenue) : '—'}
+                            </td>
+                          )}
+                          {brandMoney && (
+                            <td className="text-end">{r.revenue_share != null ? `${r.revenue_share}%` : '—'}</td>
+                          )}
+                          {brandMoney && (
+                            <td className="text-end money fw-semibold">
+                              {r.gross_profit != null ? fmtMoney(r.gross_profit) : '—'}
+                            </td>
+                          )}
+                          {brandMoney && (
+                            <td className="text-end">{r.margin_percent != null ? `${r.margin_percent}%` : '—'}</td>
+                          )}
+                          {brandCosts && (
+                            <td className="text-end money">
+                              {r.stock_value != null ? fmtMoney(r.stock_value) : '—'}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                    {brands.totals && (
+                      <tfoot>
+                        <tr className="border-top">
+                          <td className="fw-semibold">Totals</td>
+                          <td className="text-end fw-semibold">{brands.totals.products}</td>
+                          <td />
+                          <td />
+                          <td className="text-end fw-semibold">{brands.totals.units_on_hand}</td>
+                          <td className="text-end fw-semibold">{brands.totals.units_sold}</td>
+                          {brandMoney && (
+                            <td className="text-end money fw-bold">{fmtMoney(brands.totals.revenue)}</td>
+                          )}
+                          {brandMoney && <td className="text-end fw-semibold">100%</td>}
+                          {brandMoney && (
+                            <td className="text-end money fw-bold">{fmtMoney(brands.totals.gross_profit)}</td>
+                          )}
+                          {brandMoney && (
+                            <td className="text-end fw-semibold">{brands.totals.margin_percent}%</td>
+                          )}
+                          {brandCosts && (
+                            <td className="text-end money fw-semibold">{fmtMoney(brands.totals.stock_value)}</td>
+                          )}
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
               </div>
             </div>
           )}

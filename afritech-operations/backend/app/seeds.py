@@ -441,11 +441,18 @@ SHOP_CATEGORY_SEEDS = [
     ('Audio', 'AUD', 'Headphones, earbuds and speakers'),
     ('Accessories', 'ACC', 'Chargers, cables, keyboards and mice'),
     ('Power', 'PWR', 'Power banks, adapters and backup power'),
+    ('Networking', 'NET', 'Routers, mesh systems and modems'),
 ]
 
+# Every brand here must carry at least two products: the brand analysis report
+# is only useful when the rows it compares actually differ from one another.
 SHOP_BRAND_SEEDS = [
     ('Tecno', 'TEC'), ('Samsung', 'SAM'), ('HP', 'HPI'), ('Lenovo', 'LEN'),
-    ('Anker', 'ANK'), ('Logitech', 'LOG'),
+    ('Anker', 'ANK'), ('Logitech', 'LOG'), ('Apple', 'APL'), ('Xiaomi', 'XIA'),
+    ('Dell', 'DEL'), ('Asus', 'ASU'), ('Sony', 'SNY'), ('JBL', 'JBL'),
+    ('Huawei', 'HUA'), ('Bosch', 'BOS'), ('Google', 'GOO'), ('Infinix', 'INF'),
+    ('itel', 'ITL'), ('Oppo', 'OPP'), ('Vivo', 'VVO'), ('Realme', 'RML'),
+    ('Motorola', 'MOT'), ('Nokia', 'NOK'), ('OnePlus', 'ONP'),
 ]
 
 SHOP_SUPPLIER_SEEDS = [
@@ -457,57 +464,353 @@ SHOP_SUPPLIER_SEEDS = [
      '+256772000111', 'export@nileimports.ug', 'Prepaid'),
 ]
 
+
+def ean13(core12):
+    """Retail barcode from its 12-digit core.
+
+    The catalogue used to ship codes whose check digit was simply wrong, so
+    every one of them detected as ``UNKNOWN`` and stored as an internal shop
+    code — a scanner would never read them as GTINs.
+    """
+    digits = [int(ch) for ch in core12]
+    total = sum(d * (3 if i % 2 else 1) for i, d in enumerate(digits))
+    return core12 + str((10 - total % 10) % 10)
+
+
+def _product_barcode(spec):
+    return ean13(spec['barcode_core'])
+
+
+def _variant_barcode(spec):
+    """Separate retail range for the standard variant, so product and variant
+    never share a code (both columns are unique)."""
+    return ean13('60013900' + spec['barcode_core'][-4:])
+
+
 SHOP_PRODUCT_SEEDS = [
-    dict(sku='PHN-SPARK-20', barcode='6001300000011', name='Tecno Spark 20',
+    # ── Tecno ────────────────────────────────────────────────────────────────
+    dict(sku='PHN-SPARK-20', barcode_core='600130000001', name='Tecno Spark 20',
          category='PHN', brand='TEC', supplier='KEW', cost=120000, price=185000,
          min_price=155000, reorder=6, opening=18, serialized=True, warranty=12,
          variant='8/256GB', attributes={'Colour': 'Black', 'Storage': '256GB'},
          description='6.6" HD display, 8GB RAM, 50MP camera'),
-    dict(sku='PHN-A15-128', barcode='6001300000028', name='Samsung Galaxy A15',
+    dict(sku='PHN-CAMON-30', barcode_core='600130000011', name='Tecno Camon 30',
+         category='PHN', brand='TEC', supplier='KEW', cost=260000, price=385000,
+         min_price=340000, reorder=4, opening=10, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'White', 'Storage': '256GB'},
+         description='6.78" AMOLED, 50MP selfie, 7000mAh battery'),
+    # ── Samsung ──────────────────────────────────────────────────────────────
+    dict(sku='PHN-A15-128', barcode_core='600130000002', name='Samsung Galaxy A15',
          category='PHN', brand='SAM', supplier='RTD', cost=165000, price=240000,
          min_price=205000, reorder=4, opening=12, serialized=True, warranty=12,
          variant='4/128GB', attributes={'Colour': 'Blue', 'Storage': '128GB'},
          description='6.5" Super AMOLED, 5000mAh battery'),
-    dict(sku='PHN-TAB-A9', barcode='6001300000035', name='Samsung Galaxy Tab A9',
+    dict(sku='PHN-TAB-A9', barcode_core='600130000003', name='Samsung Galaxy Tab A9',
          category='PHN', brand='SAM', supplier='RTD', cost=210000, price=295000,
          min_price=255000, reorder=3, opening=9, serialized=True, warranty=12,
          variant='4/64GB WiFi', attributes={'Colour': 'Graphite', 'Storage': '64GB'},
          description='8.7" tablet, 64GB storage'),
-    dict(sku='CMP-HP-250G9', barcode='6001300000042', name='HP 250 G9',
+    dict(sku='PHN-S24-256', barcode_core='600130000012', name='Samsung Galaxy S24',
+         category='PHN', brand='SAM', supplier='RTD', cost=850000, price=1150000,
+         min_price=1050000, reorder=2, opening=5, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Onyx Black', 'Storage': '256GB'},
+         description='6.2" Dynamic AMOLED 2X, 50MP triple camera'),
+    dict(sku='AUD-BUDS-FE', barcode_core='600130000013', name='Samsung Galaxy Buds FE',
+         category='AUD', brand='SAM', supplier='RTD', cost=55000, price=85000,
+         min_price=74000, reorder=5, opening=15, serialized=False, warranty=12,
+         variant='Graphite', attributes={'Colour': 'Graphite'},
+         description='Active noise cancelling earbuds with wing tips'),
+    # ── HP ───────────────────────────────────────────────────────────────────
+    dict(sku='CMP-HP-250G9', barcode_core='600130000004', name='HP 250 G9',
          category='CMP', brand='HPI', supplier='KEW', cost=480000, price=690000,
          min_price=620000, reorder=2, opening=6, serialized=True, warranty=12,
          variant='i5/8GB/512GB', attributes={'Colour': 'Silver', 'Storage': '512GB'},
          description='15.6" business laptop, Intel Core i5'),
-    dict(sku='CMP-IP3-15', barcode='6001300000059', name='Lenovo IdeaPad 3',
+    dict(sku='CMP-PAV-15', barcode_core='600130000014', name='HP Pavilion 15',
+         category='CMP', brand='HPI', supplier='KEW', cost=620000, price=890000,
+         min_price=800000, reorder=2, opening=4, serialized=True, warranty=12,
+         variant='i5/16GB/512GB', attributes={'Colour': 'Natural Silver', 'Storage': '512GB'},
+         description='15.6" full HD laptop with backlit keyboard'),
+    dict(sku='ACC-MSE-M150', barcode_core='600130000015', name='HP USB Mouse M150',
+         category='ACC', brand='HPI', supplier='KEW', cost=6500, price=12000,
+         min_price=10000, reorder=15, opening=30, serialized=False, warranty=12,
+         variant='Wired Black', attributes={'Colour': 'Black'},
+         description='Wired optical mouse, 1000 DPI'),
+    # ── Lenovo ───────────────────────────────────────────────────────────────
+    dict(sku='CMP-IP3-15', barcode_core='600130000005', name='Lenovo IdeaPad 3',
          category='CMP', brand='LEN', supplier='RTD', cost=420000, price=610000,
          min_price=545000, reorder=2, opening=5, serialized=True, warranty=12,
          variant='Ryzen5/8GB/512GB', attributes={'Colour': 'Grey', 'Storage': '512GB'},
          description='15.6" laptop, AMD Ryzen 5'),
-    dict(sku='AUD-SND-E3', barcode='6001300000066', name='Anker Soundcore Earbuds',
+    dict(sku='CMP-TP-E14', barcode_core='600130000016', name='Lenovo ThinkPad E14',
+         category='CMP', brand='LEN', supplier='RTD', cost=780000, price=1090000,
+         min_price=990000, reorder=2, opening=4, serialized=True, warranty=12,
+         variant='i5/16GB/512GB', attributes={'Colour': 'Black', 'Storage': '512GB'},
+         description='14" business laptop, MIL-STD tested'),
+    dict(sku='ACC-LNV-65W', barcode_core='600130000017', name='Lenovo 65W USB-C Adapter',
+         category='ACC', brand='LEN', supplier='RTD', cost=22000, price=38000,
+         min_price=33000, reorder=8, opening=20, serialized=False, warranty=12,
+         variant='Slim Tip', attributes={'Colour': 'Black'},
+         description='65W USB-C laptop charger'),
+    # ── Anker ────────────────────────────────────────────────────────────────
+    dict(sku='AUD-SND-E3', barcode_core='600130000006', name='Anker Soundcore Earbuds',
          category='AUD', brand='ANK', supplier='NIL', cost=42000, price=68000,
          min_price=58000, reorder=6, opening=24, serialized=False, warranty=12,
          variant='Black', attributes={'Colour': 'Black'},
          description='Active noise cancelling earbuds'),
-    dict(sku='ACC-CHG-65W', barcode='6001300000073', name='Anker 65W USB-C Charger',
+    dict(sku='ACC-CHG-65W', barcode_core='600130000007', name='Anker 65W USB-C Charger',
          category='ACC', brand='ANK', supplier='NIL', cost=18000, price=32000,
          min_price=27000, reorder=10, opening=40, serialized=False, warranty=6,
          variant='GaN White', attributes={'Colour': 'White'},
          description='Compact GaN charger for laptops and phones'),
-    dict(sku='ACC-CBL-USBC', barcode='6001300000080', name='USB-C to USB-C Cable 1.5m',
+    dict(sku='ACC-CBL-USBC', barcode_core='600130000008', name='USB-C to USB-C Cable 1.5m',
          category='ACC', brand='ANK', supplier='NIL', cost=3500, price=7000,
          min_price=5500, reorder=20, opening=60, serialized=False, warranty=0,
          variant='1.5m Braided', attributes={'Colour': 'Black'},
          description='100W braided charging cable'),
-    dict(sku='ACC-KBD-MK270', barcode='6001300000097', name='Logitech MK270 Combo',
-         category='ACC', brand='LOG', supplier='KEW', cost=26000, price=45000,
-         min_price=39000, reorder=5, opening=15, serialized=False, warranty=12,
-         variant='Wireless Black', attributes={'Colour': 'Black'},
-         description='Wireless keyboard and mouse set'),
-    dict(sku='PWR-PB-20K', barcode='6001300000103', name='Anker PowerBank 20000mAh',
+    dict(sku='PWR-PB-20K', barcode_core='600130000010', name='Anker PowerBank 20000mAh',
          category='PWR', brand='ANK', supplier='NIL', cost=22000, price=38000,
          min_price=33000, reorder=8, opening=30, serialized=False, warranty=12,
          variant='20000mAh', attributes={'Colour': 'Black'},
          description='20000mAh power bank with 30W fast charge'),
+    # ── Logitech ─────────────────────────────────────────────────────────────
+    dict(sku='ACC-KBD-MK270', barcode_core='600130000009', name='Logitech MK270 Combo',
+         category='ACC', brand='LOG', supplier='KEW', cost=26000, price=45000,
+         min_price=39000, reorder=5, opening=15, serialized=False, warranty=12,
+         variant='Wireless Black', attributes={'Colour': 'Black'},
+         description='Wireless keyboard and mouse set'),
+    dict(sku='ACC-MSE-M185', barcode_core='600130000018', name='Logitech M185 Wireless Mouse',
+         category='ACC', brand='LOG', supplier='KEW', cost=9000, price=16000,
+         min_price=13500, reorder=12, opening=25, serialized=False, warranty=24,
+         variant='Grey', attributes={'Colour': 'Grey'},
+         description='2.4GHz wireless mouse, 12-month battery'),
+    dict(sku='AUD-HDP-H390', barcode_core='600130000019', name='Logitech H390 Headset',
+         category='AUD', brand='LOG', supplier='KEW', cost=15000, price=26000,
+         min_price=22500, reorder=6, opening=14, serialized=False, warranty=24,
+         variant='USB Black', attributes={'Colour': 'Black', 'Connectivity': 'USB-A'},
+         description='USB stereo headset with noise-cancelling mic'),
+    # ── Apple ────────────────────────────────────────────────────────────────
+    dict(sku='PHN-IP15-128', barcode_core='600130000020', name='Apple iPhone 15',
+         category='PHN', brand='APL', supplier='RTD', cost=950000, price=1290000,
+         min_price=1190000, reorder=2, opening=6, serialized=True, warranty=12,
+         variant='128GB Black', attributes={'Colour': 'Black', 'Storage': '128GB'},
+         description='6.1" Super Retina XDR, 48MP camera'),
+    dict(sku='PHN-IPD-10', barcode_core='600130000021', name='Apple iPad 10th Gen',
+         category='PHN', brand='APL', supplier='RTD', cost=520000, price=745000,
+         min_price=680000, reorder=2, opening=5, serialized=True, warranty=12,
+         variant='64GB WiFi', attributes={'Colour': 'Silver', 'Storage': '64GB'},
+         description='10.9" tablet with A14 Bionic chip'),
+    dict(sku='AUD-APP-2', barcode_core='600130000022', name='Apple AirPods (2nd gen)',
+         category='AUD', brand='APL', supplier='RTD', cost=78000, price=118000,
+         min_price=105000, reorder=5, opening=12, serialized=False, warranty=12,
+         variant='White', attributes={'Colour': 'White'},
+         description='Wired-charge case earbuds with H1 chip'),
+    dict(sku='ACC-APL-20W', barcode_core='600130000023', name='Apple 20W USB-C Charger',
+         category='ACC', brand='APL', supplier='RTD', cost=12000, price=22000,
+         min_price=19000, reorder=10, opening=20, serialized=False, warranty=6,
+         variant='USB-C', attributes={'Colour': 'White'},
+         description='20W USB-C power adapter'),
+    # ── Xiaomi ───────────────────────────────────────────────────────────────
+    dict(sku='PHN-RN13-256', barcode_core='600130000024', name='Xiaomi Redmi Note 13',
+         category='PHN', brand='XIA', supplier='KEW', cost=175000, price=255000,
+         min_price=225000, reorder=4, opening=12, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Ice Blue', 'Storage': '256GB'},
+         description='6.67" AMOLED, 108MP camera'),
+    dict(sku='ACC-XIA-33W', barcode_core='600130000025', name='Xiaomi 33W Charger',
+         category='ACC', brand='XIA', supplier='KEW', cost=9000, price=17000,
+         min_price=14500, reorder=12, opening=25, serialized=False, warranty=6,
+         variant='USB-C White', attributes={'Colour': 'White'},
+         description='33W fast charger with USB-C port'),
+    dict(sku='ACC-BAND-8', barcode_core='600130000026', name='Xiaomi Smart Band 8',
+         category='ACC', brand='XIA', supplier='KEW', cost=28000, price=48000,
+         min_price=42000, reorder=5, opening=14, serialized=False, warranty=12,
+         variant='Black', attributes={'Colour': 'Black'},
+         description='AMOLED fitness band with 16-day battery'),
+    # ── Dell ─────────────────────────────────────────────────────────────────
+    dict(sku='CMP-INS-15', barcode_core='600130000027', name='Dell Inspiron 15',
+         category='CMP', brand='DEL', supplier='KEW', cost=560000, price=820000,
+         min_price=740000, reorder=2, opening=5, serialized=True, warranty=12,
+         variant='i5/8GB/512GB', attributes={'Colour': 'Platinum Silver', 'Storage': '512GB'},
+         description='15.6" full HD laptop with numeric keypad'),
+    dict(sku='CMP-LAT-5450', barcode_core='600130000028', name='Dell Latitude 5450',
+         category='CMP', brand='DEL', supplier='KEW', cost=980000, price=1350000,
+         min_price=1250000, reorder=1, opening=3, serialized=True, warranty=12,
+         variant='i7/16GB/512GB', attributes={'Colour': 'Graphite', 'Storage': '512GB'},
+         description='14" enterprise laptop, Intel Core Ultra 7'),
+    # ── Asus ─────────────────────────────────────────────────────────────────
+    dict(sku='CMP-VIV-15', barcode_core='600130000029', name='Asus VivoBook 15',
+         category='CMP', brand='ASU', supplier='RTD', cost=540000, price=790000,
+         min_price=720000, reorder=2, opening=5, serialized=True, warranty=12,
+         variant='i5/8GB/512GB', attributes={'Colour': 'Slate Grey', 'Storage': '512GB'},
+         description='15.6" laptop with ErgoSense keyboard'),
+    dict(sku='CMP-TUF-F15', barcode_core='600130000030', name='Asus TUF Gaming F15',
+         category='CMP', brand='ASU', supplier='RTD', cost=1150000, price=1550000,
+         min_price=1450000, reorder=1, opening=3, serialized=True, warranty=12,
+         variant='i7/16GB/RTX4060', attributes={'Colour': 'Mecha Grey', 'Storage': '1TB'},
+         description='15.6" 144Hz gaming laptop, RTX 4060'),
+    dict(sku='NET-RT-AX55', barcode_core='600130000031', name='Asus RT-AX55 Router',
+         category='NET', brand='ASU', supplier='KEW', cost=48000, price=78000,
+         min_price=68000, reorder=4, opening=10, serialized=False, warranty=12,
+         variant='AX1800', attributes={'Colour': 'Black'},
+         description='Dual-band WiFi 6 router, 1800Mbps'),
+    # ── Sony ─────────────────────────────────────────────────────────────────
+    dict(sku='AUD-WH-XM4', barcode_core='600130000032', name='Sony WH-1000XM4 Headphones',
+         category='AUD', brand='SNY', supplier='RTD', cost=210000, price=320000,
+         min_price=285000, reorder=3, opening=8, serialized=True, warranty=12,
+         variant='Black', attributes={'Colour': 'Black', 'Connectivity': 'Bluetooth'},
+         description='Over-ear noise cancelling headphones'),
+    dict(sku='AUD-SRS-XB100', barcode_core='600130000033', name='Sony SRS-XB100 Speaker',
+         category='AUD', brand='SNY', supplier='RTD', cost=38000, price=62000,
+         min_price=54000, reorder=5, opening=12, serialized=False, warranty=12,
+         variant='Blue', attributes={'Colour': 'Blue'},
+         description='Portable Bluetooth speaker, IP67 waterproof'),
+    dict(sku='ACC-DS-CTRL', barcode_core='600130000034', name='Sony DualSense Controller',
+         category='ACC', brand='SNY', supplier='RTD', cost=55000, price=88000,
+         min_price=78000, reorder=4, opening=10, serialized=False, warranty=12,
+         variant='Midnight Black', attributes={'Colour': 'Black'},
+         description='Wireless controller with haptic feedback'),
+    # ── JBL ──────────────────────────────────────────────────────────────────
+    dict(sku='AUD-JBL-FL6', barcode_core='600130000035', name='JBL Flip 6 Speaker',
+         category='AUD', brand='JBL', supplier='NIL', cost=68000, price=105000,
+         min_price=92000, reorder=4, opening=10, serialized=False, warranty=12,
+         variant='Black', attributes={'Colour': 'Black'},
+         description='Portable party speaker, IP67, 12 hours playtime'),
+    dict(sku='AUD-JBL-T520', barcode_core='600130000036', name='JBL Tune 520BT Headphones',
+         category='AUD', brand='JBL', supplier='NIL', cost=27000, price=46000,
+         min_price=40000, reorder=6, opening=14, serialized=False, warranty=12,
+         variant='Blue', attributes={'Colour': 'Blue', 'Connectivity': 'Bluetooth'},
+         description='Wireless on-ear headphones, 57 hours playtime'),
+    # ── Huawei ───────────────────────────────────────────────────────────────
+    dict(sku='PHN-NOVA-12I', barcode_core='600130000037', name='Huawei nova 12i',
+         category='PHN', brand='HUA', supplier='KEW', cost=195000, price=285000,
+         min_price=250000, reorder=4, opening=10, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Starry Black', 'Storage': '256GB'},
+         description='6.7" display, 108MP camera, 5000mAh battery'),
+    dict(sku='AUD-FREE-SE2', barcode_core='600130000038', name='Huawei FreeBuds SE 2',
+         category='AUD', brand='HUA', supplier='KEW', cost=18000, price=32000,
+         min_price=28000, reorder=6, opening=16, serialized=False, warranty=12,
+         variant='White', attributes={'Colour': 'White'},
+         description='Lightweight earbuds with 40-hour case'),
+    dict(sku='PHN-MATE-SE', barcode_core='600130000039', name='Huawei MatePad SE',
+         category='PHN', brand='HUA', supplier='KEW', cost=180000, price=265000,
+         min_price=235000, reorder=3, opening=8, serialized=True, warranty=12,
+         variant='4/64GB WiFi', attributes={'Colour': 'Grey', 'Storage': '64GB'},
+         description='10.4" tablet with Harman Kardon speakers'),
+    # ── Bosch ────────────────────────────────────────────────────────────────
+    dict(sku='PWR-BOS-18V', barcode_core='600130000040', name='Bosch 18V 4.0Ah Battery Pack',
+         category='PWR', brand='BOS', supplier='NIL', cost=45000, price=75000,
+         min_price=66000, reorder=4, opening=10, serialized=False, warranty=6,
+         variant='4.0Ah', attributes={'Colour': 'Blue'},
+         description='Professional 18V lithium-ion battery pack'),
+    dict(sku='PWR-BOS-CHG', barcode_core='600130000041', name='Bosch 18V Fast Charger',
+         category='PWR', brand='BOS', supplier='NIL', cost=38000, price=64000,
+         min_price=56000, reorder=3, opening=8, serialized=False, warranty=12,
+         variant='Single Bay', attributes={'Colour': 'Blue'},
+         description='Single-bay fast charger for 18V batteries'),
+    # ── Google ───────────────────────────────────────────────────────────────
+    dict(sku='PHN-PIX-8A', barcode_core='600130000042', name='Google Pixel 8a',
+         category='PHN', brand='GOO', supplier='RTD', cost=520000, price=745000,
+         min_price=680000, reorder=3, opening=6, serialized=True, warranty=12,
+         variant='8/128GB', attributes={'Colour': 'Obsidian', 'Storage': '128GB'},
+         description='6.1" Actua display, Tensor G3, 7 years of OS updates'),
+    dict(sku='PHN-PIX-8', barcode_core='600130000043', name='Google Pixel 8',
+         category='PHN', brand='GOO', supplier='RTD', cost=850000, price=1180000,
+         min_price=1080000, reorder=2, opening=4, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Hazel', 'Storage': '256GB'},
+         description='6.2" Actua display, 50MP camera, Magic Eraser'),
+    dict(sku='AUD-PIX-BUDS', barcode_core='600130000044', name='Google Pixel Buds A-Series',
+         category='AUD', brand='GOO', supplier='RTD', cost=65000, price=98000,
+         min_price=88000, reorder=5, opening=10, serialized=False, warranty=12,
+         variant='Regular Fit', attributes={'Colour': 'Charcoal'},
+         description='Wireless earbuds with Adaptive Sound and 5-hour battery'),
+    # ── Infinix ──────────────────────────────────────────────────────────────
+    dict(sku='PHN-INF-H40I', barcode_core='600130000045', name='Infinix Hot 40i',
+         category='PHN', brand='INF', supplier='KEW', cost=95000, price=145000,
+         min_price=128000, reorder=5, opening=14, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Starlit Black', 'Storage': '256GB'},
+         description='6.6" 90Hz display, 5000mAh battery, 33W fast charge'),
+    dict(sku='PHN-INF-N40', barcode_core='600130000046', name='Infinix Note 40',
+         category='PHN', brand='INF', supplier='KEW', cost=210000, price=299000,
+         min_price=265000, reorder=4, opening=9, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Obsidian Black', 'Storage': '256GB'},
+         description='6.78" AMOLED, 108MP camera, 45W All-Round FastCharge'),
+    # ── itel ─────────────────────────────────────────────────────────────────
+    dict(sku='PHN-ITL-A70', barcode_core='600130000047', name='itel A70',
+         category='PHN', brand='ITL', supplier='KEW', cost=70000, price=105000,
+         min_price=92000, reorder=6, opening=16, serialized=True, warranty=12,
+         variant='4/128GB', attributes={'Colour': 'Azure Blue', 'Storage': '128GB'},
+         description='6.6" display, 5000mAh battery, Android Go edition'),
+    dict(sku='PHN-ITL-S24', barcode_core='600130000048', name='itel S24',
+         category='PHN', brand='ITL', supplier='KEW', cost=115000, price=165000,
+         min_price=145000, reorder=5, opening=12, serialized=True, warranty=12,
+         variant='8/128GB', attributes={'Colour': 'Sunny Oasis', 'Storage': '128GB'},
+         description='6.6" 90Hz display, 108MP camera, 5000mAh battery'),
+    # ── Oppo ─────────────────────────────────────────────────────────────────
+    dict(sku='PHN-OPP-A58', barcode_core='600130000049', name='Oppo A58',
+         category='PHN', brand='OPP', supplier='RTD', cost=175000, price=249000,
+         min_price=220000, reorder=4, opening=10, serialized=True, warranty=12,
+         variant='8/128GB', attributes={'Colour': 'Glowing Black', 'Storage': '128GB'},
+         description='6.72" Sunlight Display, 50MP camera, 5000mAh battery'),
+    dict(sku='PHN-OPP-R11F', barcode_core='600130000050', name='Oppo Reno 11F',
+         category='PHN', brand='OPP', supplier='RTD', cost=320000, price=445000,
+         min_price=400000, reorder=3, opening=6, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Ocean Green', 'Storage': '256GB'},
+         description='6.7" AMOLED, 64MP telephoto camera, 67W SuperVOOC'),
+    # ── Vivo ─────────────────────────────────────────────────────────────────
+    dict(sku='PHN-VIV-Y27', barcode_core='600130000051', name='Vivo Y27',
+         category='PHN', brand='VVO', supplier='KEW', cost=150000, price=215000,
+         min_price=190000, reorder=5, opening=11, serialized=True, warranty=12,
+         variant='6/128GB', attributes={'Colour': 'Garden Green', 'Storage': '128GB'},
+         description='6.64" display, 50MP camera, 5000mAh battery'),
+    dict(sku='PHN-VIV-V30', barcode_core='600130000052', name='Vivo V30',
+         category='PHN', brand='VVO', supplier='KEW', cost=340000, price=470000,
+         min_price=425000, reorder=3, opening=5, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Peacock Green', 'Storage': '256GB'},
+         description='6.78" AMOLED, 50MP selfie with Aura Light, 80W charge'),
+    # ── Realme ───────────────────────────────────────────────────────────────
+    dict(sku='PHN-RML-C67', barcode_core='600130000053', name='Realme C67',
+         category='PHN', brand='RML', supplier='RTD', cost=145000, price=205000,
+         min_price=182000, reorder=5, opening=12, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Sunny Oasis', 'Storage': '256GB'},
+         description='6.72" 90Hz display, 108MP camera, 5000mAh battery'),
+    dict(sku='PHN-RML-12P', barcode_core='600130000054', name='Realme 12 Pro+',
+         category='PHN', brand='RML', supplier='RTD', cost=480000, price=655000,
+         min_price=595000, reorder=2, opening=4, serialized=True, warranty=12,
+         variant='12/512GB', attributes={'Colour': 'Beige', 'Storage': '512GB'},
+         description='6.7" AMOLED, 50MP Sony IMX890 periscope, 67W charge'),
+    # ── Motorola ─────────────────────────────────────────────────────────────
+    dict(sku='PHN-MOT-G04S', barcode_core='600130000055', name='Motorola Moto G04s',
+         category='PHN', brand='MOT', supplier='NIL', cost=90000, price=135000,
+         min_price=120000, reorder=5, opening=13, serialized=True, warranty=12,
+         variant='4/128GB', attributes={'Colour': 'Midnight Blue', 'Storage': '128GB'},
+         description='6.6" 90Hz display, 50MP camera, 5000mAh battery'),
+    dict(sku='PHN-MOT-E50F', barcode_core='600130000056', name='Motorola Edge 50 Fusion',
+         category='PHN', brand='MOT', supplier='NIL', cost=360000, price=499000,
+         min_price=450000, reorder=3, opening=5, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Marshmallow Blue', 'Storage': '256GB'},
+         description='6.7" pOLED 144Hz, 50MP OIS camera, 68W TurboPower'),
+    # ── Nokia ────────────────────────────────────────────────────────────────
+    dict(sku='PHN-NOK-105', barcode_core='600130000057', name='Nokia 105',
+         category='PHN', brand='NOK', supplier='NIL', cost=18000, price=32000,
+         min_price=28000, reorder=10, opening=20, serialized=False, warranty=12,
+         variant='Single SIM', attributes={'Colour': 'Black'},
+         description='Feature phone, 1.8" display, wireless FM radio, USB-C'),
+    dict(sku='PHN-NOK-G22', barcode_core='600130000058', name='Nokia G22',
+         category='PHN', brand='NOK', supplier='NIL', cost=135000, price=195000,
+         min_price=172000, reorder=4, opening=9, serialized=True, warranty=12,
+         variant='4/128GB', attributes={'Colour': 'Lava Blue', 'Storage': '128GB'},
+         description='6.52" display, repairable design, 50MP camera'),
+    # ── OnePlus ──────────────────────────────────────────────────────────────
+    dict(sku='PHN-ONP-NCE4', barcode_core='600130000059', name='OnePlus Nord CE4 Lite',
+         category='PHN', brand='ONP', supplier='RTD', cost=295000, price=415000,
+         min_price=375000, reorder=3, opening=6, serialized=True, warranty=12,
+         variant='8/256GB', attributes={'Colour': 'Super Silver', 'Storage': '256GB'},
+         description='6.67" AMOLED 120Hz, 5500mAh battery, 80W SuperVOOC'),
+    dict(sku='PHN-ONP-12R', barcode_core='600130000060', name='OnePlus 12R',
+         category='PHN', brand='ONP', supplier='RTD', cost=520000, price=715000,
+         min_price=650000, reorder=2, opening=4, serialized=True, warranty=12,
+         variant='12/256GB', attributes={'Colour': 'Iron Gray', 'Storage': '256GB'},
+         description='6.78" ProXDR AMOLED, Snapdragon 8 Gen 2, 100W SUPERVOOC'),
 ]
 
 SHOP_CUSTOMER_SEEDS = [
@@ -535,87 +838,153 @@ def _seed_line_totals(quantity, unit_price, discount_percent, tax_rate):
     return base, discount, tax, round(net + tax, 2)
 
 
-def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
-    """Catalogue, opening stock, customers, promotion, sales and a return."""
-    from .models import (
-        ShopProductCategory, ShopBrand, ShopAttribute,
-        ShopSupplier, ShopProduct, ShopProductVariant, ShopCustomer,
-        ShopPromotion, ShopSerializedItem, ShopSale, ShopSaleItem, ShopPayment,
-        ShopWarrantyRegistration, ShopReturn, ShopReturnItem,
-    )
-    from .services.shop_inventory import post_movement
-    from .services.shop_series import next_number
+def seed_shop_catalogue(created_by=None):
+    """Idempotent catalogue seed: categories, brands, attributes, suppliers,
+    products and their standard variant.
 
-    print('[dev-seed] Seeding electronics shop catalogue...')
-    today = date.today()
+    Every row is keyed by its unique code/sku and rows that already exist are
+    left exactly as they are — re-running this against a live shop only fills
+    the gaps, so it is safe to point at production.
+
+    Returns the product list as ``(product, variant, spec)`` triples in seed
+    order.
+    """
+    from .models import (
+        ShopProductCategory, ShopBrand, ShopAttribute, ShopSupplier,
+        ShopProduct, ShopProductVariant,
+    )
+
+    print('[shop-seed] Seeding electronics shop catalogue...')
+    created = 0
+    created_by_id = created_by.id if created_by is not None else None
 
     categories = {}
     for name, code, description in SHOP_CATEGORY_SEEDS:
-        row = ShopProductCategory(name=name, code=code, description=description)
-        db.session.add(row)
+        row = ShopProductCategory.query.filter_by(code=code).first()
+        if row is None:
+            row = ShopProductCategory(name=name, code=code, description=description)
+            db.session.add(row)
+            created += 1
         categories[code] = row
     db.session.flush()
 
     brands = {}
     for name, code in SHOP_BRAND_SEEDS:
-        row = ShopBrand(name=name, code=code)
-        db.session.add(row)
+        row = ShopBrand.query.filter_by(code=code).first()
+        if row is None:
+            row = ShopBrand(name=name, code=code)
+            db.session.add(row)
+            created += 1
         brands[code] = row
 
     for name, code in (('Colour', 'COL'), ('Storage', 'STO'),
                        ('Connectivity', 'CON')):
         if not ShopAttribute.query.filter_by(code=code).first():
             db.session.add(ShopAttribute(name=name, code=code))
+            created += 1
     db.session.flush()
 
     suppliers = {}
     for company, code, contact, phone, email, terms in SHOP_SUPPLIER_SEEDS:
-        row = ShopSupplier(code=code, company_name=company,
-                           contact_person=contact, phone=phone, email=email,
-                           payment_terms=terms)
-        db.session.add(row)
+        row = ShopSupplier.query.filter_by(code=code).first()
+        if row is None:
+            row = ShopSupplier(code=code, company_name=company,
+                               contact_person=contact, phone=phone, email=email,
+                               payment_terms=terms)
+            db.session.add(row)
+            created += 1
         suppliers[code] = row
     db.session.flush()
 
     products = []
     for spec in SHOP_PRODUCT_SEEDS:
-        product = ShopProduct(
-            sku=spec['sku'], barcode=spec['barcode'], name=spec['name'],
-            description=spec['description'],
-            category_id=categories[spec['category']].id,
-            brand_id=brands[spec['brand']].id,
-            supplier_id=suppliers[spec['supplier']].id,
-            purchase_cost=spec['cost'], selling_price=spec['price'],
-            min_selling_price=spec['min_price'],
-            reorder_level=spec['reorder'],
-            reorder_quantity=spec['reorder'] * 2,
-            is_serialized=spec['serialized'],
-            warranty_months=spec['warranty'],
-            warranty_provider='AfriTech Bridge' if spec['warranty'] else None,
-            warranty_terms=(f'{spec["warranty"]}-month limited warranty covering '
-                            f'manufacturing defects' if spec['warranty'] else None),
-            created_by=admin_user.id,
-        )
-        db.session.add(product)
-        db.session.flush()
-        variant = ShopProductVariant(
-            product_id=product.id, sku=f"{spec['sku']}-STD",
-            barcode=f"{spec['barcode']}0", name=spec['variant'],
-            attributes=spec.get('attributes') or {},
-            purchase_cost=spec['cost'], selling_price=spec['price'],
-        )
-        db.session.add(variant)
+        product = ShopProduct.query.filter_by(sku=spec['sku']).first()
+        if product is None:
+            product = ShopProduct(
+                sku=spec['sku'], barcode=_product_barcode(spec), name=spec['name'],
+                description=spec['description'],
+                category_id=categories[spec['category']].id,
+                brand_id=brands[spec['brand']].id,
+                supplier_id=suppliers[spec['supplier']].id,
+                purchase_cost=spec['cost'], selling_price=spec['price'],
+                min_selling_price=spec['min_price'],
+                reorder_level=spec['reorder'],
+                reorder_quantity=spec['reorder'] * 2,
+                is_serialized=spec['serialized'],
+                warranty_months=spec['warranty'],
+                warranty_provider='AfriTech Bridge' if spec['warranty'] else None,
+                warranty_terms=(f'{spec["warranty"]}-month limited warranty covering '
+                                f'manufacturing defects' if spec['warranty'] else None),
+                created_by=created_by_id,
+            )
+            db.session.add(product)
+            db.session.flush()
+            created += 1
+
+        variant = next((v for v in product.variants
+                        if v.sku == f"{spec['sku']}-STD"), None)
+        if variant is None and not product.variants:
+            variant = ShopProductVariant(
+                product_id=product.id, sku=f"{spec['sku']}-STD",
+                barcode=_variant_barcode(spec), name=spec['variant'],
+                attributes=spec.get('attributes') or {},
+                purchase_cost=spec['cost'], selling_price=spec['price'],
+            )
+            db.session.add(variant)
+            db.session.flush()
+            created += 1
+        elif variant is None:
+            variant = product.variants[0]
         products.append((product, variant, spec))
     db.session.commit()
+    print(f'[shop-seed] Catalogue ready: {len(products)} products '
+          f'({created} new rows)')
+    return products
 
-    # Opening stock — booked through the ledger so balances, costing and the
-    # movement history all start from the same place the API would use.
-    print('[dev-seed] Booking shop opening stock...')
+
+def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
+    """Catalogue, opening stock, customers, promotion, sales and a return."""
+    products = seed_shop_catalogue(created_by=admin_user)
+    stock, serials = seed_shop_opening_stock(
+        products, head, kigali, musanze, admin_user=admin_user)
+    customers = seed_shop_customers(created_by=admin_user)
+    seed_shop_promotion()
+    seed_shop_demo_sales(head, kigali, musanze, admin_user, manager_user,
+                         seller_emp, products, stock, serials, customers)
+    return products
+
+
+def seed_shop_opening_stock(products, head, kigali, musanze, *, admin_user=None):
+    """Book opening stock through the ledger — once per product.
+
+    A product that already has movements keeps them: re-running the seed must
+    never double the on-hand quantity or hand out a second set of serials.
+    """
+    from .models import ShopSerializedItem, ShopStockMovement
+    from .services.shop_inventory import post_movement
+
+    print('[shop-seed] Booking shop opening stock...')
     stock = {}          # (product_id, branch_id) -> units left
     serials = {}        # (product_id, branch_id) -> [serial rows still free]
-    serial_counter = 1
+    serial_counter = (db.session.query(
+        db.func.max(ShopSerializedItem.id)).scalar() or 0) + 1
     split = ((head, 0.5), (kigali, 0.3), (musanze, 0.2))
     for product, variant, spec in products:
+        if ShopStockMovement.query.filter_by(product_id=product.id).count():
+            # Already on the books — restore the view of what is left instead
+            # of posting a second opening balance.
+            for balance in product.balances or []:
+                if int(balance.quantity or 0) <= 0:
+                    continue
+                stock[(product.id, balance.branch_id)] = int(balance.quantity)
+                free = [row for row in ShopSerializedItem.query
+                        .filter_by(product_id=product.id,
+                                   branch_id=balance.branch_id,
+                                   status='in_stock').all()]
+                if free:
+                    serials[(product.id, balance.branch_id)] = free
+            continue
+
         opening = int(spec['opening'])
         allocated = 0
         for index, (branch, share) in enumerate(split):
@@ -631,7 +1000,7 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
                           quantity=units, unit_cost=float(spec['cost']),
                           reference_type='manual',
                           note='Shop opening stock',
-                          user_id=admin_user.id)
+                          user_id=admin_user.id if admin_user else None)
             stock[(product.id, branch.id)] = units
             if spec['serialized']:
                 rows = []
@@ -642,7 +1011,6 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
                         branch_id=branch.id, status='in_stock',
                         condition='good', purchase_cost=spec['cost'],
                         selling_price=spec['price'],
-                        supplier_id=suppliers[spec['supplier']].id,
                         received_at=datetime.now(timezone.utc),
                         created_at=datetime.now(timezone.utc),
                         updated_at=datetime.now(timezone.utc),
@@ -653,22 +1021,41 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
                 db.session.flush()
                 serials[(product.id, branch.id)] = rows
     db.session.commit()
+    return stock, serials
 
-    print('[dev-seed] Seeding shop customers and promotion...')
+
+def seed_shop_customers(created_by=None):
+    """Idempotent customer directory, keyed by the seeded customer number."""
+    from .models import ShopCustomer
+
+    print('[shop-seed] Seeding shop customers...')
     customers = []
     for i, (full_name, phone, email, address, ctype, tax_number) in enumerate(
             SHOP_CUSTOMER_SEEDS, 1):
-        customer = ShopCustomer(
-            customer_number=f'CUS-{i:05d}', full_name=full_name, phone=phone,
-            email=email, address=address, customer_type=ctype,
-            tax_number=tax_number, credit_limit=300000 if ctype == 'business' else 0,
-            created_by=admin_user.id,
-        )
-        db.session.add(customer)
+        number = f'CUS-{i:05d}'
+        customer = ShopCustomer.query.filter_by(customer_number=number).first()
+        if customer is None:
+            customer = ShopCustomer(
+                customer_number=number, full_name=full_name, phone=phone,
+                email=email, address=address, customer_type=ctype,
+                tax_number=tax_number,
+                credit_limit=300000 if ctype == 'business' else 0,
+                created_by=created_by.id if created_by else None,
+            )
+            db.session.add(customer)
         customers.append(customer)
-    db.session.flush()
+    db.session.commit()
+    return customers
 
-    promotion = ShopPromotion(
+
+def seed_shop_promotion():
+    """The Back to School promotion, once."""
+    from .models import ShopPromotion
+
+    if ShopPromotion.query.filter_by(code='SCHOOL10').first():
+        return
+    today = date.today()
+    db.session.add(ShopPromotion(
         name='Back to School 10%', code='SCHOOL10', promotion_type='percentage',
         value=10, min_purchase_amount=100000, max_discount_amount=60000,
         starts_at=datetime.combine(today - timedelta(days=30),
@@ -677,9 +1064,33 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
                                  datetime.min.time(), tzinfo=timezone.utc),
         is_active=True, usage_limit=200,
         notes='10% off baskets above 100,000 RWF during the school season',
-    )
-    db.session.add(promotion)
+    ))
     db.session.commit()
+
+
+def seed_shop_demo_sales(head, kigali, musanze, admin_user, manager_user,
+                         seller_emp, products, stock, serials, customers):
+    """Two weeks of till activity plus one completed return.
+
+    The rows go through the same services the API uses, so they obey the same
+    invariants.  The demo marker on every seeded sale makes the whole block a
+    no-op on a second run — re-running the seed never books the history twice.
+    """
+    from .models import (
+        ShopSale, ShopSaleItem, ShopPayment, ShopWarrantyRegistration,
+        ShopReturn, ShopReturnItem,
+    )
+    from .services.shop_inventory import post_movement
+    from .services.shop_series import next_number
+
+    if ShopSale.query.filter(ShopSale.notes == 'Seeded demo sale').count():
+        print('[shop-seed] Demo sales already on the books — keeping history.')
+        return
+    if manager_user is None or admin_user is None:
+        print('[shop-seed] No user exists yet — skipping demo sales history.')
+        return
+
+    today = date.today()
 
     # Two weeks of till activity: dates, branches, tenders and customers are
     # mixed so the reports, warranty register and stock ledger have real depth.
@@ -823,7 +1234,8 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
             return_type='refund', status='completed', reason='Box damaged on collection',
             notes='Seeded demo return', subtotal_returned=refund,
             tax_returned=tax, refund_amount=refund, restock_fee=0,
-            requested_by=seller_emp.user_id or manager_user.id,
+            requested_by=(seller_emp.user_id if seller_emp else None)
+            or manager_user.id,
             approved_by=admin_user.id,
             approved_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc),
@@ -860,7 +1272,7 @@ def seed_shop(head, kigali, musanze, admin_user, manager_user, seller_emp):
                     if s.status in ('completed', 'partially_refunded', 'refunded'))
         customer.loyalty_points = int(spend // 1000)
     db.session.commit()
-    print(f'[dev-seed] Shop: {len(products)} products, {len(sale_rows)} sales, '
+    print(f'[shop-seed] Shop: {len(products)} products, {len(sale_rows)} sales, '
           f'{len(customers)} customers')
 
 
@@ -895,7 +1307,75 @@ def seed_payment_methods_command():
     click.echo(f'Seeded {n} payment methods')
 
 
+def _seed_shop_users():
+    """The shop seed needs a creator and a seller for its audit columns.
+
+    Every column it fills is nullable, so a brand-new install with no account
+    yet still gets its catalogue — both roles simply come back as ``None`` and
+    the demo sales (which do need a seller) are skipped.
+    """
+    admin = (User.query.filter_by(is_super_admin=True, is_active=True).first()
+             or User.query.filter_by(is_active=True).order_by(User.id).first())
+    if admin is None:
+        return None, None
+    manager = admin
+    for user in User.query.filter_by(is_active=True).order_by(User.id).all():
+        if any(role.code in ('manager', 'shop_manager') for role in user.roles):
+            manager = user
+            break
+    return admin, manager
+
+
+@click.command('seed-shop')
+@click.option('--demo-sales/--no-demo-sales', default=False,
+              help='Book two weeks of demo till activity once, so the reports '
+                   'have history to analyse.')
+@with_appcontext
+def seed_shop_command(demo_sales):
+    """Seed the electronics shop catalogue into the configured database.
+
+    Idempotent and non-destructive: every row is keyed by its unique code or
+    SKU, opening stock is only booked for a product with no movements yet and
+    demo sales carry a marker that stops them being recorded twice. Safe to
+    point at production — nothing is dropped, overwritten or renumbered.
+    """
+    from .models import ShopBrand, ShopProduct, ShopStockMovement
+
+    url = db.engine.url
+    if url.get_backend_name() == 'sqlite' and str(url.database) in ('', ':memory:'):
+        raise click.ClickException('No database configured.')
+
+    branches = seed_branches()
+    seed_payment_methods()
+    admin_user, manager_user = _seed_shop_users()
+
+    products = seed_shop_catalogue(created_by=admin_user)
+    stock, serials = seed_shop_opening_stock(
+        products, branches['HQ'], branches['KGL'], branches['MSZ'],
+        admin_user=admin_user)
+    customers = seed_shop_customers(created_by=admin_user)
+    seed_shop_promotion()
+    if demo_sales:
+        seed_shop_demo_sales(branches['HQ'], branches['KGL'], branches['MSZ'],
+                             admin_user, manager_user, None, products, stock,
+                             serials, customers)
+
+    brands = ShopBrand.query.order_by(ShopBrand.name).all()
+    click.echo('\n=== SHOP SEED COMPLETE ===')
+    click.echo(f'Database:  {url.host or url.database}')
+    click.echo(f'Brands:    {len(brands)}')
+    for brand in brands:
+        units = sum(int(b.quantity or 0) for p in brand.products
+                    for b in p.balances)
+        click.echo(f'  {brand.code:<5} {brand.name:<10} '
+                   f'{len(brand.products)} products, {units} units on hand')
+    click.echo(f'Products:  {ShopProduct.query.count()} total, '
+               f'{ShopStockMovement.query.count()} stock movements')
+    click.echo('Re-running this command is safe — it only fills the gaps.')
+
+
 def register_cli(app):
     app.cli.add_command(seed_dev_command)
     app.cli.add_command(seed_services_command)
     app.cli.add_command(seed_payment_methods_command)
+    app.cli.add_command(seed_shop_command)

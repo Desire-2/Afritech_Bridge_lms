@@ -12,7 +12,8 @@ from flask import Blueprint, request, jsonify
 
 from ...extensions import db
 from ...models import (
-    ShopSale, ShopSaleItem, ShopPayment, ShopReturn, ShopProduct,
+    ShopSale, ShopSaleItem, ShopPayment, ShopReturn, ShopReturnItem,
+    ShopProduct, ShopBrand,
     ShopInventoryBalance, ShopStockMovement, ShopPurchaseOrder, ShopSupplier,
     ShopDailyClosing, AuditLog, Setting,
 )
@@ -91,6 +92,25 @@ def _sales_query(start_dt, end_dt, include_branch=True):
 def _empty_bucket():
     return {'transactions': 0, 'items_sold': 0, 'gross': 0.0, 'discounts': 0.0,
             'taxes': 0.0, 'refunds': 0.0, 'net': 0.0}
+
+
+def _restocked_by_sale_item():
+    """Sale item id -> units handed back to the shelf by an accepted return.
+
+    A restocked unit is back in stock at its cost, so its revenue has been
+    reversed *and* its cost must come out of COGS. Charging neither would
+    overstate profit, charging only the refund would double-count the loss and
+    drag a brand's margin below zero for goods the shop still owns.
+    """
+    rows = (ShopReturnItem.query.join(ShopReturn)
+            .filter(ShopReturn.status.in_(('approved', 'received', 'completed')),
+                    ShopReturnItem.restock.is_(True))
+            .all())
+    restocked = defaultdict(int)
+    for row in rows:
+        if row.sale_item_id:
+            restocked[row.sale_item_id] += int(row.quantity or 0)
+    return restocked
 
 
 # ── dashboard ────────────────────────────────────────────────────────────────
@@ -265,7 +285,10 @@ def sales_report():
     totals = _empty_bucket()
     for bucket in buckets.values():
         for key in totals:
-            totals[key] += bucket[key]
+            # Money columns are already None for a caller without financial
+            # access; they are nulled again below, so count them as zero here
+            # instead of adding None into an int/float running total.
+            totals[key] += bucket[key] or 0
     totals = {k: (round(v, 2) if isinstance(v, float) else v)
               for k, v in totals.items()}
     if not show_money:
@@ -291,6 +314,7 @@ def profitability_report():
     buckets = defaultdict(lambda: {'units_sold': 0, 'revenue': 0.0,
                                    'cogs': 0.0, 'discounts': 0.0,
                                    'taxes': 0.0, 'refunds': 0.0})
+    restocked = _restocked_by_sale_item()
     for item in items:
         sale = item.sale
         if sale is None:
@@ -301,9 +325,11 @@ def profitability_report():
         if item.variant:
             label = f'{label} · {item.variant.name}'
         bucket = buckets[label]
-        bucket['units_sold'] += int(item.quantity or 0)
+        sold = int(item.quantity or 0)
+        bucket['units_sold'] += sold
         bucket['revenue'] += _money(item.line_total)
-        bucket['cogs'] += _money(item.unit_cost) * int(item.quantity or 0)
+        bucket['cogs'] += _money(item.unit_cost) * max(
+            0, sold - restocked.get(item.id, 0))
         bucket['discounts'] += _money(item.discount_amount)
         bucket['taxes'] += _money(item.tax_amount)
         bucket['refunds'] += (_money(item.unit_price) * item.returned_quantity
@@ -330,6 +356,161 @@ def profitability_report():
         if totals['revenue'] else 0.0
     return jsonify({'from': start.isoformat(), 'rows': rows, 'totals': totals,
                     'money': True, 'costs': can_view_shop_costs(current_user())})
+
+
+# ── brand analysis ──────────────────────────────────────────────────────────
+
+def _brand_bucket(catalogue, brand_id, unbranded):
+    """Row for ``brand_id``, creating the ``Unbranded`` catch-all on first use.
+
+    Every seeded brand is present even with no products, so an empty row is
+    visible instead of silently missing — and a product with no brand lands in
+    ``Unbranded`` rather than disappearing from the analysis.
+    """
+    if brand_id in catalogue:
+        return catalogue[brand_id]
+    if brand_id is not None:
+        return None
+    if unbranded[0] is None:
+        unbranded[0] = {'brand': 'Unbranded', 'code': None, 'is_active': True,
+                        'products': 0, 'active_products': 0, 'categories': set(),
+                        'units_on_hand': 0, 'stock_value': 0.0,
+                        'units_sold': 0, 'revenue': 0.0, 'cogs': 0.0,
+                        'refunds': 0.0}
+        catalogue[None] = unbranded[0]
+    return unbranded[0]
+
+
+@bp.get('/reports/brands')
+@require_permission('shop.reports.view')
+def brand_report():
+    """Product analysis per brand: catalogue depth, stock on hand and — for
+    callers allowed to see money — what each brand actually sells."""
+    user = current_user()
+    show_money = can_view_shop_financials(user)
+    show_cost = can_view_shop_costs(user)
+    start, err, start_dt, end_dt = _range()
+    if err:
+        return err
+
+    catalogue = {}
+    order = []
+    for brand in ShopBrand.query.order_by(ShopBrand.name).all():
+        catalogue[brand.id] = {
+            'brand': brand.name, 'code': brand.code, 'is_active': brand.is_active,
+            'products': 0, 'active_products': 0, 'categories': set(),
+            'units_on_hand': 0, 'stock_value': 0.0,
+            'units_sold': 0, 'revenue': 0.0, 'cogs': 0.0, 'refunds': 0.0,
+        }
+        order.append(brand.id)
+    unbranded = [None]
+
+    for product in ShopProduct.query.all():
+        bucket = _brand_bucket(catalogue, product.brand_id, unbranded)
+        if bucket is None:
+            continue
+        bucket['products'] += 1
+        if product.status == 'active':
+            bucket['active_products'] += 1
+        if product.category is not None:
+            bucket['categories'].add(product.category.name)
+
+    balances = ShopInventoryBalance.query.join(ShopProduct).all()
+    if scoped_branch_id() is not None:
+        balances = [b for b in balances if b.branch_id == scoped_branch_id()]
+    for balance in balances:
+        product = balance.product
+        if product is None:
+            continue
+        bucket = _brand_bucket(catalogue, product.brand_id, unbranded)
+        if bucket is None:
+            continue
+        quantity = int(balance.quantity or 0)
+        bucket['units_on_hand'] += quantity
+        if show_cost:
+            bucket['stock_value'] += quantity * float(balance.average_cost or 0)
+
+    items = (ShopSaleItem.query.join(ShopSale)
+             .filter(ShopSale.created_at >= start_dt,
+                     ShopSale.created_at < end_dt,
+                     ShopSale.status.notin_(['held', 'cancelled'])).all())
+    restocked = _restocked_by_sale_item()
+    for item in items:
+        sale = item.sale
+        if sale is None:
+            continue
+        if scoped_branch_id() is not None and sale.branch_id != scoped_branch_id():
+            continue
+        product = item.product
+        bucket = _brand_bucket(catalogue, product.brand_id if product else None,
+                               unbranded)
+        if bucket is None:
+            continue
+        sold = int(item.quantity or 0)
+        bucket['units_sold'] += sold
+        bucket['revenue'] += _money(item.line_total)
+        bucket['cogs'] += _money(item.unit_cost) * max(
+            0, sold - restocked.get(item.id, 0))
+        bucket['refunds'] += (_money(item.unit_price)
+                              * int(item.returned_quantity or 0))
+
+    if unbranded[0] is not None:
+        order.append(None)
+
+    rows = []
+    for brand_id in order:
+        bucket = catalogue[brand_id]
+        gross = bucket['revenue'] - bucket['cogs'] - bucket['refunds']
+        margin = (gross / bucket['revenue'] * 100) if bucket['revenue'] else 0.0
+        row = {
+            'brand': bucket['brand'], 'code': bucket['code'],
+            'is_active': bucket['is_active'],
+            'products': bucket['products'],
+            'active_products': bucket['active_products'],
+            'categories': sorted(bucket['categories']),
+            'category_count': len(bucket['categories']),
+            'units_on_hand': bucket['units_on_hand'],
+            'units_sold': bucket['units_sold'],
+        }
+        if show_money:
+            row.update({
+                'revenue': round(bucket['revenue'], 2),
+                'gross_profit': round(gross, 2),
+                'margin_percent': round(margin, 2),
+            })
+        if show_cost:
+            row.update({
+                'cogs': round(bucket['cogs'], 2),
+                'refunds': round(bucket['refunds'], 2),
+                'stock_value': round(bucket['stock_value'], 2),
+            })
+        rows.append(row)
+
+    totals = {'brands': len(rows),
+              'products': sum(r['products'] for r in rows),
+              'units_on_hand': sum(r['units_on_hand'] for r in rows),
+              'units_sold': sum(r['units_sold'] for r in rows)}
+    if show_money:
+        revenue = sum(r['revenue'] for r in rows)
+        gross = sum(r['gross_profit'] for r in rows)
+        totals.update({
+            'revenue': round(revenue, 2),
+            'gross_profit': round(gross, 2),
+            'margin_percent': round(gross / revenue * 100, 2) if revenue else 0.0,
+        })
+        for row in rows:
+            row['revenue_share'] = round(
+                row['revenue'] / revenue * 100, 2) if revenue else 0.0
+    if show_cost:
+        totals.update({
+            'cogs': round(sum(r['cogs'] for r in rows), 2),
+            'stock_value': round(sum(r['stock_value'] for r in rows), 2),
+        })
+
+    rows.sort(key=lambda row: (row.get('revenue') or 0.0, row['units_sold'],
+                               row['products']), reverse=True)
+    return jsonify({'from': start.isoformat(), 'rows': rows, 'totals': totals,
+                    'money': show_money, 'costs': show_cost})
 
 
 # ── stock / valuation ────────────────────────────────────────────────────────
