@@ -121,14 +121,19 @@ def generate_product_sku() -> str:
 
 
 def reserve_sku(barcode: str | None = None, user_id=None):
-    """Mint an SKU, pinned to ``barcode`` when there is one.
+    """Mint an SKU, pinned to ``barcode`` + creator when there is one.
 
     Returns ``(sku, already_reserved)``. Re-scanning the same unknown barcode
-    returns the SKU it was given the first time, which is what makes a retried
-    lookup request safe: the retry cannot spend a second number.
+    by the same person returns the SKU it was given the first time, which is
+    what makes a retried lookup request safe: the retry cannot spend a second
+    number. The pair is deliberate — barcodes may be shared by several
+    rebranded products, so *another* operator preparing a *different* product
+    for the same code has to mint their own SKU instead of inheriting this
+    form's number.
     """
     if barcode:
-        existing = ShopSkuReservation.query.filter_by(barcode=barcode).first()
+        existing = ShopSkuReservation.query.filter_by(
+            barcode=barcode, created_by=user_id).first()
         if existing is not None:
             return existing.sku, True
 
@@ -142,23 +147,33 @@ def reserve_sku(barcode: str | None = None, user_id=None):
                     created_at=datetime.now(timezone.utc)))
                 db.session.flush()
         except IntegrityError:
-            # Lost the race for this barcode: hand back the winner's SKU.
-            existing = ShopSkuReservation.query.filter_by(barcode=barcode).first()
+            # Lost the race for this (barcode, creator) pair: hand back the
+            # winner's SKU.
+            existing = ShopSkuReservation.query.filter_by(
+                barcode=barcode, created_by=user_id).first()
             if existing is not None:
                 return existing.sku, True
             raise
     return sku, False
 
 
-def consume_reservation(sku: str, barcode: str | None = None) -> int:
+def consume_reservation(sku: str, barcode: str | None = None,
+                        user_id=None) -> int:
     """Drop the reservation(s) a completed product creation has spent.
 
-    Matched on both keys so a form that swapped in a different SKU still
-    clears the barcode's hold. Returns the number of rows removed.
+    Matched on the SKU, plus the ``(barcode, creator)`` pair so a form that
+    swapped in a different SKU still clears its own barcode hold — never
+    another operator's pending hold on a shared code. A ``user_id`` of ``None``
+    means the caller does not know the creator and clears by barcode alone.
+    Returns the number of rows removed.
     """
     filters = [ShopSkuReservation.sku == sku]
     if barcode:
-        filters.append(ShopSkuReservation.barcode == barcode)
+        if user_id is None:
+            filters.append(ShopSkuReservation.barcode == barcode)
+        else:
+            filters.append(db.and_(ShopSkuReservation.barcode == barcode,
+                                   ShopSkuReservation.created_by == user_id))
     deleted = ShopSkuReservation.query.filter(
         db.or_(*filters)).delete(synchronize_session=False)
     return int(deleted or 0)

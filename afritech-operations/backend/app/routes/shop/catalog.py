@@ -28,9 +28,9 @@ from ...services.shop_sku import (
     SKU_PREFIX, ShopSkuError, consume_reservation, reserve_sku,
 )
 from ...services.barcode import (
-    ShopBarcodeError, UNKNOWN_CONTEXTS, barcode_conflict, barcode_identity,
+    ShopBarcodeError, UNKNOWN_CONTEXTS, barcode_candidates, barcode_identity,
     detect_format, normalize_barcode, record_unknown_scan, register_barcode,
-    resolve as resolve_barcode, validate_barcode,
+    resolve_all as resolve_all_barcodes, validate_barcode,
 )
 
 bp = Blueprint('shop_catalog', __name__, url_prefix='/api/shop')
@@ -311,7 +311,7 @@ def _apply_product_attributes(product, entries):
             ShopProductAttributeValue(attribute_id=attribute_id, value=value))
 
 
-def _apply_variants(product, entries):
+def _apply_variants(product, entries, allow_shared=False):
     """Reconcile the product's variants against the payload.
 
     Entries are matched by SKU: existing rows are updated, new ones are
@@ -360,7 +360,8 @@ def _apply_variants(product, entries):
         if 'purchase_cost' in entry:
             variant.purchase_cost = entry.get('purchase_cost')
         if {'barcode', 'barcode_format', 'barcode_type'} & set(entry):
-            _apply_barcode_payload(variant, entry, is_product=False)
+            _apply_barcode_payload(variant, entry, is_product=False,
+                                   allow_shared=allow_shared)
         variant.is_active = bool(entry.get('is_active', True))
         variant.sort_order = int(entry.get('sort_order') or index)
         if 'image_path' in entry:
@@ -434,13 +435,17 @@ def _stock_error(error):
     """Answer for a rejected payload, undoing partial writes first.
 
     Handles any :class:`ShopStockError` — the barcode subclass carries an
-    ``existing`` row, the plain variant/bundle errors do not.
+    ``existing`` row *and* every ``candidates`` owner of a shared code, the
+    plain variant/bundle errors do not.
     """
     db.session.rollback()
     payload = {'error': error.message, 'code': error.code}
     existing = getattr(error, 'existing', None)
     if existing:
         payload['existing'] = existing
+    candidates = getattr(error, 'candidates', None)
+    if candidates:
+        payload['candidates'] = candidates
     return jsonify(payload), error.status
 
 
@@ -449,12 +454,15 @@ def _barcode_error(error):
     return _stock_error(error)
 
 
-def _apply_barcode_payload(row, data, *, is_product):
+def _apply_barcode_payload(row, data, *, is_product, allow_shared=False):
     """Validate the barcode fields of a payload and write them onto a product
     or variant.
 
-    Raises :class:`ShopBarcodeError` — including the 409 that names the row
-    already owning the code — so callers answer with :func:`_barcode_error`.
+    Raises :class:`ShopBarcodeError` — including the 409 that names every row
+    already carrying the code — so callers answer with :func:`_barcode_error`.
+    ``allow_shared`` (or ``allow_shared_barcode`` in the payload) takes a code
+    another product already owns on purpose; a code owned *inside this same
+    product* is never shareable.
     """
     if 'barcode' in data:
         barcode = _normalize_incoming_barcode(data.get('barcode'),
@@ -466,14 +474,15 @@ def _apply_barcode_payload(row, data, *, is_product):
     if barcode:
         if fmt:
             barcode = validate_barcode(barcode, fmt)
-        conflict = barcode_conflict(
-            barcode,
-            exclude_product_id=row.id if is_product else None,
-            exclude_variant_id=None if is_product else row.id)
+        conflict = _duplicate_barcode_error(
+            barcode_candidates(
+                barcode,
+                exclude_product_id=row.id if is_product else None,
+                exclude_variant_id=None if is_product else row.id),
+            own_tree_ids={row.id if is_product else row.product_id},
+            allow_shared=allow_shared or bool(data.get('allow_shared_barcode')))
         if conflict is not None:
-            raise ShopBarcodeError(
-                'This barcode is already assigned to another product.', 409,
-                'duplicate_barcode', existing=conflict)
+            raise conflict
         if fmt is None and row.barcode == barcode:
             fmt = row.barcode_format
         fmt, btype = barcode_identity(barcode, fmt, btype)
@@ -482,6 +491,28 @@ def _apply_barcode_payload(row, data, *, is_product):
     row.barcode = barcode
     row.barcode_format = fmt
     row.barcode_type = btype
+
+
+def _duplicate_barcode_error(candidates, *, own_tree_ids=(), allow_shared=False):
+    """The 409 for a code somebody already carries, or ``None`` when free.
+
+    One printed EAN-13 can legitimately sit on several rebranded rows, so a
+    cross-product collision is only refused until the caller states
+    ``allow_shared_barcode`` — and then reports every owner in ``candidates``
+    so the form can show them. A collision *inside one product tree* (a
+    variant shadowing its parent, a product taking its variant's code) is
+    always refused: the till could not disambiguate between rows of a single
+    product, and there is nothing to choose between.
+    """
+    if not candidates:
+        return None
+    own = [c for c in candidates if c['product_id'] in own_tree_ids]
+    if not own and allow_shared:
+        return None
+    blocking = own or candidates
+    return ShopBarcodeError(
+        'This barcode is already assigned to another product.', 409,
+        'duplicate_barcode', existing=blocking[0], candidates=candidates)
 
 
 # ── SKU ───────────────────────────────────────────────────────────────────────
@@ -686,8 +717,8 @@ def _lookup_barcode(value):
         # so a till never sells stock it does not physically hold.
         branch_id = user_branch_id()
     scanned_format = detect_format(code)
-    product, variant, matched_by = resolve_barcode(code)
-    if product is None:
+    matches = resolve_all_barcodes(code)
+    if not matches:
         _record_unknown_scan(code, context, branch_id)
         return jsonify({
             'found': False,
@@ -695,9 +726,35 @@ def _lookup_barcode(value):
             'barcode_format': scanned_format,
             'message': 'No product with this barcode exists in the current inventory.',
         })
+    if len(matches) > 1:
+        # One printed code, several rebranded rows — never guess which one the
+        # operator means; hand back every owner (with stock) and let the
+        # station choose.
+        candidates = []
+        for product, variant, matched_by in matches:
+            stock = _scan_stock(product, variant, branch_id)
+            candidates.append({
+                'product': payload_for(product, stock=stock),
+                'variant': payload_for(variant) if variant is not None else None,
+                'available_stock': stock['available'],
+                'match': matched_by,
+            })
+        return jsonify({
+            'found': True,
+            'ambiguous': True,
+            'match': matches[0][2],
+            'barcode': code,
+            'barcode_format': scanned_format,
+            'branch_id': branch_id,
+            'candidates': candidates,
+            'message': (f'{len(matches)} products share this barcode — '
+                        'choose which one to use.'),
+        })
+    product, variant, matched_by = matches[0]
     stock = _scan_stock(product, variant, branch_id)
     response = {
         'found': True,
+        'ambiguous': False,
         'match': matched_by,
         'barcode': code,
         'barcode_format': scanned_format,
@@ -810,7 +867,8 @@ def assign_product_barcode(product_id):
     try:
         register_barcode(current_user(), product=product, value=data['barcode'],
                          fmt=data.get('barcode_format'),
-                         btype=data.get('barcode_type'), variant=variant)
+                         btype=data.get('barcode_type'), variant=variant,
+                         allow_shared=bool(data.get('allow_shared_barcode')))
         db.session.commit()
     except ShopBarcodeError as error:
         return _barcode_error(error)
@@ -866,13 +924,17 @@ def generate_product_sku_endpoint():
 
     Called the instant a barcode is scanned on the Add Product form so the
     operator sees the SKU before typing anything else, instead of after they
-    submit. Two properties matter:
+    submit. Properties that matter:
 
-    * **Idempotent per barcode.** A browser that times out and retries gets
-      the number it was already given rather than spending a second one.
-    * **Never mints for a code we already hold.** An existing product is
-      reported back so the form can offer View/Edit instead of creating a
-      duplicate row.
+    * **Idempotent per (barcode, operator).** A browser that times out and
+      retries gets the number it was already given rather than spending a
+      second one; a colleague preparing a *different* product for the same
+      shared code mints their own.
+    * **Never mints for a code we already hold — unless shared creation was
+      asked for.** An existing owner is reported back (with every other owner
+      when the code is shared) so the form can offer View/Edit, or, once the
+      operator opts in with ``allow_shared_barcode``, a fresh SKU for a second
+      product carrying the same printed code.
     """
     data = parse_json()
     raw = data.get('barcode')
@@ -883,17 +945,24 @@ def generate_product_sku_endpoint():
         except ShopBarcodeError as error:
             return _barcode_error(error)
 
-    if barcode:
-        product, variant, _matched = resolve_barcode(barcode)
-        if product is not None:
-            return jsonify({
-                'found': True,
-                'exists': True,
-                'barcode': barcode,
-                'message': 'This barcode already belongs to a product.',
-                'product': payload_for(product),
-                'variant': payload_for(variant) if variant is not None else None,
-            })
+    matches = resolve_all_barcodes(barcode) if barcode else []
+    if matches and not data.get('allow_shared_barcode'):
+        product, variant, _matched = matches[0]
+        return jsonify({
+            'found': True,
+            'exists': True,
+            'barcode': barcode,
+            'message': ('This barcode already belongs to a product.'
+                        if len(matches) == 1 else
+                        f'This barcode already belongs to {len(matches)} products.'),
+            'product': payload_for(product),
+            'variant': payload_for(variant) if variant is not None else None,
+            'candidates': [
+                {'product': payload_for(owner),
+                 'variant': payload_for(owner_variant)
+                 if owner_variant is not None else None}
+                for owner, owner_variant, _m in matches],
+        })
 
     try:
         sku, already_reserved = reserve_sku(barcode, user_id=current_user_id())
@@ -902,16 +971,26 @@ def generate_product_sku_endpoint():
         return json_error(str(error), 500, 'sku_generator_failed')
     db.session.commit()
 
-    return jsonify({
-        'found': False,
-        'exists': False,
+    response = {
+        'found': bool(matches),
+        'exists': bool(matches),
         'barcode': barcode,
         'sku': sku,
         'reserved': already_reserved,
         'sku_prefix': SKU_PREFIX,
-        'message': ('New barcode — SKU generated.'
-                    if barcode else 'SKU generated.'),
-    })
+    }
+    if matches:
+        response['shared'] = True
+        response['candidates'] = [
+            {'product': payload_for(owner),
+             'variant': payload_for(owner_variant)
+             if owner_variant is not None else None}
+            for owner, owner_variant, _m in matches]
+        response['message'] = 'Shared barcode — new SKU generated.'
+    else:
+        response['message'] = ('New barcode — SKU generated.'
+                               if barcode else 'SKU generated.')
+    return jsonify(response)
 
 
 @bp.post('/products')
@@ -930,12 +1009,11 @@ def create_product():
     except ShopBarcodeError as error:
         return _barcode_error(error)
     if incoming_barcode:
-        conflict = barcode_conflict(incoming_barcode)
+        conflict = _duplicate_barcode_error(
+            barcode_candidates(incoming_barcode),
+            allow_shared=bool(data.get('allow_shared_barcode')))
         if conflict is not None:
-            return jsonify({
-                'error': 'This barcode is already assigned to another product.',
-                'code': 'duplicate_barcode', 'existing': conflict,
-            }), 409
+            return _barcode_error(conflict)
 
     sku, error = _resolve_sku(data, incoming_barcode)
     if error:
@@ -980,14 +1058,16 @@ def create_product():
     # bubble up as a 500 instead of the documented 4xx payload.
     try:
         _apply_product_attributes(product, data.get('attributes'))
-        _apply_variants(product, data.get('variants'))
+        _apply_variants(product, data.get('variants'),
+                                allow_shared=bool(data.get('allow_shared_barcode')))
         _apply_bundle(product, data.get('bundle_items'))
     except ShopStockError as error:
         return _stock_error(error)
     # The SKU this row consumed is spent — drop its hold so the table only
     # ever lists reservations still waiting for a form to be saved. Part of
-    # the same transaction: if creation fails, so does the release.
-    consume_reservation(sku, product.barcode)
+    # the same transaction: if creation fails, so does the release. Scoped to
+    # this creator so a shared barcode never clears someone else's pending form.
+    consume_reservation(sku, product.barcode, user_id=current_user_id())
     db.session.commit()
     audit('shop_product_created', 'shop_product', product.id,
           new_value=payload_for(product))
@@ -1054,7 +1134,8 @@ def update_product(product_id):
 
     try:
         _apply_product_attributes(product, data.get('attributes'))
-        _apply_variants(product, data.get('variants'))
+        _apply_variants(product, data.get('variants'),
+                                allow_shared=bool(data.get('allow_shared_barcode')))
         _apply_bundle(product, data.get('bundle_items'))
     except ShopStockError as error:
         return _stock_error(error)

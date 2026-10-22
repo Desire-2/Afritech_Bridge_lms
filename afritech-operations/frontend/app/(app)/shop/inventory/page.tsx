@@ -8,9 +8,9 @@ import { useAuth } from '@/lib/auth';
 import { P } from '@/lib/permissions';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
-import { BarcodeInput, BarcodeScanner } from '@/components/shop';
+import { BarcodeInput, BarcodeScanner, BarcodeCandidatePicker } from '@/components/shop';
 import type { BarcodeInputHandle } from '@/components/shop';
-import { BarcodeLookup, lookupBarcode, scanFeedback } from '@/lib/barcode';
+import { BarcodeLookup, lookupBarcode, lookupFromCandidate, scanFeedback } from '@/lib/barcode';
 
 type Tab = 'balances' | 'movements' | 'adjustments' | 'counts' | 'transfers' | 'serials' | 'alerts';
 
@@ -223,6 +223,8 @@ export default function ShopInventoryPage() {
   const [adjNote, setAdjNote] = useState<ScanNote | null>(null);
   const [adjSerial, setAdjSerial] = useState('');
   const [adjUnknown, setAdjUnknown] = useState<BarcodeLookup | null>(null);
+  /** Shared code on the adjustment scan — awaiting the operator's pick. */
+  const [adjPick, setAdjPick] = useState<BarcodeLookup | null>(null);
   const adjQtyRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   function resetAdjScan() {
@@ -230,6 +232,7 @@ export default function ShopInventoryPage() {
     setAdjNote(null);
     setAdjSerial('');
     setAdjUnknown(null);
+    setAdjPick(null);
   }
 
   function adjScanFocus() {
@@ -248,52 +251,12 @@ export default function ShopInventoryPage() {
         branchId: adjForm.branch_id ? Number(adjForm.branch_id) : null,
         context: 'receiving',
       });
-      if (!res.found) {
-        setAdjUnknown(res);
-        scanFeedback('error');
+      // Shared code: the operator says which product is being adjusted.
+      if (res.ambiguous) {
+        setAdjPick(res);
         return;
       }
-      const product = res.product || {};
-      const variant = res.variant || null;
-      const pid = String(product.id);
-      const vid = variant ? String(variant.id) : '';
-      const label = [product.name, variant?.name].filter(Boolean).join(' — ');
-      const stock = typeof res.available_stock === 'number' ? res.available_stock : 0;
-      setProducts((list) => (list.some((p: any) => String(p.id) === pid)
-        ? list
-        : [{ id: product.id, name: product.name, sku: product.sku }, ...list]));
-      ensureVariants(pid);
-      let index = adjLines.findIndex((l) => l.product_id === pid && (String(l.variant_id || '') === vid || !l.variant_id));
-      if (index < 0) index = adjLines.findIndex((l) => l.product_id === pid);
-      const existing = index >= 0 ? adjLines[index] : undefined;
-      const quantity = existing ? (Number(existing.quantity) || 0) + 1 : 1;
-      let targetIndex = index;
-      if (targetIndex < 0) {
-        const blank = adjLines.findIndex((l) => !l.product_id);
-        targetIndex = blank >= 0 ? blank : adjLines.length;
-      }
-      setAdjLines((rows) => {
-        const next = [...rows];
-        if (index >= 0) {
-          const line = next[index];
-          next[index] = { ...line, variant_id: line.variant_id || vid, quantity: String(quantity) };
-          return next;
-        }
-        const filled = { product_id: pid, variant_id: vid, quantity: '1' };
-        if (targetIndex < rows.length) next[targetIndex] = filled;
-        else next.push(filled);
-        return next;
-      });
-      const target = adjQtyRefs.current[targetIndex];
-      if (target) target.scrollIntoView({ block: 'nearest' });
-      setAdjNote({
-        kind: 'ok',
-        text: `${label} added — quantity ${quantity} · ${stock} in stock at this branch`,
-      });
-      if (product.is_serialized) {
-        setAdjSerial('Serialized product — enter each serial/IMEI before saving');
-      }
-      scanFeedback('ok');
+      await applyAdjScan(res);
     } catch (err: any) {
       setAdjNote({ kind: 'error', text: scanFailureText(err) });
       scanFeedback('error');
@@ -302,6 +265,56 @@ export default function ShopInventoryPage() {
       setAdjScan('');
       adjScanFocus();
     }
+  }
+
+  /** Add one owner of the scanned code to the adjustment lines. */
+  async function applyAdjScan(res: BarcodeLookup) {
+    if (!res.found) {
+      setAdjUnknown(res);
+      scanFeedback('error');
+      return;
+    }
+    const product = res.product || {};
+    const variant = res.variant || null;
+    const pid = String(product.id);
+    const vid = variant ? String(variant.id) : '';
+    const label = [product.name, variant?.name].filter(Boolean).join(' — ');
+    const stock = typeof res.available_stock === 'number' ? res.available_stock : 0;
+    setProducts((list) => (list.some((p: any) => String(p.id) === pid)
+      ? list
+      : [{ id: product.id, name: product.name, sku: product.sku }, ...list]));
+    ensureVariants(pid);
+    let index = adjLines.findIndex((l) => l.product_id === pid && (String(l.variant_id || '') === vid || !l.variant_id));
+    if (index < 0) index = adjLines.findIndex((l) => l.product_id === pid);
+    const existing = index >= 0 ? adjLines[index] : undefined;
+    const quantity = existing ? (Number(existing.quantity) || 0) + 1 : 1;
+    let targetIndex = index;
+    if (targetIndex < 0) {
+      const blank = adjLines.findIndex((l) => !l.product_id);
+      targetIndex = blank >= 0 ? blank : adjLines.length;
+    }
+    setAdjLines((rows) => {
+      const next = [...rows];
+      if (index >= 0) {
+        const line = next[index];
+        next[index] = { ...line, variant_id: line.variant_id || vid, quantity: String(quantity) };
+        return next;
+      }
+      const filled = { product_id: pid, variant_id: vid, quantity: '1' };
+      if (targetIndex < rows.length) next[targetIndex] = filled;
+      else next.push(filled);
+      return next;
+    });
+    const target = adjQtyRefs.current[targetIndex];
+    if (target) target.scrollIntoView({ block: 'nearest' });
+    setAdjNote({
+      kind: 'ok',
+      text: `${label} added — quantity ${quantity} · ${stock} in stock at this branch`,
+    });
+    if (product.is_serialized) {
+      setAdjSerial('Serialized product — enter each serial/IMEI before saving');
+    }
+    scanFeedback('ok');
   }
 
   function setAdjLine(index: number, key: keyof Line, value: string) {
@@ -384,6 +397,7 @@ export default function ShopInventoryPage() {
     setCntNote(null);
     setCntSerial('');
     setCntUnknown(null);
+    setCntPick(null);
     setTimeout(() => cntScanRef.current?.focus(), 0);
     try {
       const d: any = await api(`/api/shop/inventory/counts/${row.id}`);
@@ -400,6 +414,8 @@ export default function ShopInventoryPage() {
   const [cntNote, setCntNote] = useState<ScanNote | null>(null);
   const [cntSerial, setCntSerial] = useState('');
   const [cntUnknown, setCntUnknown] = useState<BarcodeLookup | null>(null);
+  /** Shared code on the count scan — awaiting the operator's pick. */
+  const [cntPick, setCntPick] = useState<BarcodeLookup | null>(null);
   const cntInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   async function handleCntScan(raw: string) {
@@ -414,36 +430,12 @@ export default function ShopInventoryPage() {
         branchId: submitTarget?.branch_id ? Number(submitTarget.branch_id) : null,
         context: 'count',
       });
-      if (!res.found) {
-        setCntUnknown(res);
-        scanFeedback('error');
+      // Shared code: the operator says which product is being counted.
+      if (res.ambiguous) {
+        setCntPick(res);
         return;
       }
-      const product = res.product || {};
-      const variant = res.variant || null;
-      const label = [product.name, variant?.name].filter(Boolean).join(' — ');
-      const vid = variant ? String(variant.id) : '';
-      let row: any = submitItems.find((it: any) =>
-        String(it.product_id) === String(product.id) && String(it.variant_id || '') === vid);
-      if (!row) row = submitItems.find((it: any) => String(it.product_id) === String(product.id));
-      if (!row) {
-        setCntNote({ kind: 'warn', text: `${label} is not on this count sheet.` });
-        scanFeedback('error');
-        return;
-      }
-      const key = String(row.id);
-      const quantity = (Number(countInputs[key] || 0) || 0) + 1;
-      setCountInputs((m) => ({ ...m, [key]: String(quantity) }));
-      const input = cntInputRefs.current[key];
-      if (input) input.scrollIntoView({ block: 'nearest' });
-      setCntNote({
-        kind: 'ok',
-        text: `${label} — counted ${quantity} · system ${row.system_quantity ?? 0}`,
-      });
-      if (product.is_serialized) {
-        setCntSerial('Serialized product — enter each serial/IMEI before saving');
-      }
-      scanFeedback('ok');
+      await applyCntScan(res);
     } catch (err: any) {
       setCntNote({ kind: 'error', text: scanFailureText(err) });
       scanFeedback('error');
@@ -452,6 +444,40 @@ export default function ShopInventoryPage() {
       setCntScan('');
       cntScanRef.current?.focus();
     }
+  }
+
+  /** Count one owner of the scanned code on the count sheet. */
+  async function applyCntScan(res: BarcodeLookup) {
+    if (!res.found) {
+      setCntUnknown(res);
+      scanFeedback('error');
+      return;
+    }
+    const product = res.product || {};
+    const variant = res.variant || null;
+    const label = [product.name, variant?.name].filter(Boolean).join(' — ');
+    const vid = variant ? String(variant.id) : '';
+    let row: any = submitItems.find((it: any) =>
+      String(it.product_id) === String(product.id) && String(it.variant_id || '') === vid);
+    if (!row) row = submitItems.find((it: any) => String(it.product_id) === String(product.id));
+    if (!row) {
+      setCntNote({ kind: 'warn', text: `${label} is not on this count sheet.` });
+      scanFeedback('error');
+      return;
+    }
+    const key = String(row.id);
+    const quantity = (Number(countInputs[key] || 0) || 0) + 1;
+    setCountInputs((m) => ({ ...m, [key]: String(quantity) }));
+    const input = cntInputRefs.current[key];
+    if (input) input.scrollIntoView({ block: 'nearest' });
+    setCntNote({
+      kind: 'ok',
+      text: `${label} — counted ${quantity} · system ${row.system_quantity ?? 0}`,
+    });
+    if (product.is_serialized) {
+      setCntSerial('Serialized product — enter each serial/IMEI before saving');
+    }
+    scanFeedback('ok');
   }
 
   async function saveSubmit(e: React.FormEvent) {
@@ -1484,6 +1510,29 @@ export default function ShopInventoryPage() {
       <BarcodeScanner show={cntCam}
         onClose={() => { setCntCam(false); cntScanRef.current?.focus(); }}
         onDetected={(value) => handleCntScan(value)} sound={false} vibration={false} />
+
+      <BarcodeCandidatePicker
+        lookup={adjPick}
+        show={!!adjPick}
+        onClose={() => setAdjPick(null)}
+        onPick={(c) => {
+          if (!adjPick) return;
+          const res = lookupFromCandidate(adjPick, c);
+          setAdjPick(null);
+          applyAdjScan(res);
+        }}
+      />
+      <BarcodeCandidatePicker
+        lookup={cntPick}
+        show={!!cntPick}
+        onClose={() => setCntPick(null)}
+        onPick={(c) => {
+          if (!cntPick) return;
+          const res = lookupFromCandidate(cntPick, c);
+          setCntPick(null);
+          applyCntScan(res);
+        }}
+      />
     </div>
   );
 }

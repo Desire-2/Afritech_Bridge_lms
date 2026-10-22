@@ -59,6 +59,8 @@ const GENERATE_SKU_URL = '/api/shop/products/generate-sku';
 interface ScanConflict {
   existing: BarcodeConflict;
   lookup?: BarcodeLookup | null;
+  /** Every row carrying the code, when it is shared. */
+  candidates?: BarcodeConflict[];
   /** The code already sits on the item being edited. */
   own?: boolean;
 }
@@ -66,7 +68,7 @@ interface ScanConflict {
 const emptyScan = { checking: false, result: null as BarcodeLookup | null, conflict: null as ScanConflict | null, note: '' };
 const emptyChange = {
   open: false, value: '', checking: false, result: null as BarcodeLookup | null,
-  conflict: null as ScanConflict | null, busy: false, error: '',
+  conflict: null as ScanConflict | null, busy: false, error: '', allowShared: false,
 };
 
 /** Describe the row that already owns a code, from a lookup result. */
@@ -81,6 +83,29 @@ function conflictFromLookup(result: BarcodeLookup): BarcodeConflict {
     status: product.status || 'active',
     product_name: product.name,
   };
+}
+
+/** Every owner a 409 names — its `candidates`, or just `existing` when alone. */
+function conflictCandidates(err: any): BarcodeConflict[] | undefined {
+  if (err?.data?.candidates?.length) return err.data.candidates;
+  return err?.data?.existing ? [err.data.existing] : undefined;
+}
+
+/** Owners of a lookup, in conflict-row shape. An ambiguous result carries no
+ * `product` of its own, so the rows have to come from its candidates. */
+function candidatesFromLookup(result: BarcodeLookup): BarcodeConflict[] | undefined {
+  if (result.ambiguous) {
+    return (result.candidates || []).map((c) => ({
+      kind: c.variant ? 'variant' : 'product',
+      id: c.product.id,
+      name: c.variant?.name ?? c.product.name,
+      sku: c.variant?.sku ?? c.product.sku,
+      status: c.product.status || 'active',
+      product_name: c.product.name,
+      product_id: c.product.id,
+    }));
+  }
+  return result.found ? [conflictFromLookup(result)] : undefined;
 }
 
 /** Format + type fields the server expects alongside a scanned barcode. */
@@ -167,6 +192,8 @@ function CatalogInner() {
   const [busy, setBusy] = useState(false);
   const [error2, setError2] = useState('');
   const [saveConflict, setSaveConflict] = useState<ScanConflict | null>(null);
+  /** Operator opted into reusing a code another product already carries. */
+  const [allowShared, setAllowShared] = useState(false);
   const [scan, setScan] = useState({ ...emptyScan });
   /** True while `form.sku` holds a server-minted value tied to `form.barcode`. */
   const [skuAuto, setSkuAuto] = useState(false);
@@ -271,6 +298,7 @@ function CatalogInner() {
     setVariants([]);
     setError2('');
     setSaveConflict(null);
+    setAllowShared(false);
     setScan({ ...emptyScan });
     setSkuAuto(false);
     setSkuNote('');
@@ -487,12 +515,15 @@ function CatalogInner() {
       const result = await lookupBarcode(code);
       if (result.found) {
         // The row already exists: show it and drop any SKU we minted earlier.
+        // An ambiguous lookup has no `product` of its own — the conflict row
+        // comes from its candidates instead.
         set('sku', '');
         setSkuAuto(false);
+        const rows = candidatesFromLookup(result);
         setScan({
           checking: false,
           result,
-          conflict: { existing: conflictFromLookup(result), lookup: result },
+          conflict: { existing: rows?.[0] ?? conflictFromLookup(result), lookup: result, candidates: rows },
           note: '',
         });
         return;
@@ -504,14 +535,18 @@ function CatalogInner() {
     }
   }
 
-  /** Ask the server to mint (or hand back) this barcode's SKU. */
-  async function reserveSku(code: string, seq: number) {
+  /** Ask the server to mint (or hand back) this barcode's SKU. `allowShared`
+   * is only set once the operator opted into reusing another product's code —
+   * an owned code mints nothing without it. */
+  async function reserveSku(code: string, seq: number, allowShared = false): Promise<any | null> {
     try {
+      const body: any = { barcode: code };
+      if (allowShared) body.allow_shared_barcode = true;
       const prepared: any = await api(GENERATE_SKU_URL, {
         method: 'POST',
-        body: { barcode: code },
+        body,
       });
-      if (seq !== skuSeqRef.current) return; // superseded by a newer scan
+      if (seq !== skuSeqRef.current) return null; // superseded by a newer scan
       if (prepared?.sku) set('sku', prepared.sku);
       setSkuAuto(true);
       setSkuNote(
@@ -519,15 +554,19 @@ function CatalogInner() {
           ? 'Already generated for this barcode — rescanning returns the same SKU.'
           : '',
       );
+      return prepared;
     } catch (err: any) {
-      if (seq !== skuSeqRef.current) return;
+      if (seq !== skuSeqRef.current) return null;
       setSkuNote(err.message || 'The SKU could not be generated — it will be made when you save.');
+      return null;
     }
   }
 
   function onProductBarcodeChange(value: string) {
     set('barcode', value);
     setScan({ ...emptyScan });
+    // A new code also invalidates any earlier "share this code" opt-in.
+    setAllowShared(false);
     // A reserved SKU belongs to the code that produced it; a different code
     // needs a different one (the server still returns the same SKU if the
     // user comes back to the original barcode).
@@ -556,9 +595,10 @@ function CatalogInner() {
           format: result.barcode_format || detectBarcodeFormat(code),
         });
       } else {
+        const rows = candidatesFromLookup(result);
         setVariant(index, 'scan', {
           checking: false,
-          conflict: { existing: conflictFromLookup(result), lookup: result },
+          conflict: { existing: rows?.[0] ?? conflictFromLookup(result), lookup: result, candidates: rows },
         });
       }
     } catch (err: any) {
@@ -569,6 +609,7 @@ function CatalogInner() {
   async function handleCameraValue(target: string | null, value: string) {
     if (target === 'product') {
       set('barcode', value);
+      setAllowShared(false); // a camera pick is still a barcode change
       await checkProductBarcode(value);
     } else if (target === 'change') {
       setChange((c) => ({ ...c, value }));
@@ -579,14 +620,17 @@ function CatalogInner() {
   }
 
   /** A 409 on save: show the same panel from the server's `existing` row. */
-  async function showSaveConflict(existing: BarcodeConflict) {
-    setSaveConflict({ existing });
+  async function showSaveConflict(existing: BarcodeConflict, candidates?: BarcodeConflict[]) {
+    setSaveConflict({ existing, candidates });
+    // Candidates already describe every owner — the re-lookup below only
+    // exists for older payloads that sent the single row alone.
+    if (candidates) return;
     if (existing.kind !== 'variant') return;
     // Variant conflicts name no parent id — re-check this form's codes to find it.
-    const candidates = [form.barcode, ...variants.map((v) => v.barcode)]
+    const rows = [form.barcode, ...variants.map((v) => v.barcode)]
       .map((v: any) => normalizeBarcode(v))
       .filter(Boolean);
-    for (const candidate of candidates) {
+    for (const candidate of rows) {
       try {
         const result = await lookupBarcode(candidate);
         if (result.found && (result.variant?.sku === existing.sku || result.product?.sku === existing.sku)) {
@@ -596,6 +640,25 @@ function CatalogInner() {
       } catch {
         // keep the plain conflict panel
       }
+    }
+  }
+
+  /**
+   * The operator chose to keep the scanned code: drop every conflict panel
+   * and — while the create form holds a barcode — mint the SKU that the new
+   * row sharing that code will carry.
+   */
+  async function shareBarcode() {
+    setAllowShared(true);
+    setSaveConflict(null);
+    setScan((s) => ({ ...s, conflict: null }));
+    const code = normalizeBarcode(form.barcode);
+    if (!code) return;
+    const seq = skuSeqRef.current + 1;
+    skuSeqRef.current = seq;
+    const prepared = await reserveSku(code, seq, true);
+    if (prepared && !prepared.reserved) {
+      setSkuNote('Shared barcode — this SKU belongs to the new product you are creating.');
     }
   }
 
@@ -620,6 +683,7 @@ function CatalogInner() {
         body.barcode = form.barcode;
         applyBarcodeFields(body, form.barcode);
       }
+      if (allowShared) body.allow_shared_barcode = true;
       if (canSeeCost && form.purchase_cost !== '') body.purchase_cost = Number(form.purchase_cost);
       const rows = variants.filter((v) => (v.name || '').trim());
       if (rows.length) {
@@ -639,8 +703,15 @@ function CatalogInner() {
       setOpen(false);
       reload();
     } catch (err: any) {
-      if (isDuplicateError(err)) await showSaveConflict(err.data.existing);
-      else setError2(err.message);
+      if (isDuplicateError(err)) {
+        await showSaveConflict(err.data.existing, conflictCandidates(err));
+        // A share the server still refused (a code inside this same product
+        // tree never shares) has nothing left but its own message to show.
+        if (allowShared) {
+          setAllowShared(false);
+          setError2(err.data?.error || err.message);
+        }
+      } else setError2(err.message);
     } finally {
       setBusy(false);
     }
@@ -666,19 +737,28 @@ function CatalogInner() {
   async function checkChangeBarcode(raw: string) {
     const code = normalizeBarcode(raw);
     if (!code) {
-      setChange((c) => ({ ...c, value: raw, result: null, conflict: null, error: '' }));
+      setChange((c) => ({ ...c, value: raw, result: null, conflict: null, error: '', allowShared: false }));
       return;
     }
-    setChange((c) => ({ ...c, value: code, checking: true, result: null, conflict: null, error: '' }));
+    // Every check starts from a fresh code — the share opt-in does not travel.
+    setChange((c) => ({ ...c, value: code, checking: true, result: null, conflict: null, error: '', allowShared: false }));
     try {
       const result = await lookupBarcode(code);
       const own = !!result.found && !!detail && result.product?.id === detail.id;
+      // Only an unshared, unambiguous match can be `own`; every other lookup
+      // carries its conflict rows as candidates (an ambiguous one has no product).
+      const rows = result.found && !own ? candidatesFromLookup(result) : undefined;
       setChange((c) => ({
         ...c,
         checking: false,
         result,
         conflict: result.found
-          ? { existing: conflictFromLookup(result), lookup: result, own }
+          ? {
+              existing: rows?.[0] ?? conflictFromLookup(result),
+              lookup: result,
+              candidates: rows,
+              own,
+            }
           : null,
       }));
     } catch (err: any) {
@@ -686,14 +766,15 @@ function CatalogInner() {
     }
   }
 
-  async function submitChangeBarcode(e: React.FormEvent) {
-    e.preventDefault();
+  /** POST the new code for this product; `allowShared` retries after a 409. */
+  async function postChangeBarcode(allowShared: boolean) {
     const code = normalizeBarcode(change.value);
     if (!code || !detail) return;
     setChange((c) => ({ ...c, busy: true, error: '' }));
     try {
       const body: any = { barcode: code };
       applyBarcodeFields(body, code);
+      if (allowShared) body.allow_shared_barcode = true;
       const res: any = await api(`/api/shop/products/${detail.id}/barcode`, { method: 'POST', body });
       setDetail((d: any) => (d ? { ...d, ...(res.product || {}) } : d));
       setChange({ ...emptyChange });
@@ -707,11 +788,26 @@ function CatalogInner() {
         } catch {
           // the plain conflict panel still describes the row
         }
-        setChange((c) => ({ ...c, busy: false, conflict: { existing: err.data.existing, lookup } }));
+        const candidates = conflictCandidates(err);
+        setChange((c) => ({
+          ...c,
+          busy: false,
+          conflict: { existing: err.data.existing, candidates, lookup },
+          // A refused share falls back to the plain conflict, with the
+          // server's own wording of why it still said no.
+          ...(allowShared
+            ? { error: err.data?.error || err.message, allowShared: false }
+            : {}),
+        }));
         return;
       }
       setChange((c) => ({ ...c, busy: false, error: err.message }));
     }
+  }
+
+  async function submitChangeBarcode(e: React.FormEvent) {
+    e.preventDefault();
+    await postChangeBarcode(change.allowShared);
   }
 
   const variantsOfDetail: any[] = detail?.variants || [];
@@ -834,8 +930,11 @@ function CatalogInner() {
             <DuplicateBarcodePanel
               existing={saveConflict.existing}
               lookup={saveConflict.lookup}
+              candidates={saveConflict.candidates}
               onOpen={openDetail}
               onUse={useExistingProduct}
+              onShare={() => shareBarcode()}
+              shared={allowShared}
               className="mb-3"
             />
           )}
@@ -879,6 +978,7 @@ function CatalogInner() {
                   onClear={() => {
                     set('barcode', '');
                     setScan({ ...emptyScan });
+                    setAllowShared(false);
                     if (skuAuto) { set('sku', ''); setSkuAuto(false); setSkuNote(''); }
                   }}
                   busy={scan.checking}
@@ -901,17 +1001,25 @@ function CatalogInner() {
                   <DuplicateBarcodePanel
                     existing={scan.conflict.existing}
                     lookup={scan.conflict.lookup}
+                    candidates={scan.conflict.candidates}
                     onOpen={openDetail}
                     onUse={useExistingProduct}
+                    onShare={() => shareBarcode()}
+                    shared={allowShared}
                     className="mt-2"
                   />
                 )}
                 {!scan.conflict && scan.result && !scan.result.found && (
                   <ScanOkPanel barcode={scan.result.barcode} format={scanFormat} missing={missingRequired} />
                 )}
-                {scan.conflict && (
+                {scan.conflict && !allowShared && (
                   <div className="invalid-feedback d-block">
                     This barcode is already assigned to another product.
+                  </div>
+                )}
+                {allowShared && form.barcode && !scan.conflict && (
+                  <div className="form-text small text-info">
+                    Saving will create another product that shares this barcode.
                   </div>
                 )}
               </Field>
@@ -993,6 +1101,10 @@ function CatalogInner() {
                       <DuplicateBarcodePanel
                         existing={v.scan.conflict.existing}
                         lookup={v.scan.conflict.lookup}
+                        candidates={v.scan.conflict.candidates}
+                        onOpen={openDetail}
+                        onShare={() => shareBarcode()}
+                        shared={allowShared}
                         compact
                         className="mt-2"
                       />
@@ -1224,7 +1336,17 @@ function CatalogInner() {
               <DuplicateBarcodePanel
                 existing={change.conflict.existing}
                 lookup={change.conflict.lookup}
+                candidates={change.conflict.candidates}
                 tone={change.conflict.own ? 'info' : 'error'}
+                // The code already sits on this item — sharing it is refused
+                // by the server, so only foreign owners get the share action.
+                onShare={change.conflict.own
+                  ? undefined
+                  : () => {
+                      setChange((c) => ({ ...c, allowShared: true }));
+                      postChangeBarcode(true);
+                    }}
+                shared={change.allowShared}
                 className="mt-2"
               />
             )}

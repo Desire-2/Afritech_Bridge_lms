@@ -91,17 +91,44 @@ export function detectBarcodeFormat(raw: string): BarcodeFormat {
   return 'UNKNOWN';
 }
 
+/** One owner of a printed code that several products legitimately share. */
+export interface BarcodeCandidate {
+  product: any;
+  variant?: any;
+  available_stock?: number;
+  match?: string;
+}
+
 export interface BarcodeLookup {
   found: boolean;
   match?: 'barcode' | 'sku';
   barcode: string;
   barcode_format?: string;
   message?: string;
+  /** Set when the code sits on more than one row — `candidates` then holds
+   * every owner and there is no `product`/`variant` at the top level. */
+  ambiguous?: boolean;
+  candidates?: BarcodeCandidate[];
   product?: any;
   variant?: any;
   available_stock?: number;
   branch_id?: number | null;
   branches?: { branch_id: number; name: string; available: number }[];
+}
+
+/** Pick one owner of a shared code and shape it like a single-match lookup,
+ * so the rest of the UI can keep reading `res.product` / `res.variant`. */
+export function lookupFromCandidate(res: BarcodeLookup, c: BarcodeCandidate): BarcodeLookup {
+  return {
+    ...res,
+    ambiguous: false,
+    product: c.product,
+    variant: c.variant ?? null,
+    available_stock: c.available_stock,
+    match: (c.match ?? res.match) as BarcodeLookup['match'],
+    candidates: undefined,
+    branches: undefined,
+  };
 }
 
 /** SCAN → NORMALIZE → LOOK UP in the shop's own database. */

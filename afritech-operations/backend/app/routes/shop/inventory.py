@@ -261,7 +261,12 @@ def _resolve_item(entry):
     if not product_id and entry.get('sku'):
         product = ShopProduct.query.filter_by(sku=entry['sku']).first()
         if product is None:
-            product = ShopProduct.query.filter_by(barcode=entry['sku']).first()
+            matches = ShopProduct.query.filter_by(barcode=entry['sku']).all()
+            if len(matches) > 1:
+                raise ShopStockError(
+                    f'Barcode {entry["sku"]} is shared by several products — '
+                    'send product_id to choose one.', 409, 'ambiguous_barcode')
+            product = matches[0] if matches else None
         if product is None:
             raise ShopStockError(f"No product for SKU {entry['sku']}", 404,
                                  'product_not_found')

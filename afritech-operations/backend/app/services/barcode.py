@@ -12,9 +12,13 @@ blueprints can all use it without a circular import:
 * :func:`validate_barcode` only enforces a length/check digit when the caller
   asserts a specific symbology — a generic lookup never rejects a code for not
   looking like a GTIN;
-* :func:`resolve` matches a scanned value against barcodes and SKUs;
+* :func:`resolve` matches a scanned value against barcodes and SKUs
+  (:func:`resolve_all` returns *every* owner — one code may be shared by
+  several rebranded products, so a scan can be genuinely ambiguous);
 * :func:`register_barcode` writes a barcode with a friendly 409 when another
-  product or variant already owns it, and an audit row either way;
+  product or variant already owns it (callers may pass ``allow_shared`` to
+  take the code deliberately, listing the candidates either way), and an
+  audit row either way;
 * :func:`record_unknown_scan` upserts the unknown-scan queue and warns the
   catalogue team once a code has been scanned three times.
 """
@@ -43,14 +47,16 @@ class ShopBarcodeError(ShopStockError):
 
     Mirrors :class:`ShopStockError` so the shop error handlers and the POS's
     ``except ShopStockError`` blocks treat it identically; ``existing``
-    describes the row that already owns a duplicate barcode so routes can
-    answer 409 with the conflicting product.
+    describes the first row that already carries a duplicate barcode while
+    ``candidates`` lists every one of them, so routes can answer 409 with the
+    full set of products the operator has to disambiguate between.
     """
 
     def __init__(self, message, status=400, code='invalid_barcode',
-                 existing=None):
+                 existing=None, candidates=None):
         super().__init__(message, status, code)
         self.existing = existing
+        self.candidates = candidates
 
 
 def _utc_now():
@@ -181,67 +187,111 @@ def barcode_identity(value, fmt=None, btype=None):
                                else 'internal')
 
 
-def barcode_conflict(value, *, exclude_product_id=None, exclude_variant_id=None):
-    """Describe the row that already owns ``value``, or ``None`` when free.
+def barcode_candidates(value, *, exclude_product_id=None, exclude_variant_id=None):
+    """Every row that already carries ``value``, products before variants.
 
-    Uniqueness spans products *and* variants, so a barcode parked on a variant
-    blocks the parent product and vice versa.
+    One factory code can legitimately live on several rows — the same printed
+    EAN-13 ships in different brands' boxes — so callers get the whole list
+    and decide whether that is a mistake (409) or the intended shared barcode
+    (proceed with ``allow_shared_barcode``).
     """
     if not value:
-        return None
+        return []
+    candidates = []
     product_query = ShopProduct.query.filter(ShopProduct.barcode == value)
     if exclude_product_id:
         product_query = product_query.filter(ShopProduct.id != exclude_product_id)
-    product = product_query.first()
-    if product is not None:
-        return {'kind': 'product', 'id': product.id, 'name': product.name,
-                'sku': product.sku, 'status': product.status,
-                'product_name': product.name}
+    for product in product_query.order_by(ShopProduct.id).all():
+        candidates.append({'kind': 'product', 'id': product.id,
+                           'name': product.name, 'sku': product.sku,
+                           'status': product.status,
+                           'product_name': product.name,
+                           'product_id': product.id})
     variant_query = ShopProductVariant.query.filter(ShopProductVariant.barcode == value)
     if exclude_variant_id:
         variant_query = variant_query.filter(
             ShopProductVariant.id != exclude_variant_id)
-    variant = variant_query.first()
-    if variant is not None:
-        return {'kind': 'variant', 'id': variant.id, 'name': variant.name,
-                'sku': variant.sku,
-                'status': 'active' if variant.is_active else 'inactive',
-                'product_name': variant.product.name if variant.product else None}
-    return None
+    for variant in variant_query.order_by(ShopProductVariant.id).all():
+        candidates.append({'kind': 'variant', 'id': variant.id,
+                           'name': variant.name, 'sku': variant.sku,
+                           'status': 'active' if variant.is_active else 'inactive',
+                           'product_name': variant.product.name if variant.product else None,
+                           'product_id': variant.product_id})
+    return candidates
+
+
+def barcode_conflict(value, *, exclude_product_id=None, exclude_variant_id=None):
+    """The first row that already owns ``value``, or ``None`` when free.
+
+    Uniqueness spans products *and* variants, so a barcode parked on a variant
+    blocks the parent product and vice versa. Kept for callers that only need
+    "is someone already using this?" — ones that surface the conflict should
+    use :func:`barcode_candidates` so the operator sees every owner.
+    """
+    candidates = barcode_candidates(
+        value, exclude_product_id=exclude_product_id,
+        exclude_variant_id=exclude_variant_id)
+    return candidates[0] if candidates else None
+
+
+def resolve_all(value):
+    """Every ``(product, variant, matched_by)`` pair for a scanned value.
+
+    Barcode matches win over SKUs (as in :func:`resolve`) and come back
+    products first, each group ordered by id — a shared code therefore yields
+    every owner in a deterministic order, and the caller decides how to
+    disambiguate. SKUs are unique per table, so the SKU fallback contributes
+    at most one row.
+    """
+    code = normalize_barcode(value)
+    if not code:
+        return []
+    matches = [(product, None, 'barcode') for product in
+               ShopProduct.query.filter_by(barcode=code).order_by(
+                   ShopProduct.id).all()]
+    if not matches:
+        matches = [(variant.product, variant, 'barcode') for variant in
+                   ShopProductVariant.query.filter_by(barcode=code).order_by(
+                       ShopProductVariant.id).all()]
+    if not matches:
+        product = ShopProduct.query.filter_by(sku=code).first()
+        if product is not None:
+            matches = [(product, None, 'sku')]
+        else:
+            variant = ShopProductVariant.query.filter_by(sku=code).first()
+            if variant is not None:
+                matches = [(variant.product, variant, 'sku')]
+    return matches
 
 
 def resolve(value):
     """``(product, variant, matched_by)`` for a scanned barcode or SKU.
 
-    Exact string match only, in ownership order: product barcode, variant
-    barcode, product SKU, variant SKU. Nothing is skipped here — whether an
-    inactive or discontinued item may be traded is the caller's decision.
+    The first match :func:`resolve_all` finds — exact string match only, in
+    ownership order: product barcode, variant barcode, product SKU, variant
+    SKU. Nothing is skipped here — whether an inactive or discontinued item
+    may be traded is the caller's decision. Callers that must not silently
+    pick between several owners of one shared code use :func:`resolve_all`.
     """
-    code = normalize_barcode(value)
-    if not code:
-        return None, None, None
-    product = ShopProduct.query.filter_by(barcode=code).first()
-    if product is not None:
-        return product, None, 'barcode'
-    variant = ShopProductVariant.query.filter_by(barcode=code).first()
-    if variant is not None:
-        return variant.product, variant, 'barcode'
-    product = ShopProduct.query.filter_by(sku=code).first()
-    if product is not None:
-        return product, None, 'sku'
-    variant = ShopProductVariant.query.filter_by(sku=code).first()
-    if variant is not None:
-        return variant.product, variant, 'sku'
-    return None, None, None
+    matches = resolve_all(value)
+    return matches[0] if matches else (None, None, None)
 
 
-def register_barcode(user, *, product, value, fmt=None, btype=None, variant=None):
+def register_barcode(user, *, product, value, fmt=None, btype=None, variant=None,
+                     allow_shared=False):
     """Write ``value`` onto ``variant`` (or ``product`` when no variant).
 
-    Raises :class:`ShopBarcodeError` (409 ``duplicate_barcode``) when any
-    other product or variant already owns the code, and appends a
-    ``shop_barcode_registered`` / ``shop_barcode_changed`` audit row when the
-    value actually moves. Returns the row that was written.
+    Raises :class:`ShopBarcodeError` (409 ``duplicate_barcode``) when the code
+    is already carried elsewhere:
+
+    * inside the *same* product tree (a variant shadowing its parent, or a
+      product taking its own variant's code) — always fatal, sharing there
+      buys nothing and breaks the till's variant lookup;
+    * on another product — when ``allow_shared`` is false. The error carries
+      every owner in ``candidates`` so the caller can offer "create anyway".
+
+    Appends a ``shop_barcode_registered`` / ``shop_barcode_changed`` audit row
+    when the value actually moves. Returns the row that was written.
     """
     if product is None:
         raise ShopBarcodeError('Product not found', 404, 'product_not_found')
@@ -249,14 +299,18 @@ def register_barcode(user, *, product, value, fmt=None, btype=None, variant=None
         raise ShopBarcodeError('Variant not found', 404, 'variant_not_found')
     target = variant if variant is not None else product
     normalized = validate_barcode(value, fmt)
-    conflict = barcode_conflict(
+    candidates = barcode_candidates(
         normalized,
         exclude_product_id=target.id if variant is None else None,
         exclude_variant_id=target.id if variant is not None else None)
-    if conflict is not None:
-        raise ShopBarcodeError(
-            'This barcode is already assigned to another product.', 409,
-            'duplicate_barcode', existing=conflict)
+    if candidates:
+        own_tree = [c for c in candidates if c['product_id'] == product.id]
+        blocking = own_tree or candidates
+        if own_tree or not allow_shared:
+            raise ShopBarcodeError(
+                'This barcode is already assigned to another product.', 409,
+                'duplicate_barcode', existing=blocking[0],
+                candidates=candidates)
     if (target.barcode or None) == normalized:
         target.barcode_format, target.barcode_type = barcode_identity(
             normalized, fmt or target.barcode_format, btype)

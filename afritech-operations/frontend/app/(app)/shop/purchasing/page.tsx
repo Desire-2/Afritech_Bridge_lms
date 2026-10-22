@@ -8,9 +8,9 @@ import { useAuth } from '@/lib/auth';
 import { P } from '@/lib/permissions';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
-import { BarcodeInput, BarcodeScanner, ProductScanResult } from '@/components/shop';
+import { BarcodeInput, BarcodeScanner, BarcodeCandidatePicker, ProductScanResult } from '@/components/shop';
 import type { BarcodeInputHandle } from '@/components/shop';
-import { BarcodeLookup, lookupBarcode, scanFeedback } from '@/lib/barcode';
+import { BarcodeLookup, lookupBarcode, lookupFromCandidate, scanFeedback } from '@/lib/barcode';
 
 type Tab = 'orders' | 'suppliers' | 'returns';
 
@@ -243,6 +243,8 @@ export default function ShopPurchasingPage() {
   const [recvNote, setRecvNote] = useState<ScanNote | null>(null);
   const [recvUnknown, setRecvUnknown] = useState<BarcodeLookup | null>(null);
   const [recvExtra, setRecvExtra] = useState<BarcodeLookup | null>(null);
+  /** Shared code on receiving — awaiting the operator's pick. */
+  const [recvPick, setRecvPick] = useState<BarcodeLookup | null>(null);
   const recvQtyRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const recvTouched = useRef<Set<string>>(new Set());
 
@@ -251,6 +253,7 @@ export default function ShopPurchasingPage() {
     setRecvNote(null);
     setRecvUnknown(null);
     setRecvExtra(null);
+    setRecvPick(null);
   }
 
   async function openReceive(po: any) {
@@ -292,54 +295,12 @@ export default function ShopPurchasingPage() {
         branchId: recvPo?.branch_id ? Number(recvPo.branch_id) : null,
         context: 'receiving',
       });
-      if (!res.found) {
-        setRecvUnknown(res);
-        scanFeedback('error');
+      // Shared code: let the operator say which product is on the pallet.
+      if (res.ambiguous) {
+        setRecvPick(res);
         return;
       }
-      const product = res.product || {};
-      const variant = res.variant || null;
-      const label = [product.name, variant?.name].filter(Boolean).join(' — ');
-      if (!recvItems.length) {
-        setRecvNote({ kind: 'warn', text: 'Order lines are not loaded yet — scan again in a moment.' });
-        scanFeedback('error');
-        return;
-      }
-      const vid = variant ? Number(variant.id) : null;
-      let line: any = recvItems.find((it: any) =>
-        Number(it.product_id) === Number(product.id)
-        && (vid === null ? !it.variant_id : Number(it.variant_id) === vid));
-      if (!line) line = recvItems.find((it: any) => Number(it.product_id) === Number(product.id));
-      if (!line) {
-        setRecvNote({
-          kind: 'info',
-          text: 'Not on this purchase order — add it via a new PO line or receive it as an adjustment.',
-        });
-        setRecvExtra(res);
-        scanFeedback('error');
-        return;
-      }
-      const key = String(line.id);
-      const outstanding = Number(line.outstanding_quantity || 0);
-      const current = recvQty[key];
-      // The form prefills every line with the full outstanding quantity; a scan
-      // starts counting from zero until the user has set the figure themselves.
-      const untouched = !recvTouched.current.has(key);
-      const base = untouched ? 0 : Number(current || 0);
-      const next = Math.min(base + 1, outstanding);
-      const advanced = next > base;
-      recvTouched.current.add(key);
-      setRecvQty((m) => ({ ...m, [key]: String(next) }));
-      const input = recvQtyRefs.current[key];
-      if (input) input.scrollIntoView({ block: 'nearest' });
-      if (advanced) {
-        setRecvNote({ kind: 'ok', text: `${label} — receiving ${next} of ${outstanding} outstanding.` });
-      } else if (outstanding > 0) {
-        setRecvNote({ kind: 'warn', text: `${label} is already at the outstanding quantity (${outstanding}).` });
-      } else {
-        setRecvNote({ kind: 'warn', text: `${label} has nothing outstanding on this order.` });
-      }
-      scanFeedback(advanced ? 'ok' : 'error');
+      await applyRecvScan(res);
     } catch (err: any) {
       setRecvNote({ kind: 'error', text: scanFailureText(err) });
       scanFeedback('error');
@@ -348,6 +309,58 @@ export default function ShopPurchasingPage() {
       setRecvScan('');
       recvScanRef.current?.focus();
     }
+  }
+
+  /** Advance the receiving quantity for one owner of the scanned code. */
+  async function applyRecvScan(res: BarcodeLookup) {
+    if (!res.found) {
+      setRecvUnknown(res);
+      scanFeedback('error');
+      return;
+    }
+    const product = res.product || {};
+    const variant = res.variant || null;
+    const label = [product.name, variant?.name].filter(Boolean).join(' — ');
+    if (!recvItems.length) {
+      setRecvNote({ kind: 'warn', text: 'Order lines are not loaded yet — scan again in a moment.' });
+      scanFeedback('error');
+      return;
+    }
+    const vid = variant ? Number(variant.id) : null;
+    let line: any = recvItems.find((it: any) =>
+      Number(it.product_id) === Number(product.id)
+      && (vid === null ? !it.variant_id : Number(it.variant_id) === vid));
+    if (!line) line = recvItems.find((it: any) => Number(it.product_id) === Number(product.id));
+    if (!line) {
+      setRecvNote({
+        kind: 'info',
+        text: 'Not on this purchase order — add it via a new PO line or receive it as an adjustment.',
+      });
+      setRecvExtra(res);
+      scanFeedback('error');
+      return;
+    }
+    const key = String(line.id);
+    const outstanding = Number(line.outstanding_quantity || 0);
+    const current = recvQty[key];
+    // The form prefills every line with the full outstanding quantity; a scan
+    // starts counting from zero until the user has set the figure themselves.
+    const untouched = !recvTouched.current.has(key);
+    const base = untouched ? 0 : Number(current || 0);
+    const next = Math.min(base + 1, outstanding);
+    const advanced = next > base;
+    recvTouched.current.add(key);
+    setRecvQty((m) => ({ ...m, [key]: String(next) }));
+    const input = recvQtyRefs.current[key];
+    if (input) input.scrollIntoView({ block: 'nearest' });
+    if (advanced) {
+      setRecvNote({ kind: 'ok', text: `${label} — receiving ${next} of ${outstanding} outstanding.` });
+    } else if (outstanding > 0) {
+      setRecvNote({ kind: 'warn', text: `${label} is already at the outstanding quantity (${outstanding}).` });
+    } else {
+      setRecvNote({ kind: 'warn', text: `${label} has nothing outstanding on this order.` });
+    }
+    scanFeedback(advanced ? 'ok' : 'error');
   }
 
   async function saveReceive(e: React.FormEvent) {
@@ -1021,6 +1034,18 @@ export default function ShopPurchasingPage() {
           <p className="small text-muted mb-0">Lines left at 0 are not received. Stock is posted at the unit cost shown.</p>
         </form>
       </Modal>
+
+      <BarcodeCandidatePicker
+        lookup={recvPick}
+        show={!!recvPick}
+        onClose={() => setRecvPick(null)}
+        onPick={(c) => {
+          if (!recvPick) return;
+          const res = lookupFromCandidate(recvPick, c);
+          setRecvPick(null);
+          applyRecvScan(res);
+        }}
+      />
 
       <Modal show={detailLoading || !!detail || !!detailErr} title={detail ? detail.po_number : 'Purchase order'} onClose={() => setDetail(null)}
         footer={

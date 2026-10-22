@@ -201,7 +201,10 @@ class ShopProduct(TimestampMixin, db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     sku = db.Column(db.String(64), unique=True, nullable=False, index=True)
-    barcode = db.Column(db.String(64), unique=True, index=True)
+    # Not unique on purpose: one factory code (a GS1 GTIN printed for a
+    # design) may legitimately appear on several rebranded rows — same cover,
+    # different brand/name. Disambiguation happens at scan time, not storage.
+    barcode = db.Column(db.String(64), index=True)
     barcode_format = db.Column(db.String(32))
     barcode_type = db.Column(db.String(16), default='external', nullable=False)
     name = db.Column(db.String(160), nullable=False, index=True)
@@ -306,7 +309,8 @@ class ShopProductVariant(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('shop_products.id'), nullable=False, index=True)
     sku = db.Column(db.String(64), unique=True, nullable=False, index=True)
-    barcode = db.Column(db.String(64), unique=True, index=True)
+    # Shared like the product column — see ShopProduct.barcode.
+    barcode = db.Column(db.String(64), index=True)
     barcode_format = db.Column(db.String(32))
     barcode_type = db.Column(db.String(16), default='external', nullable=False)
     name = db.Column(db.String(160), nullable=False)
@@ -487,10 +491,10 @@ class ShopSkuReservation(TimestampMixin, db.Model):
 
     Scanning a barcode must show the SKU immediately, but the SKU is minted by
     the backend — so the moment it is minted it has to be pinned somewhere.
-    Keying the reservation on the barcode makes the scan **idempotent**: a
-    browser that times out and retries gets the same SKU back instead of
-    burning a second one, and two staff scanning the same unknown code see the
-    same number.
+    The reservation is keyed on ``(barcode, created_by)``: a browser that times
+    out and retries gets the same SKU back instead of burning a second one,
+    while two staff opening forms for the *same* shared code each mint their
+    own number — two different products must never inherit one another's SKU.
 
     The row is deleted once the product is actually created (see
     ``consume_reservation``). A barcode whose form is abandoned simply keeps
@@ -499,8 +503,13 @@ class ShopSkuReservation(TimestampMixin, db.Model):
     """
     __tablename__ = 'shop_sku_reservations'
 
+    __table_args__ = (
+        db.Index('uq_shop_sku_reservations_barcode_creator',
+                 'barcode', 'created_by', unique=True),
+    )
+
     id = db.Column(db.Integer, primary_key=True)
-    barcode = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    barcode = db.Column(db.String(64), nullable=False, index=True)
     sku = db.Column(db.String(64), nullable=False, unique=True, index=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
 

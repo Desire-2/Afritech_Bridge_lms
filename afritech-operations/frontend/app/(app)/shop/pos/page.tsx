@@ -8,13 +8,14 @@ import { useAuth } from '@/lib/auth';
 import { P } from '@/lib/permissions';
 import { PageHeader, ErrorAlert, EmptyState, Modal, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput } from '@/components/form';
-import { BarcodeInput, BarcodeScanner, OutOfStockDialog } from '@/components/shop';
+import { BarcodeInput, BarcodeScanner, BarcodeCandidatePicker, OutOfStockDialog } from '@/components/shop';
 import type { BarcodeInputHandle } from '@/components/shop';
 import {
   BarcodeLookup,
   SCANNER_DEFAULTS,
   ScannerSettings,
   lookupBarcode,
+  lookupFromCandidate,
   scanFeedback,
 } from '@/lib/barcode';
 
@@ -60,6 +61,8 @@ export default function ShopPosPage() {
   const [scanBusy, setScanBusy] = useState(false);
   const [notFound, setNotFound] = useState<BarcodeLookup | null>(null);
   const [outOf, setOutOf] = useState<BarcodeLookup | null>(null);
+  /** A scanned code owned by several products — awaiting the operator's pick. */
+  const [pick, setPick] = useState<BarcodeLookup | null>(null);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'warn'; text: string } | null>(null);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [prefs, setPrefs] = useState<ScannerSettings>(SCANNER_DEFAULTS);
@@ -225,6 +228,12 @@ export default function ShopPosPage() {
     setScanBusy(true);
     try {
       const res: BarcodeLookup = await lookupBarcode(code, { context: 'pos' });
+      // Shared code: never guess which product the till rang up — no error
+      // beep either, the picker is the expected next step.
+      if (res.ambiguous) {
+        setPick(res);
+        return;
+      }
       if (!res.found) {
         setNotFound(res);
         setScan('');
@@ -232,57 +241,7 @@ export default function ShopPosPage() {
         focusScanner();
         return;
       }
-      const stock = typeof res.available_stock === 'number' ? res.available_stock : null;
-      const product = res.product || {};
-      // Resolve the exact variant first so the guard counts the same line
-      // that addProduct will increment.
-      let variant: any = res.variant || null;
-      if (!variant) {
-        if (Array.isArray(product.variants)) {
-          variant = product.variants[0] || null;
-        } else {
-          try {
-            const d: any = await api(`/api/shop/products/${product.id}`);
-            variant = (d.product?.variants || [])[0] || null;
-          } catch {
-            variant = null;
-          }
-        }
-      }
-      const variantId = variant?.id ?? null;
-      const inCart = lines
-        .filter((l) => l.product_id === product.id && (l.variant_id ?? null) === variantId)
-        .reduce((sum, l) => sum + l.quantity, 0);
-      if (stock !== null && stock <= 0) {
-        setOutOf(res);
-        setScan('');
-        scanFeedback('error', prefs);
-        return;
-      }
-      if (stock !== null && inCart + 1 > stock) {
-        setError2(
-          `Only ${stock} in stock at this branch — ${product.name} cannot be added again.`
-        );
-        setScan('');
-        scanFeedback('error', prefs);
-        focusScanner();
-        return;
-      }
-      await addProduct(
-        { ...product, available: stock, matched_variant: variant || undefined, branches: res.branches },
-        { merge: prefs.increment_repeat }
-      );
-      setScan('');
-      scanFeedback('ok', prefs);
-      const remaining = stock !== null ? stock - (inCart + 1) : null;
-      const minLevel = Number(product.min_stock_level || 0);
-      const label = variant ? `${product.name} — ${variant.name}` : product.name;
-      if (remaining !== null && remaining > 0 && minLevel > 0 && remaining <= minLevel) {
-        setFlash({ kind: 'warn', text: `${remaining} remaining after this sale.` });
-      } else {
-        setFlash({ kind: 'ok', text: `✓ ${label} added` });
-      }
-      focusScanner();
+      await addScanned(res);
     } catch (err: any) {
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
       setError2(
@@ -294,6 +253,61 @@ export default function ShopPosPage() {
     } finally {
       setScanBusy(false);
     }
+  }
+
+  /** Turn a single-owner lookup into a basket line (or the right refusal). */
+  async function addScanned(res: BarcodeLookup) {
+    const stock = typeof res.available_stock === 'number' ? res.available_stock : null;
+    const product = res.product || {};
+    // Resolve the exact variant first so the guard counts the same line
+    // that addProduct will increment.
+    let variant: any = res.variant || null;
+    if (!variant) {
+      if (Array.isArray(product.variants)) {
+        variant = product.variants[0] || null;
+      } else {
+        try {
+          const d: any = await api(`/api/shop/products/${product.id}`);
+          variant = (d.product?.variants || [])[0] || null;
+        } catch {
+          variant = null;
+        }
+      }
+    }
+    const variantId = variant?.id ?? null;
+    const inCart = lines
+      .filter((l) => l.product_id === product.id && (l.variant_id ?? null) === variantId)
+      .reduce((sum, l) => sum + l.quantity, 0);
+    if (stock !== null && stock <= 0) {
+      setOutOf(res);
+      setScan('');
+      scanFeedback('error', prefs);
+      return;
+    }
+    if (stock !== null && inCart + 1 > stock) {
+      setError2(
+        `Only ${stock} in stock at this branch — ${product.name} cannot be added again.`
+      );
+      setScan('');
+      scanFeedback('error', prefs);
+      focusScanner();
+      return;
+    }
+    await addProduct(
+      { ...product, available: stock, matched_variant: variant || undefined, branches: res.branches },
+      { merge: prefs.increment_repeat }
+    );
+    setScan('');
+    scanFeedback('ok', prefs);
+    const remaining = stock !== null ? stock - (inCart + 1) : null;
+    const minLevel = Number(product.min_stock_level || 0);
+    const label = variant ? `${product.name} — ${variant.name}` : product.name;
+    if (remaining !== null && remaining > 0 && minLevel > 0 && remaining <= minLevel) {
+      setFlash({ kind: 'warn', text: `${remaining} remaining after this sale.` });
+    } else {
+      setFlash({ kind: 'ok', text: `✓ ${label} added` });
+    }
+    focusScanner();
   }
 
   async function saveScannerPrefs() {
@@ -1018,6 +1032,18 @@ export default function ShopPosPage() {
         show={!!outOf}
         result={outOf}
         onClose={() => { setOutOf(null); focusScanner(); }}
+      />
+
+      <BarcodeCandidatePicker
+        lookup={pick}
+        show={!!pick}
+        onClose={() => { setPick(null); setScan(''); focusScanner(); }}
+        onPick={(c) => {
+          if (!pick) return;
+          const res = lookupFromCandidate(pick, c);
+          setPick(null);
+          addScanned(res);
+        }}
       />
     </div>
   );

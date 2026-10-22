@@ -108,29 +108,46 @@ def stock_error(error):
 
 # ── product / variant resolution ─────────────────────────────────────────────
 
+def _single_owner(code, products, variants):
+    """Exactly one owner of a scanned ``code``, or a 409 naming the problem.
+
+    One printed barcode may be shared by several rebranded rows, so a code
+    posted *without* ids has to be unambiguous — stations disambiguate first
+    (the lookup endpoint returns every candidate) and then send ``product_id``.
+    """
+    if len(products) + len(variants) > 1:
+        raise ShopStockError(
+            f'Barcode {code} is shared by several products — '
+            'send product_id to choose one.', 409, 'ambiguous_barcode')
+    return (products[0] if products else None,
+            variants[0] if variants else None)
+
+
 def resolve_variant(data):
     """Find the product and optional variant from an item payload.
 
     Accepts ``product_id``/``variant_id`` or a ``sku``/``barcode`` — the POS
-    scanner posts a barcode string, the catalogue UI posts ids.
+    scanner posts a barcode string, the catalogue UI posts ids. A shared
+    barcode without ids raises ``ambiguous_barcode`` (409) rather than
+    silently picking one owner.
     """
     product = None
     variant = None
     if data.get('product_id'):
         product = ShopProduct.query.get(data['product_id'])
     elif data.get('sku'):
-        product = ShopProduct.query.filter_by(sku=str(data['sku']).strip()).first()
+        code = str(data['sku']).strip()
+        product = ShopProduct.query.filter_by(sku=code).first()
         if product is None:
-            product = ShopProduct.query.filter_by(
-                barcode=str(data['sku']).strip()).first()
+            product, _ = _single_owner(
+                code, ShopProduct.query.filter_by(barcode=code).all(), [])
     elif data.get('barcode'):
-        product = ShopProduct.query.filter_by(
-            barcode=str(data['barcode']).strip()).first()
-        if product is None:
-            variant = ShopProductVariant.query.filter_by(
-                barcode=str(data['barcode']).strip()).first()
-            if variant is not None:
-                product = variant.product
+        code = str(data['barcode']).strip()
+        product, variant = _single_owner(
+            code, ShopProduct.query.filter_by(barcode=code).all(),
+            ShopProductVariant.query.filter_by(barcode=code).all())
+        if product is None and variant is not None:
+            product = variant.product
     if product is None:
         raise ShopStockError('Product not found', 404, 'product_not_found')
     if variant is None and data.get('variant_id'):
@@ -148,8 +165,9 @@ def line_identity(product, variant):
 def resolve_item(entry):
     """Resolve ``{product_id | sku, variant_id}`` into ``(product, variant)``.
 
-    Raises :class:`ShopStockError` (404/400) so callers can answer with the
-    stock-error response instead of a 500.
+    Raises :class:`ShopStockError` (404/400/409) so callers can answer with
+    the stock-error response instead of a 500 — including ``ambiguous_barcode``
+    when an id-less code turns out to be shared by several products.
     """
     if not isinstance(entry, dict):
         raise ShopStockError('Each line must be an object', 400, 'invalid_line')
@@ -164,14 +182,15 @@ def resolve_item(entry):
         product = ShopProduct.query.get(int(entry['product_id']))
     if product is None and entry.get('sku'):
         code = str(entry['sku']).strip()
-        product = ShopProduct.query.filter(
-            db.or_(ShopProduct.sku == code, ShopProduct.barcode == code)).first()
-        if product is None:
-            variant = ShopProductVariant.query.filter(
+        product, variant = _single_owner(
+            code,
+            ShopProduct.query.filter(
+                db.or_(ShopProduct.sku == code, ShopProduct.barcode == code)).all(),
+            ShopProductVariant.query.filter(
                 db.or_(ShopProductVariant.sku == code,
-                       ShopProductVariant.barcode == code)).first()
-            if variant is not None:
-                product = variant.product
+                       ShopProductVariant.barcode == code)).all())
+        if product is None and variant is not None:
+            product = variant.product
     if product is None:
         raise ShopStockError('Product not found', 404, 'product_not_found')
     if variant is None and variant_id:
