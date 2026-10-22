@@ -402,17 +402,28 @@ class EnrollmentService:
             return True
         
         import json
-        prerequisites = json.loads(course.prerequisites)
+        try:
+            prerequisites = json.loads(course.prerequisites)
+        except (TypeError, ValueError):
+            # A malformed prerequisites blob must not block enrollment.
+            return True
         
         # Check if student has completed required courses
         for prereq in prerequisites:
             if prereq.get('type') == 'course':
                 prereq_course_id = prereq.get('course_id')
                 enrollment = Enrollment.query.filter_by(
-                    user_id=student.id, course_id=prereq_course_id
+                    student_id=student.id, course_id=prereq_course_id
                 ).first()
                 
-                if not enrollment or not enrollment.completed:
+                completed = bool(
+                    enrollment
+                    and (
+                        enrollment.status == 'completed'
+                        or enrollment.completed_at is not None
+                    )
+                )
+                if not completed:
                     return False
         
         return True

@@ -346,14 +346,15 @@ def parse_json_field(value):
 
 
 # ✅ Submit application (PUBLIC)
-@application_bp.route("", methods=["POST"])
-def apply_for_course():
+def submit_course_application(data):
     """
     Submit a new course application.
     Accepts comprehensive form data matching the 6-section application form.
+
+    Extracted from the route view below so the /api/v2 integration API can
+    invoke the exact same submission logic with a caller-supplied payload
+    (the original body only read ``data`` from the request once).
     """
-    data = request.get_json() or {}
-    
     # Validate required fields
     required_fields = ["course_id", "full_name", "email", "phone", "motivation"]
     missing_fields = [field for field in required_fields if not data.get(field)]
@@ -674,6 +675,13 @@ def apply_for_course():
             "error": "Failed to submit application",
             "details": str(e)
         }), 500
+
+
+@application_bp.route("", methods=["POST"])
+def apply_for_course():
+    """Submit a new course application (thin wrapper — see
+    :func:`submit_course_application` for the shared implementation)."""
+    return submit_course_application(request.get_json() or {})
 
 
 # ── Save application as draft (before payment) ──────────────────────────────

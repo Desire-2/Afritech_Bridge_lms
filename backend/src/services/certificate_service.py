@@ -217,6 +217,31 @@ class CertificateService:
                     f"issued for student {student_id}: {str(badge_error)}"
                 )
 
+            # Integration event for /api/v2 webhook subscribers. Emitted for
+            # EVERY issuance path (student UI, API, automatic completion) and
+            # never allowed to fail the issuance itself.
+            try:
+                from ..api.events import publish_event
+                publish_event(
+                    "certificate.issued",
+                    {
+                        "certificate_id": certificate.id,
+                        "certificate_number": certificate.certificate_number,
+                        "course_id": course_id,
+                        "student_id": student_id,
+                        "overall_score": overall_score,
+                        "issued_at": (certificate.issued_at.isoformat()
+                                      if certificate.issued_at else None),
+                    },
+                    subject_type="certificate",
+                    subject_id=certificate.id,
+                    actor_user_id=student_id,
+                )
+            except Exception as event_error:
+                current_app.logger.warning(
+                    f"certificate.issued event failed for {certificate.id}: {event_error}"
+                )
+
             CertificateService.strip_enrollment_field(eligibility)
             return True, "Certificate generated successfully", payload
 
