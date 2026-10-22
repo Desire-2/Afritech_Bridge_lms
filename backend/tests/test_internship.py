@@ -113,9 +113,9 @@ class TestUtilityFunctions:
         """Test reference code generation format"""
         code = generate_reference_code()
         
-        # Format: ATB-YY-XXXX
+        # Format: ATB-YY-XXXX (2-digit year + 4-digit hex)
         assert code.startswith('ATB-')
-        assert len(code) == 12
+        assert len(code) == 11
         parts = code.split('-')
         assert len(parts) == 3
         assert parts[1].isdigit()
@@ -296,7 +296,13 @@ def app():
 
 @pytest.fixture
 def client(app):
-    """Create a test client"""
+    """Create a test client with a schema in place.
+
+    Model tests in this file tear the shared schema down (``db.drop_all``);
+    recreate it so the API tests that follow don't hit missing tables.
+    """
+    with app.app_context():
+        db.create_all()
     return app.test_client()
 
 

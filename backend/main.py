@@ -47,6 +47,10 @@ from src.models.internship_models import (
     InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog, InternshipOfferLetter
 ) # Import internship models
 from src.models.booking_models import InstructorAvailability, AvailabilityException, Booking # Import booking models
+from src.models.integration_models import (  # /api/v2 integration layer
+    ApiClient, ApiKey, ApiEvent, WebhookSubscription, WebhookDelivery,
+    ApiIdempotencyKey, ApiAuditLog,
+)
 from src.models.workflow_models import (  # Autonomous course-creation workflow models
     CourseWorkflow, WorkflowTask, WorkflowEvent, TaskDependency,
     AgentRun, QualityReview, RepairAttempt, CourseGenerationVersion, AgentMemory,
@@ -432,6 +436,12 @@ app.register_blueprint(payment_verify_bp) # Register payment verification routes
 app.register_blueprint(internships_bp) # Register internship application blueprint
 app.register_blueprint(instructor_settings_bp) # Register instructor settings blueprint
 app.register_blueprint(booking_bp) # Register booking blueprint
+
+# Mount the /api/v2 integration API (blueprint, request middleware, docs
+# aliases). Kept after the legacy registrations so /api/v1 routing is
+# established first and the two surfaces cannot shadow each other.
+from src.api import init_app as init_integration_api
+init_integration_api(app)
 
 # Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
 maintenance_mode = MaintenanceMode(app)

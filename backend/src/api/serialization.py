@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, time
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from ..utils.time_utils import make_aware_local
 

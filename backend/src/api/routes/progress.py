@@ -7,7 +7,7 @@ unlock logic) runs exactly as it does in the LMS UI.
 
 from __future__ import annotations
 
-from ...models.course_models import Course, Enrollment, Lesson
+from ...models.course_models import Enrollment, Lesson
 from ...models.user_models import db
 from .. import api_bp
 from ..auth import current_user, require

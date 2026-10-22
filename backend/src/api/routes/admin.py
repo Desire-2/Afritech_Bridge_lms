@@ -11,17 +11,17 @@ from datetime import datetime
 
 from flask import g, request
 
-from ...models.course_models import Course, Enrollment
+from ...models.course_models import Enrollment
 from ...models.course_application import CourseApplication
 from ...models.integration_models import (ApiAuditLog, ApiClient, ApiKey)
 from ...models.user_models import db
 from .. import api_bp
 from ..auth import current_user, require
 from ..constants import SCOPES
-from ..errors import ApiError, conflict, not_found, validation_error
+from ..errors import conflict, not_found, validation_error
 from ..pagination import paginate_query
 from ..responses import created, no_content, ok, paginated
-from ..serialization import isoify, serialize_application, serialize_enrollment
+from ..serialization import serialize_application, serialize_enrollment
 from ...utils.time_utils import to_local
 
 

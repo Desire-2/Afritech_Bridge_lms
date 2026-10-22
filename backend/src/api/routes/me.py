@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import g, request
+from flask import request
 
 from ...models.user_models import db
 from .. import api_bp

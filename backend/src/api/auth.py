@@ -16,9 +16,9 @@ invalid key presented to a *public* endpoint is still a 401), while
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from functools import wraps
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from flask import g, request
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
@@ -26,7 +26,7 @@ from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from ..models.integration_models import ApiKey
 from ..models.user_models import User
 from ..utils.time_utils import now_local
-from .errors import ApiError, forbidden, unauthenticated
+from .errors import forbidden, unauthenticated
 
 logger = logging.getLogger("api.v2.auth")
 
@@ -193,6 +193,36 @@ def require(*, scopes: Sequence[str] = (), roles: Optional[Sequence[str]] = None
                 resolve_user(required=True, roles=role_list)
             return f(*args, **kwargs)
 
+        # Stamped for the OpenAPI document: the spec generator reads the
+        # nearest guard on the view (walking ``__wrapped__``) so each path
+        # advertises the scopes it really enforces.
+        wrapper.__api_guard__ = {
+            "scopes": list(scope_list),
+            "roles": role_list,
+            "api_key": api_key,
+            "user": user,
+        }
         return wrapper
 
     return decorator
+
+
+def document_guard(*, scopes: Sequence[str] = (), api_key: bool = True,
+                   user: bool = False, roles: Optional[Sequence[str]] = None):
+    """Stamp ``require()``-style security metadata without enforcing it.
+
+    For endpoints that validate credentials through a non-standard path —
+    ``/auth/token`` reads the client secret from the request body, so it
+    cannot go through ``require()`` — but must still advertise their
+    requirements in the OpenAPI document. Enforcement stays in the view.
+    """
+    def _stamp(fn):
+        fn.__api_guard__ = {
+            "scopes": list(scopes),
+            "roles": list(roles) if roles else None,
+            "api_key": api_key,
+            "user": user,
+        }
+        return fn
+
+    return _stamp

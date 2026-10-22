@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from flask import request
-from sqlalchemy import func, or_
+from sqlalchemy import or_
 
 from ...models.course_models import Course, Enrollment
 from .. import api_bp
-from ..auth import require, resolve_user
+from ..auth import resolve_user
 from ..errors import not_found, validation_error
 from ..pagination import paginate_query
 from ..responses import ok, paginated

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from flask import Blueprint, jsonify
+from flask import Blueprint
 from werkzeug.exceptions import HTTPException
 
 from .errors import STATUS_CODES, ApiError
@@ -59,8 +59,9 @@ def _handle_unexpected(error: Exception):  # pragma: no cover - safety net
     ))
 
 
-# Route modules — imported after ``api_bp`` exists to avoid circularity.
-from . import (  # noqa: E402,F401
+# Route modules — imported after ``api_bp`` exists to avoid circularity. They
+# live in ``routes/`` and attach themselves to this blueprint on import.
+from .routes import (  # noqa: E402,F401
     docs as _docs,
     health as _health,
     token as _token,
@@ -76,3 +77,23 @@ from . import (  # noqa: E402,F401
     webhooks as _webhooks,
     events as _events,
 )
+
+
+def init_app(flask_app) -> None:
+    """Mount the integration API on the application.
+
+    One call from ``main.py``: the request middleware (request id, rate
+    limiting, idempotency), the blueprint itself, and the ``/api/docs``
+    aliases. Safe to call once per process; a second call is ignored so a
+    reload helper cannot register the blueprint twice.
+    """
+    if "api_v2" in getattr(flask_app, "blueprints", {}):
+        return
+
+    from .middleware import init_middleware
+    from .routes.docs import register_docs_aliases
+
+    init_middleware(api_bp)
+    flask_app.register_blueprint(api_bp)
+    register_docs_aliases(flask_app)
+    logger.info("integration API mounted at /api/v2")

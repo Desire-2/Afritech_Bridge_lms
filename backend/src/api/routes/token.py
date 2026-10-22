@@ -20,7 +20,7 @@ from sqlalchemy import func
 
 from ...models.user_models import User, db
 from .. import api_bp
-from ..auth import authenticate_client_credentials, require
+from ..auth import authenticate_client_credentials, document_guard
 from ..errors import ApiError, unauthenticated, validation_error
 from ..idempotency import idempotent
 from ..responses import ok
@@ -103,6 +103,7 @@ def _resolve_refresh_token(body, client_id):
 
 @api_bp.route("/auth/token", methods=["POST"])
 @idempotent
+@document_guard(scopes=("auth:token",))
 def issue_token():
     """Mint user access/refresh tokens for an integration client.
 

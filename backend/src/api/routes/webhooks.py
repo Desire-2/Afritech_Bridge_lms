@@ -8,9 +8,9 @@ from ...models.integration_models import (ApiAuditLog, WebhookDelivery,
                                           WebhookSubscription)
 from ...models.user_models import db
 from .. import api_bp
-from ..auth import current_api_key, current_user, require
+from ..auth import current_api_key, require
 from ..constants import SUPPORTED_EVENT_TYPES
-from ..errors import ApiError, forbidden, not_found, validation_error
+from ..errors import forbidden, not_found, validation_error
 from ..events import replay_delivery
 from ..pagination import paginate_query
 from ..responses import created, no_content, ok, paginated

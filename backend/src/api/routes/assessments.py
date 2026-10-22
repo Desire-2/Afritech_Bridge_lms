@@ -6,17 +6,15 @@ reuse the legacy student flows (attempt limits, enrollment gates, scoring).
 
 from __future__ import annotations
 
-from flask import g, request
-from sqlalchemy import or_
+from flask import request
 
-from ...models.course_models import (Assignment, AssignmentSubmission, Course,
+from ...models.course_models import (Assignment, AssignmentSubmission,
                                      Enrollment, Project, ProjectSubmission,
                                      Quiz, Submission)
 from .. import api_bp
 from ..auth import current_user, require
 from ..dispatch import dispatch
 from ..errors import forbidden
-from ..pagination import paginate_query
 from ..responses import ok, paginated
 from ..serialization import isoify, serialize_submission
 

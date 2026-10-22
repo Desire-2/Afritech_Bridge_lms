@@ -18,7 +18,6 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
-from typing import Optional
 from urllib.parse import urlparse
 
 BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal", "metadata.goog"}

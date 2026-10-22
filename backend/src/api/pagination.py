@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from .constants import DEFAULT_PER_PAGE, MAX_PER_PAGE
 from .errors import validation_error

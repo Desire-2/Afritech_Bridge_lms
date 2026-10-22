@@ -21,7 +21,6 @@ import hashlib
 import json
 import logging
 from functools import wraps
-from typing import Optional
 
 from flask import Response, g, request
 from sqlalchemy.exc import IntegrityError

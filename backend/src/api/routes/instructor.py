@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from flask import request
-from sqlalchemy import or_
 
 from ...models.course_models import (Assignment, AssignmentSubmission, Course,
                                      Enrollment, Project, ProjectSubmission)
@@ -12,7 +11,7 @@ from ..auth import current_user, require
 from ..dispatch import dispatch
 from ..errors import forbidden, not_found
 from ..pagination import paginate_query
-from ..responses import ok, paginated
+from ..responses import paginated
 from ..serialization import isoify, serialize_enrollment, serialize_submission
 
 INSTRUCTOR_ROLES = ["instructor", "admin"]

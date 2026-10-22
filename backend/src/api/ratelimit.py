@@ -13,7 +13,7 @@ import os
 import threading
 import time
 from collections import deque
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Tuple
 
 from .constants import (
     RATE_LIMIT_AUTHENTICATED_PER_MINUTE,
