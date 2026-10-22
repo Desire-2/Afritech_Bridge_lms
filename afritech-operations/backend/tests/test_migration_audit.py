@@ -30,6 +30,7 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 
 # Indexes effee61c40c4 added; they must exist after every upgrade and vanish
 # on downgrade (they are created by no other revision).
+AUDIT_INDEX_REVISION = 'effee61c40c4'
 AUDIT_INDEXES = {
     'ix_shop_sales_created_at': 'shop_sales',
     'ix_shop_sales_branch_created_at': 'shop_sales',
@@ -160,7 +161,13 @@ def test_downgrade_then_upgrade_is_reversible(migrated, tmp_path):
     chain = _revision_chain()
     if len(chain) < 3:
         pytest.skip('fewer than three revisions — nothing to step back through')
-    target = chain[2]
+    # Step back past the revision that added AUDIT_INDEXES, not a fixed depth:
+    # a new head would otherwise shift chain[2] and stop the downgrade one
+    # revision too early, leaving the indexes in place by design.
+    audit_pos = chain.index(AUDIT_INDEX_REVISION)
+    if audit_pos + 1 >= len(chain):
+        pytest.skip('audit-index revision is the oldest — nothing to step past')
+    target = chain[audit_pos + 1]
     path = tmp_path / 'roundtrip.db'
     shutil.copy(migrated, path)
 
