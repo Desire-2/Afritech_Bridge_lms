@@ -12,7 +12,7 @@ import { BarcodeInput, BarcodeScanner } from '@/components/shop';
 import type { BarcodeInputHandle } from '@/components/shop';
 import { BarcodeLookup, lookupBarcode, scanFeedback } from '@/lib/barcode';
 
-type Tab = 'balances' | 'movements' | 'adjustments' | 'counts' | 'transfers' | 'alerts';
+type Tab = 'balances' | 'movements' | 'adjustments' | 'counts' | 'transfers' | 'serials' | 'alerts';
 
 type ConfirmState = { title: string; message: string; run: () => void; danger?: boolean; label?: string } | null;
 
@@ -24,6 +24,10 @@ const blankLine = (): Line => ({ product_id: '', variant_id: '', quantity: '' })
 
 /** Reasons accepted by POST /api/shop/inventory/adjustments (inventory.py). */
 const ADJ_REASONS = ['damage', 'loss', 'correction', 'shrinkage', 'found', 'return_to_supplier', 'other'];
+
+/** Values accepted by POST/PATCH /api/shop/inventory/serials (SHOP_SERIAL_STATUSES / SHOP_CONDITIONS). */
+const SERIAL_STATUSES = ['in_stock', 'sold', 'returned', 'damaged', 'lost', 'under_inspection', 'returned_to_supplier', 'written_off'];
+const SERIAL_CONDITIONS = ['good', 'damaged', 'under_inspection', 'wrong_product', 'incomplete'];
 
 const NOTE_CLASS: Record<ScanNote['kind'], string> = {
   ok: 'alert-success', info: 'alert-info', warn: 'alert-warning', error: 'alert-danger',
@@ -77,6 +81,9 @@ export default function ShopInventoryPage() {
   const canAdjust = can(user, P.shopInventoryAdjust);
   const canCount = can(user, P.shopInventoryCount);
   const canTransfer = can(user, P.shopInventoryTransfer);
+  // Unit costs are stripped from the payload for roles without pricing access
+  // (mirrors can_view_shop_costs on the backend / the catalogue page gate).
+  const canSeeCost = can(user, P.shopPricingView) || can(user, P.shopPricingManage);
 
   const [tab, setTab] = useState<Tab>('balances');
 
@@ -87,6 +94,7 @@ export default function ShopInventoryPage() {
     { key: 'adjustments', label: 'Adjustments', perm: P.shopInventoryView },
     { key: 'counts', label: 'Counts', perm: P.shopInventoryView },
     { key: 'transfers', label: 'Transfers', perm: P.shopInventoryView },
+    { key: 'serials', label: 'Serials', perm: P.shopInventoryView },
     { key: 'alerts', label: 'Alerts', perm: P.shopInventoryView },
   ];
   const tabs = allTabs.filter((t) => can(user, t.perm));
@@ -100,6 +108,8 @@ export default function ShopInventoryPage() {
   const [adjStatus, setAdjStatus] = useState('');
   const [cntStatus, setCntStatus] = useState('');
   const [trfStatus, setTrfStatus] = useState('');
+  const [serQ, setSerQ] = useState('');
+  const [serStatus, setSerStatus] = useState('');
   const [alertScope, setAlertScope] = useState('open');
 
   const bal = useFetch(active === 'balances' ? '/api/shop/inventory/balances' : '', [page, balQ, balStatus], {
@@ -128,6 +138,13 @@ export default function ShopInventoryPage() {
     page, per_page: 15, status: trfStatus || undefined,
   });
   const trfRows = trf.data?.items || [];
+
+  const ser = useFetch(active === 'serials' ? '/api/shop/inventory/serials' : '', [page, serQ, serStatus], {
+    page, per_page: 15, status: serStatus || undefined, q: serQ || undefined,
+  });
+  const serRows = ser.data?.items || [];
+  // purchase_cost is stripped from the payload for roles without cost access.
+  const showSerialCost = serRows.some((s: any) => s.purchase_cost !== undefined);
 
   const alr = useFetch(active === 'alerts' ? '/api/shop/inventory/alerts' : '', [page, alertScope], {
     page, per_page: 15, open: alertScope === 'all' ? 'false' : undefined,
@@ -518,6 +535,96 @@ export default function ShopInventoryPage() {
       setTrfErr(err.message);
     } finally {
       setTrfBusy(false);
+    }
+  }
+
+  // ── serialized items ──────────────────────────────────────────────────────
+  const [serOpen, setSerOpen] = useState(false);
+  const [serForm, setSerForm] = useState({
+    serial_number: '', product_id: '', variant_id: '', branch_id: '',
+    status: 'in_stock', condition: 'good', purchase_cost: '', note: '', add_to_stock: true,
+  });
+  const [serBusy, setSerBusy] = useState(false);
+  const [serErr, setSerErr] = useState('');
+
+  const [serEdit, setSerEdit] = useState<any | null>(null);
+  const [serEditForm, setSerEditForm] = useState({ status: 'in_stock', condition: 'good', note: '' });
+  const [serEditBusy, setSerEditBusy] = useState(false);
+  const [serEditErr, setSerEditErr] = useState('');
+
+  async function openSerial() {
+    setSerForm({
+      serial_number: '', product_id: '', variant_id: '', branch_id: '',
+      status: 'in_stock', condition: 'good', purchase_cost: '', note: '', add_to_stock: true,
+    });
+    setProdQ('');
+    setSerErr('');
+    setSerOpen(true);
+    await Promise.all([loadBranches(), loadProducts()]);
+  }
+
+  async function saveSerial(e: React.FormEvent) {
+    e.preventDefault();
+    setSerBusy(true);
+    setSerErr('');
+    try {
+      await api('/api/shop/inventory/serials', {
+        method: 'POST',
+        body: {
+          serial_number: serForm.serial_number.trim(),
+          product_id: Number(serForm.product_id),
+          variant_id: serForm.variant_id ? Number(serForm.variant_id) : undefined,
+          branch_id: serForm.branch_id ? Number(serForm.branch_id) : undefined,
+          status: serForm.status,
+          condition: serForm.condition,
+          // Omit the key entirely when the user cannot view costs.
+          ...(canSeeCost && serForm.purchase_cost !== ''
+            ? { purchase_cost: Number(serForm.purchase_cost) } : {}),
+          note: serForm.note || undefined,
+          add_to_stock: serForm.add_to_stock,
+        },
+      });
+      setSerOpen(false);
+      ser.reload();
+    } catch (err: any) {
+      // 409 "already registered" and 400 "not tracked by serial number"
+      // both arrive as the backend's error message.
+      setSerErr(err.message);
+    } finally {
+      setSerBusy(false);
+    }
+  }
+
+  function openSerialEdit(row: any) {
+    setSerEdit(row);
+    setSerEditForm({
+      status: row.status || 'in_stock',
+      condition: row.condition || 'good',
+      note: row.note || '',
+    });
+    setSerEditErr('');
+  }
+
+  async function saveSerialEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!serEdit) return;
+    setSerEditBusy(true);
+    setSerEditErr('');
+    try {
+      await api(`/api/shop/inventory/serials/${serEdit.id}`, {
+        method: 'PATCH',
+        body: {
+          status: serEditForm.status,
+          condition: serEditForm.condition,
+          note: serEditForm.note,
+        },
+      });
+      setSerEdit(null);
+      ser.reload();
+    } catch (err: any) {
+      setSerEditErr(err.message);
+    } finally {
+      setSerEditBusy(false);
     }
   }
 
@@ -941,6 +1048,79 @@ export default function ShopInventoryPage() {
         </div>
       )}
 
+      {active === 'serials' && (
+        <div>
+          <div className="card mb-3">
+            <div className="card-body d-flex flex-wrap gap-2 align-items-center justify-content-between">
+              <div className="d-flex flex-wrap gap-2 align-items-center">
+                <i className="bi bi-search text-muted" />
+                <input className="form-control form-control-sm" style={{ maxWidth: 280 }} placeholder="Search serial number…"
+                  value={serQ} onChange={(e) => { setSerQ(e.target.value); setPage(1); }} />
+                <select className="form-select form-select-sm" style={{ width: 200 }} value={serStatus}
+                  onChange={(e) => { setSerStatus(e.target.value); setPage(1); }}>
+                  <option value="">All statuses</option>
+                  {SERIAL_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+              {canAdjust && (
+                <button className="btn btn-primary btn-sm" onClick={openSerial}>
+                  <i className="bi bi-plus-circle me-1" /> Register serial
+                </button>
+              )}
+            </div>
+          </div>
+
+          {ser.error && <ErrorAlert message={ser.error} onRetry={ser.reload} />}
+          {ser.loading && <Loading />}
+          {!ser.loading && !ser.error && serRows.length === 0 && <EmptyState message="No serialized items found" />}
+
+          {!ser.loading && !ser.error && serRows.length > 0 && (
+            <>
+              <div className="card">
+                <div className="table-responsive">
+                  <table className="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>Serial number</th><th>Product</th><th>Variant</th><th>Branch</th>
+                        <th>Status</th><th>Condition</th>
+                        {showSerialCost && <th className="text-end">Purchase cost</th>}
+                        <th>Received</th>
+                        {canAdjust && <th />}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {serRows.map((s: any) => (
+                        <tr key={s.id}>
+                          <td className="font-monospace fw-semibold">{s.serial_number || '—'}</td>
+                          <td className="fw-semibold">{s.product || '—'}</td>
+                          <td>{s.variant || '—'}</td>
+                          <td>{s.branch || '—'}</td>
+                          <td><Badge status={s.status || 'info'} /></td>
+                          <td>{String(s.condition || '').replace(/_/g, ' ') || '—'}</td>
+                          {showSerialCost && (
+                            <td className="text-end money">
+                              {s.purchase_cost !== undefined ? fmtMoney(s.purchase_cost) : '—'}
+                            </td>
+                          )}
+                          <td>{fmtDateTime(s.received_at)}</td>
+                          {canAdjust && (
+                            <td className="text-end">
+                              <button className="btn btn-sm btn-outline-primary"
+                                onClick={() => openSerialEdit(s)}>Edit</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <Pagination page={page} pages={ser.data?.pages || 1} total={ser.data?.total} onPage={setPage} />
+            </>
+          )}
+        </div>
+      )}
+
       {active === 'alerts' && (
         <div>
           <div className="card mb-3">
@@ -1181,6 +1361,120 @@ export default function ShopInventoryPage() {
             </button>
           </div>
           {trfLines.map((l, i) => lineBlock(l, i, setTrfLine, (idx) => setTrfLines((rows) => rows.filter((_, j) => j !== idx))))}
+        </form>
+      </Modal>
+
+      <Modal show={serOpen} title="Register serial" onClose={() => setSerOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-outline-secondary" onClick={() => setSerOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveSerial} disabled={serBusy}>{serBusy ? 'Saving…' : 'Register serial'}</button>
+          </>
+        }
+      >
+        <form onSubmit={saveSerial}>
+          {serErr && <div className="alert alert-danger py-2 small">{serErr}</div>}
+          <div className="row">
+            <div className="col-md-6">
+              <Field label="Serial number" required>
+                <TextInput value={serForm.serial_number} required placeholder="Serial, IMEI or tag"
+                  onChange={(e) => setSerForm((f) => ({ ...f, serial_number: e.target.value }))} />
+              </Field>
+            </div>
+            <div className="col-md-6">
+              <Field label="Branch">
+                {branchSelect(serForm.branch_id, (v) => setSerForm((f) => ({ ...f, branch_id: v })), 'My branch (default)')}
+              </Field>
+            </div>
+          </div>
+          {productPicker}
+          <div className="row">
+            <div className="col-md-6">
+              <Field label="Product" required>
+                <SelectInput value={serForm.product_id} required
+                  onChange={(e) => { setSerForm((f) => ({ ...f, product_id: e.target.value, variant_id: '' })); ensureVariants(e.target.value); }}>
+                  <option value="">Select product…</option>
+                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+            <div className="col-md-6">
+              <Field label="Variant">
+                <SelectInput value={serForm.variant_id}
+                  onChange={(e) => setSerForm((f) => ({ ...f, variant_id: e.target.value }))}>
+                  <option value="">Default</option>
+                  {(variantMap[serForm.product_id] || []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+          </div>
+          <div className="row">
+            <div className="col-md-4">
+              <Field label="Status" required>
+                <SelectInput value={serForm.status} onChange={(e) => setSerForm((f) => ({ ...f, status: e.target.value }))}>
+                  {SERIAL_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+            <div className="col-md-4">
+              <Field label="Condition" required>
+                <SelectInput value={serForm.condition} onChange={(e) => setSerForm((f) => ({ ...f, condition: e.target.value }))}>
+                  {SERIAL_CONDITIONS.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+            {canSeeCost && (
+              <div className="col-md-4">
+                <Field label="Purchase cost">
+                  <input type="number" step="0.01" min="0" className="form-control" value={serForm.purchase_cost}
+                    onChange={(e) => setSerForm((f) => ({ ...f, purchase_cost: e.target.value }))} />
+                </Field>
+              </div>
+            )}
+          </div>
+          <Field label="Note">
+            <TextArea rows={2} value={serForm.note} onChange={(e) => setSerForm((f) => ({ ...f, note: e.target.value }))} />
+          </Field>
+          <div className="form-check">
+            <input className="form-check-input" type="checkbox" id="ser-add-stock" checked={serForm.add_to_stock}
+              onChange={(e) => setSerForm((f) => ({ ...f, add_to_stock: e.target.checked }))} />
+            <label className="form-check-label small" htmlFor="ser-add-stock">
+              Add to stock (posts an opening-balance movement for 1 unit)
+            </label>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal show={!!serEdit} title={serEdit ? `Serial ${serEdit.serial_number}` : 'Edit serial'}
+        onClose={() => setSerEdit(null)}
+        footer={
+          <>
+            <button className="btn btn-outline-secondary" onClick={() => setSerEdit(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveSerialEdit} disabled={serEditBusy}>{serEditBusy ? 'Saving…' : 'Save changes'}</button>
+          </>
+        }
+      >
+        <form onSubmit={saveSerialEdit}>
+          {serEditErr && <div className="alert alert-danger py-2 small">{serEditErr}</div>}
+          <div className="row">
+            <div className="col-md-6">
+              <Field label="Status" required>
+                <SelectInput value={serEditForm.status} onChange={(e) => setSerEditForm((f) => ({ ...f, status: e.target.value }))}>
+                  {SERIAL_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+            <div className="col-md-6">
+              <Field label="Condition" required>
+                <SelectInput value={serEditForm.condition} onChange={(e) => setSerEditForm((f) => ({ ...f, condition: e.target.value }))}>
+                  {SERIAL_CONDITIONS.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+          </div>
+          <Field label="Note">
+            <TextArea rows={2} value={serEditForm.note} onChange={(e) => setSerEditForm((f) => ({ ...f, note: e.target.value }))} />
+          </Field>
         </form>
       </Modal>
 

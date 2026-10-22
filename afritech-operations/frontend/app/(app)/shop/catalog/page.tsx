@@ -1,12 +1,13 @@
 'use client';
 
 import { Suspense, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useFetch } from '@/lib/use-fetch';
 import { ApiClientError, api, can, fmtDateTime, fmtMoney } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { P } from '@/lib/permissions';
-import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge } from '@/components/ui';
+import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { BarcodeInput, BarcodeScanner, BarcodeStatus } from '@/components/shop';
 import {
@@ -24,6 +25,20 @@ const emptyForm = {
   sku: '', name: '', category_id: '', brand_id: '', selling_price: '',
   purchase_cost: '', barcode: '', warranty_months: '', description: '',
 };
+
+/** Fields of the Edit product form — every editable column of a product. */
+const emptyEditForm = {
+  name: '', description: '', category_id: '', brand_id: '', supplier_id: '',
+  unit: 'pcs', min_selling_price: '', min_stock_level: '', reorder_level: '',
+  reorder_quantity: '', selling_price: '', purchase_cost: '',
+  warranty_months: '', warranty_provider: '', warranty_terms: '', reason: '',
+};
+
+/** Coerce a money input to a number, treating blanks as zero. */
+function moneyNum(value: any): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
 
 /** Retail symbologies — everything else is an internal shop code. */
 const EXTERNAL_FORMATS = ['EAN_13', 'UPC_A', 'EAN_8', 'UPC_E'];
@@ -126,6 +141,11 @@ function CatalogInner() {
   const { user } = useAuth();
   const canCreate = can(user, P.shopProductsCreate);
   const canEdit = can(user, P.shopProductsEdit);
+  const canArchive = can(user, P.shopProductsArchive);
+  // Money columns are their own scope: without them the price inputs are
+  // hidden and their keys never reach the PATCH payload.
+  const canManageMoney = can(user, P.shopPricingManage);
+  const canPriceHistory = can(user, P.shopPricingView);
   // Mirrors the backend cost permissions: without them purchase_cost is
   // stripped from every payload, so neither the column nor the field exists.
   const canSeeCost = can(user, P.shopPricingView) || can(user, P.shopPricingManage)
@@ -134,7 +154,9 @@ function CatalogInner() {
 
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
-  const { data, error, loading, reload } = useFetch('/api/shop/products', [page, q], { page, per_page: 15, q: q || undefined });
+  const [status, setStatus] = useState('');
+  const { data, error, loading, reload } = useFetch('/api/shop/products', [page, q, status],
+    { page, per_page: 15, q: q || undefined, status: status || undefined });
   const items = data?.items || [];
 
   const [open, setOpen] = useState(false);
@@ -162,6 +184,26 @@ function CatalogInner() {
   const [change, setChange] = useState({ ...emptyChange });
   const [labelOpen, setLabelOpen] = useState(false);
 
+  // ── admin actions: edit, archive/restore, price history ──
+  const [flash, setFlash] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<any>({ ...emptyEditForm });
+  /** Snapshot of the loaded values, so only real money changes carry a reason. */
+  const [editOrig, setEditOrig] = useState<any>({ ...emptyEditForm });
+  const [editLoading, setEditLoading] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editErr, setEditErr] = useState('');
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [confirmTarget, setConfirmTarget] = useState<any | null>(null);
+  /** Row currently running a restore, so its button can show progress. */
+  const [actionBusy, setActionBusy] = useState<number | null>(null);
+  const [hist, setHist] = useState<{ items: any[]; total: number; pages: number }>({ items: [], total: 0, pages: 1 });
+  const [histPage, setHistPage] = useState(1);
+  const [histLoading, setHistLoading] = useState(false);
+  const [histError, setHistError] = useState('');
+
   // ?new=1 opens the create modal, &barcode=… prefills and checks it. The key
   // is tracked so a Register link from this same page re-triggers the flow;
   // the flag is then stripped so the next link with the same code counts too.
@@ -183,6 +225,34 @@ function CatalogInner() {
   useEffect(() => {
     barcodeInputRef.current?.classList.toggle('is-invalid', !!scan.conflict && !scan.conflict.own);
   });
+
+  // Paged price history for the open product — fetched from its own endpoint
+  // so a long-lived product never ships its whole change log at once.
+  useEffect(() => {
+    if (!detailId || !canPriceHistory) {
+      setHistLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setHistLoading(true);
+    setHistError('');
+    api(`/api/shop/products/${detailId}/price-history`, { params: { page: histPage, per_page: 20 } })
+      .then((d: any) => {
+        if (cancelled) return;
+        setHist({ items: d?.items || [], total: d?.total || 0, pages: d?.pages || 1 });
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setHist({ items: [], total: 0, pages: 1 });
+        // A missing pricing scope must not break the rest of the modal.
+        setHistError(err instanceof ApiClientError && err.status === 403
+          ? 'You do not have permission to view the price history.'
+          : err.message || 'The price history could not be loaded.');
+      })
+      .finally(() => { if (!cancelled) setHistLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailId, histPage, canPriceHistory]);
 
   function set<K extends keyof typeof form>(key: K, value: any) { setForm((f) => ({ ...f, [key]: value })); }
 
@@ -214,6 +284,12 @@ function CatalogInner() {
     if (prefill) checkProductBarcode(prefill);
   }
 
+  function showFlash(tone: 'ok' | 'error', text: string) {
+    setFlash({ tone, text });
+    if (flashTimerRef.current) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlash(null), 5000);
+  }
+
   async function openDetail(product: any) {
     const id = typeof product === 'number' ? product : product?.id;
     if (!id) return;
@@ -221,6 +297,9 @@ function CatalogInner() {
     setDetail(null);
     setDetailError('');
     setDetailLoading(true);
+    setHist({ items: [], total: 0, pages: 1 });
+    setHistPage(1);
+    setHistError('');
     try {
       const d: any = await api(`/api/shop/products/${id}`);
       setDetail(d.product || null);
@@ -237,6 +316,149 @@ function CatalogInner() {
     setCopied(false);
     setLabelOpen(false);
     setChange({ ...emptyChange });
+    setHist({ items: [], total: 0, pages: 1 });
+    setHistPage(1);
+    setHistError('');
+  }
+
+  function setE(key: keyof typeof emptyEditForm, value: any) {
+    setEditForm((f: any) => ({ ...f, [key]: value }));
+  }
+
+  /** Load the full product into the Edit form (details endpoint, not the row). */
+  async function openEdit(product: any) {
+    const id = typeof product === 'number' ? product : product?.id;
+    if (!id || !canEdit) return;
+    setEditId(id);
+    setEditErr('');
+    setEditForm({ ...emptyEditForm });
+    setEditOrig({ ...emptyEditForm });
+    setEditOpen(true);
+    setEditLoading(true);
+    try {
+      const [d, c, b, s]: any[] = await Promise.all([
+        api(`/api/shop/products/${id}`),
+        api('/api/shop/categories').catch(() => ({ items: [] })),
+        api('/api/shop/brands').catch(() => ({ items: [] })),
+        api('/api/shop/suppliers', { params: { per_page: 200 } }).catch(() => ({ items: [] })),
+      ]);
+      const p = d?.product;
+      if (!p) throw new Error('Product not found');
+      const prefilled = {
+        name: p.name || '',
+        description: p.description || '',
+        category_id: p.category_id ? String(p.category_id) : '',
+        brand_id: p.brand_id ? String(p.brand_id) : '',
+        supplier_id: p.supplier_id ? String(p.supplier_id) : '',
+        unit: p.unit || 'pcs',
+        min_selling_price: p.min_selling_price ?? '',
+        min_stock_level: p.min_stock_level ?? 0,
+        reorder_level: p.reorder_level ?? 0,
+        reorder_quantity: p.reorder_quantity ?? 0,
+        selling_price: p.selling_price ?? '',
+        purchase_cost: p.purchase_cost ?? '',
+        warranty_months: p.warranty_months ?? '',
+        warranty_provider: p.warranty_provider || '',
+        warranty_terms: p.warranty_terms || '',
+        reason: '',
+      };
+      setEditForm(prefilled);
+      setEditOrig(prefilled);
+      setCats(c.items || []);
+      setBrands(b.items || []);
+      setSuppliers(s.items || []);
+    } catch (err: any) {
+      setEditErr(err.message);
+    } finally {
+      setEditLoading(false);
+    }
+  }
+
+  async function saveEdit(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (editId === null || editBusy || editLoading) return;
+    setEditBusy(true);
+    setEditErr('');
+    try {
+      const body: any = {
+        name: String(editForm.name || '').trim(),
+        description: editForm.description || '',
+        unit: editForm.unit || 'pcs',
+        category_id: editForm.category_id ? Number(editForm.category_id) : null,
+        brand_id: editForm.brand_id ? Number(editForm.brand_id) : null,
+        supplier_id: editForm.supplier_id ? Number(editForm.supplier_id) : null,
+        min_stock_level: editForm.min_stock_level === '' ? 0 : Number(editForm.min_stock_level),
+        reorder_level: editForm.reorder_level === '' ? 0 : Number(editForm.reorder_level),
+        reorder_quantity: editForm.reorder_quantity === '' ? 0 : Number(editForm.reorder_quantity),
+        warranty_months: editForm.warranty_months === '' ? 0 : Number(editForm.warranty_months),
+        warranty_provider: editForm.warranty_provider || null,
+        warranty_terms: editForm.warranty_terms || null,
+      };
+      // Money keys only leave the browser for a pricing manager, and only
+      // when the value really moved — an unchanged price is not history.
+      if (canManageMoney) {
+        if (moneyNum(editForm.selling_price) !== moneyNum(editOrig.selling_price)) {
+          body.selling_price = moneyNum(editForm.selling_price);
+        }
+        if (moneyNum(editForm.purchase_cost) !== moneyNum(editOrig.purchase_cost)) {
+          body.purchase_cost = moneyNum(editForm.purchase_cost);
+        }
+        if (String(editForm.min_selling_price ?? '') !== String(editOrig.min_selling_price ?? '')) {
+          body.min_selling_price = editForm.min_selling_price === ''
+            ? null : moneyNum(editForm.min_selling_price);
+        }
+        if (('selling_price' in body || 'purchase_cost' in body) && String(editForm.reason || '').trim()) {
+          body.reason = String(editForm.reason).trim();
+        }
+      }
+      const res: any = await api(`/api/shop/products/${editId}`, { method: 'PATCH', body });
+      setEditOpen(false);
+      if (detailId === editId) setDetail((d: any) => (d ? { ...d, ...(res?.product || {}) } : d));
+      reload();
+      showFlash('ok', 'Product updated.');
+    } catch (err: any) {
+      setEditErr((err instanceof ApiClientError && err.data?.error) || err.message
+        || 'The product could not be updated.');
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  /** DELETE = archive. 409 already_archived just refreshes the badge. */
+  async function archiveProduct() {
+    const target = confirmTarget;
+    if (!target) return;
+    try {
+      await api(`/api/shop/products/${target.id}`, { method: 'DELETE' });
+      if (detailId === target.id) setDetail((d: any) => (d ? { ...d, status: 'archived' } : d));
+      reload();
+      showFlash('ok', `“${target.name}” archived.`);
+    } catch (err: any) {
+      if (err instanceof ApiClientError && err.status === 409 && err.data?.code === 'already_archived') {
+        if (detailId === target.id) setDetail((d: any) => (d ? { ...d, status: 'archived' } : d));
+        reload();
+        showFlash('ok', 'That product was already archived — the list has been refreshed.');
+        return;
+      }
+      throw err; // surfaces inside the confirm dialog
+    }
+  }
+
+  async function restoreProduct(product: any) {
+    if (!product || actionBusy !== null) return;
+    setActionBusy(product.id);
+    try {
+      const res: any = await api(`/api/shop/products/${product.id}/status`, {
+        method: 'POST', body: { status: 'active' },
+      });
+      if (detailId === product.id) setDetail((d: any) => (d ? { ...d, ...(res?.product || {}) } : d));
+      reload();
+      showFlash('ok', `“${product.name}” restored to active.`);
+    } catch (err: any) {
+      showFlash('error', err.message || 'The product could not be restored.');
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   function useExistingProduct(productId: number) {
@@ -494,7 +716,10 @@ function CatalogInner() {
 
   const variantsOfDetail: any[] = detail?.variants || [];
   const showVariantCost = variantsOfDetail.some((v) => v.purchase_cost !== undefined);
-  const priceHistory: any[] = detail?.price_history || [];
+  const moneyTouched = canManageMoney && (
+    moneyNum(editForm.selling_price) !== moneyNum(editOrig.selling_price) ||
+    moneyNum(editForm.purchase_cost) !== moneyNum(editOrig.purchase_cost)
+  );
   const missingRequired = REQUIRED_FIELDS.map((f) => ({
     label: f.label,
     done: String(form[f.key] ?? '').trim() !== '',
@@ -504,12 +729,33 @@ function CatalogInner() {
   return (
     <div>
       <PageHeader title="Catalogue" subtitle="Products, variants and pricing"
-        actions={canCreate && <button className="btn btn-primary" onClick={() => openCreate()}><i className="bi bi-plus-circle me-1" /> New product</button>} />
+        actions={
+          <>
+            {canEdit && (
+              <Link className="btn btn-outline-secondary" href="/shop/taxonomy">
+                <i className="bi bi-tags me-1" /> Manage categories &amp; brands
+              </Link>
+            )}
+            {canCreate && <button className="btn btn-primary" onClick={() => openCreate()}><i className="bi bi-plus-circle me-1" /> New product</button>}
+          </>
+        } />
+
+      {flash && (
+        <div className={`alert ${flash.tone === 'ok' ? 'alert-success' : 'alert-danger'} py-2 small`}>{flash.text}</div>
+      )}
 
       <div className="card mb-3">
-        <div className="card-body py-2 d-flex align-items-center">
-          <i className="bi bi-search text-muted me-2" />
+        <div className="card-body py-2 d-flex align-items-center flex-wrap gap-2">
+          <i className="bi bi-search text-muted me-1" />
           <input className="form-control form-control-sm border-0 shadow-none" placeholder="Search name, SKU or barcode…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+          <select className="form-select form-select-sm" style={{ width: 220 }} value={status}
+            onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Filter by status">
+            <option value="">All statuses (hides archived)</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="discontinued">Discontinued</option>
+            <option value="archived">Archived</option>
+          </select>
         </div>
       </div>
 
@@ -540,7 +786,27 @@ function CatalogInner() {
                       <td className="text-end money fw-semibold">{fmtMoney(p.selling_price)}</td>
                       <td><Badge status={p.status} /></td>
                       <td className="text-end">
-                        <button className="btn btn-sm btn-outline-secondary" onClick={(e) => { e.stopPropagation(); openDetail(p); }}>View</button>
+                        <div className="d-flex justify-content-end gap-1 flex-wrap">
+                          <button className="btn btn-sm btn-outline-secondary" onClick={(e) => { e.stopPropagation(); openDetail(p); }}>View</button>
+                          {canEdit && (
+                            <button className="btn btn-sm btn-outline-secondary" title="Edit product"
+                              onClick={(e) => { e.stopPropagation(); openEdit(p); }}>
+                              <i className="bi bi-pencil" />
+                            </button>
+                          )}
+                          {canArchive && (p.status === 'archived' ? (
+                            <button className="btn btn-sm btn-outline-success" title="Restore product"
+                              disabled={actionBusy === p.id}
+                              onClick={(e) => { e.stopPropagation(); restoreProduct(p); }}>
+                              <i className="bi bi-arrow-clockwise" />
+                            </button>
+                          ) : (
+                            <button className="btn btn-sm btn-outline-danger" title="Archive product"
+                              onClick={(e) => { e.stopPropagation(); setConfirmTarget(p); }}>
+                              <i className="bi bi-archive" />
+                            </button>
+                          ))}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -751,7 +1017,26 @@ function CatalogInner() {
       </Modal>
 
       <Modal show={detailId !== null} title={detail ? detail.name : 'Product'} onClose={closeDetail}
-        footer={<button className="btn btn-outline-secondary" onClick={closeDetail}>Close</button>}
+        footer={
+          <>
+            {canEdit && detail && (
+              <button className="btn btn-outline-secondary" onClick={() => openEdit(detail)}>
+                <i className="bi bi-pencil me-1" />Edit
+              </button>
+            )}
+            {canArchive && detail && (detail.status === 'archived' ? (
+              <button className="btn btn-outline-success" disabled={actionBusy === detail.id}
+                onClick={() => restoreProduct(detail)}>
+                <i className="bi bi-arrow-clockwise me-1" />{actionBusy === detail.id ? 'Restoring…' : 'Restore'}
+              </button>
+            ) : (
+              <button className="btn btn-outline-danger" onClick={() => setConfirmTarget(detail)}>
+                <i className="bi bi-archive me-1" />Archive
+              </button>
+            ))}
+            <button className="btn btn-outline-secondary" onClick={closeDetail}>Close</button>
+          </>
+        }
       >
         {detailLoading && <Loading />}
         {!detailLoading && detailError && <div className="alert alert-danger py-2 small">{detailError}</div>}
@@ -858,28 +1143,46 @@ function CatalogInner() {
               </div>
             )}
 
-            {priceHistory.length > 0 && (
-              <>
-                <h6 className="fw-semibold mb-2">Price history</h6>
-                <div className="table-responsive">
-                  <table className="table table-sm mb-0">
-                    <thead>
-                      <tr><th>Date</th><th>Field</th><th>From</th><th>To</th><th>By</th></tr>
-                    </thead>
-                    <tbody>
-                      {priceHistory.map((h: any) => (
-                        <tr key={h.id}>
-                          <td>{fmtDateTime(h.created_at)}</td>
-                          <td>{h.field}</td>
-                          <td>{h.old_value ?? '—'}</td>
-                          <td>{h.new_value ?? '—'}</td>
-                          <td>{h.changed_by_name || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {canPriceHistory && (
+              <div className="mb-3">
+                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                  <h6 className="fw-semibold mb-0">Price history</h6>
+                  {histLoading && (
+                    <span className="small text-muted d-flex align-items-center">
+                      <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />
+                      Loading…
+                    </span>
+                  )}
                 </div>
-              </>
+                {histError && <div className="alert alert-warning py-2 small mb-2">{histError}</div>}
+                {!histError && !histLoading && hist.items.length === 0 && (
+                  <p className="small text-muted mb-0">No price changes recorded yet.</p>
+                )}
+                {hist.items.length > 0 && (
+                  <>
+                    <div className="table-responsive">
+                      <table className="table table-sm mb-0">
+                        <thead>
+                          <tr><th>Date</th><th>Field</th><th>Old value</th><th>New value</th><th>Reason</th><th>By</th></tr>
+                        </thead>
+                        <tbody>
+                          {hist.items.map((h: any) => (
+                            <tr key={h.id}>
+                              <td className="text-nowrap">{fmtDateTime(h.created_at)}</td>
+                              <td>{h.field}</td>
+                              <td>{h.old_value ?? '—'}</td>
+                              <td>{h.new_value ?? '—'}</td>
+                              <td>{h.reason || '—'}</td>
+                              <td>{h.changed_by_name || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <Pagination page={histPage} pages={hist.pages || 1} total={hist.total} onPage={setHistPage} />
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -942,6 +1245,143 @@ function CatalogInner() {
         </form>
       </Modal>
 
+      <Modal show={editOpen} title="Edit product" onClose={() => setEditOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-outline-secondary" onClick={() => setEditOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveEdit}
+              disabled={editBusy || editLoading || !String(editForm.name || '').trim()}>
+              {editBusy ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        }
+      >
+        {editLoading && <Loading label="Loading product…" />}
+        {!editLoading && (
+          <form onSubmit={saveEdit}>
+            {editErr && <div className="alert alert-danger py-2 small">{editErr}</div>}
+            <Field label="Name" required>
+              <TextInput value={editForm.name} onChange={(e) => setE('name', e.target.value)} required />
+            </Field>
+            <div className="row">
+              <div className="col-md-6">
+                <Field label="Category">
+                  <SelectInput value={editForm.category_id} onChange={(e) => setE('category_id', e.target.value)}>
+                    <option value="">None</option>
+                    {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </SelectInput>
+                </Field>
+              </div>
+              <div className="col-md-6">
+                <Field label="Brand">
+                  <SelectInput value={editForm.brand_id} onChange={(e) => setE('brand_id', e.target.value)}>
+                    <option value="">None</option>
+                    {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </SelectInput>
+                </Field>
+              </div>
+            </div>
+            <div className="row">
+              <div className="col-md-6">
+                <Field label="Supplier">
+                  <SelectInput value={editForm.supplier_id} onChange={(e) => setE('supplier_id', e.target.value)}>
+                    <option value="">None</option>
+                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.company_name}</option>)}
+                  </SelectInput>
+                </Field>
+              </div>
+              <div className="col-md-6">
+                <Field label="Unit">
+                  <TextInput value={editForm.unit} onChange={(e) => setE('unit', e.target.value)} placeholder="pcs" />
+                </Field>
+              </div>
+            </div>
+            {canManageMoney ? (
+              <div className="row">
+                <div className="col-md-4">
+                  <Field label="Selling price (RWF)">
+                    <TextInput type="number" step="0.01" min="0" value={editForm.selling_price}
+                      onChange={(e) => setE('selling_price', e.target.value)} />
+                  </Field>
+                </div>
+                <div className="col-md-4">
+                  <Field label="Purchase cost (RWF)">
+                    <TextInput type="number" step="0.01" min="0" value={editForm.purchase_cost}
+                      onChange={(e) => setE('purchase_cost', e.target.value)} />
+                  </Field>
+                </div>
+                <div className="col-md-4">
+                  <Field label="Minimum selling price (RWF)"
+                    hint="The selling price cannot be saved below this floor.">
+                    <TextInput type="number" step="0.01" min="0" value={editForm.min_selling_price}
+                      onChange={(e) => setE('min_selling_price', e.target.value)} />
+                  </Field>
+                </div>
+                {moneyTouched && (
+                  <div className="col-12">
+                    <Field label="Reason for the price change"
+                      hint="Optional — kept in the price history shown under the product.">
+                      <TextInput value={editForm.reason} onChange={(e) => setE('reason', e.target.value)}
+                        placeholder="e.g. new supplier cost" />
+                    </Field>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="small text-muted mb-3">
+                Prices are managed by a user with pricing permission — they are not editable here.
+              </p>
+            )}
+            <div className="row">
+              <div className="col-md-4">
+                <Field label="Minimum stock level">
+                  <TextInput type="number" step="1" min="0" value={editForm.min_stock_level}
+                    onChange={(e) => setE('min_stock_level', e.target.value)} />
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label="Reorder level">
+                  <TextInput type="number" step="1" min="0" value={editForm.reorder_level}
+                    onChange={(e) => setE('reorder_level', e.target.value)} />
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label="Reorder quantity">
+                  <TextInput type="number" step="1" min="0" value={editForm.reorder_quantity}
+                    onChange={(e) => setE('reorder_quantity', e.target.value)} />
+                </Field>
+              </div>
+            </div>
+            <div className="row">
+              <div className="col-md-4">
+                <Field label="Warranty (months)">
+                  <TextInput type="number" step="1" min="0" value={editForm.warranty_months}
+                    onChange={(e) => setE('warranty_months', e.target.value)} />
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label="Warranty provider">
+                  <TextInput value={editForm.warranty_provider}
+                    onChange={(e) => setE('warranty_provider', e.target.value)} />
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label="Warranty terms">
+                  <TextInput value={editForm.warranty_terms}
+                    onChange={(e) => setE('warranty_terms', e.target.value)} />
+                </Field>
+              </div>
+            </div>
+            <Field label="Description">
+              <TextArea value={editForm.description} onChange={(e) => setE('description', e.target.value)} rows={3} />
+            </Field>
+            <p className="small text-muted mb-0">
+              SKU and barcode are managed from the product view.
+            </p>
+          </form>
+        )}
+      </Modal>
+
       <BarcodeLabelDialog
         show={labelOpen && !!detail}
         onClose={() => setLabelOpen(false)}
@@ -960,6 +1400,15 @@ function CatalogInner() {
           setCameraFor(null);
           handleCameraValue(target, value);
         }}
+      />
+
+      <ConfirmDialog
+        show={!!confirmTarget}
+        title="Archive product"
+        message={`Archive “${confirmTarget?.name || ''}”? It leaves the catalogue, the POS and new purchase orders until it is restored — sales and stock history stay intact.`}
+        confirmLabel="Archive"
+        onConfirm={archiveProduct}
+        onClose={() => setConfirmTarget(null)}
       />
     </div>
   );

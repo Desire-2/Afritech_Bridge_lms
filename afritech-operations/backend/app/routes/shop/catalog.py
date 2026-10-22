@@ -97,6 +97,27 @@ def update_category(row_id):
     return jsonify({'category': row.to_dict(include_children=True)})
 
 
+@bp.delete('/categories/<int:row_id>')
+@require_permission('shop.products.edit')
+def delete_category(row_id):
+    """Deactivate a category (soft delete).
+
+    Products keep their ``category_id`` so history, reports and old receipts
+    stay intact — the category simply disappears from the pickers.
+    """
+    row = ShopProductCategory.query.get(row_id)
+    if not row:
+        return json_error('Category not found', 404)
+    previous = row.to_dict()
+    row.is_active = False
+    affected = ShopProduct.query.filter_by(category_id=row.id).count()
+    db.session.commit()
+    audit('shop_category_deactivated', 'shop_category', row.id,
+          previous_value=previous, new_value=row.to_dict())
+    return jsonify({'category': row.to_dict(include_children=True),
+                    'affected_products': affected})
+
+
 # ── brands ───────────────────────────────────────────────────────────────────
 
 @bp.get('/brands')
@@ -133,12 +154,34 @@ def update_brand(row_id):
     previous = row.to_dict()
     if data.get('name'):
         row.name = data['name']
+    if data.get('code') and data['code'] != row.code:
+        if ShopBrand.query.filter(
+                ShopBrand.code == data['code'],
+                ShopBrand.id != row.id).first():
+            return json_error('A brand with that code already exists', 409)
+        row.code = data['code']
     if 'is_active' in data:
         row.is_active = bool(data['is_active'])
     db.session.commit()
     audit('shop_brand_updated', 'shop_brand', row.id,
           previous_value=previous, new_value=row.to_dict())
     return jsonify({'brand': row.to_dict()})
+
+
+@bp.delete('/brands/<int:row_id>')
+@require_permission('shop.products.edit')
+def delete_brand(row_id):
+    """Deactivate a brand (soft delete) — products keep their FK."""
+    row = ShopBrand.query.get(row_id)
+    if not row:
+        return json_error('Brand not found', 404)
+    previous = row.to_dict()
+    row.is_active = False
+    affected = ShopProduct.query.filter_by(brand_id=row.id).count()
+    db.session.commit()
+    audit('shop_brand_deactivated', 'shop_brand', row.id,
+          previous_value=previous, new_value=row.to_dict())
+    return jsonify({'brand': row.to_dict(), 'affected_products': affected})
 
 
 # ── attributes ───────────────────────────────────────────────────────────────
@@ -165,6 +208,50 @@ def create_attribute():
     db.session.commit()
     audit('shop_attribute_created', 'shop_attribute', row.id, new_value=row.to_dict())
     return jsonify({'attribute': row.to_dict()}), 201
+
+
+@bp.patch('/attributes/<int:row_id>')
+@require_permission('shop.products.edit')
+def update_attribute(row_id):
+    row = ShopAttribute.query.get(row_id)
+    if not row:
+        return json_error('Attribute not found', 404)
+    data = parse_json()
+    previous = row.to_dict()
+    if data.get('name'):
+        row.name = data['name']
+    if data.get('code') and data['code'] != row.code:
+        if ShopAttribute.query.filter(
+                ShopAttribute.code == data['code'],
+                ShopAttribute.id != row.id).first():
+            return json_error('An attribute with that code already exists', 409)
+        row.code = data['code']
+    if 'is_active' in data:
+        row.is_active = bool(data['is_active'])
+    db.session.commit()
+    audit('shop_attribute_updated', 'shop_attribute', row.id,
+          previous_value=previous, new_value=row.to_dict())
+    return jsonify({'attribute': row.to_dict()})
+
+
+@bp.delete('/attributes/<int:row_id>')
+@require_permission('shop.products.edit')
+def delete_attribute(row_id):
+    """Deactivate an attribute (soft delete).
+
+    Attribute values assigned to products are kept — deactivating only
+    removes the attribute from future product forms.
+    """
+    row = ShopAttribute.query.get(row_id)
+    if not row:
+        return json_error('Attribute not found', 404)
+    previous = row.to_dict()
+    row.is_active = False
+    used = ShopProductAttributeValue.query.filter_by(attribute_id=row.id).count()
+    db.session.commit()
+    audit('shop_attribute_deactivated', 'shop_attribute', row.id,
+          previous_value=previous, new_value=row.to_dict())
+    return jsonify({'attribute': row.to_dict(), 'used_values': used})
 
 
 def _attribute_for(key):
@@ -752,6 +839,26 @@ def get_product(product_id):
     return jsonify({'product': data})
 
 
+@bp.get('/products/<int:product_id>/price-history')
+@require_any_permission('shop.pricing.view', 'shop.pricing.manage')
+def product_price_history(product_id):
+    """Full cost/price change log for a product, newest first.
+
+    Money data: gated on the pricing scope rather than plain catalogue view,
+    and paginated so a long-lived product never ships unbounded history.
+    """
+    product = ShopProduct.query.get(product_id)
+    if not product:
+        return json_error('Product not found', 404)
+    q = ShopProductPriceHistory.query.filter_by(product_id=product.id)
+    variant_id = request.args.get('variant_id', type=int)
+    if variant_id:
+        q = q.filter_by(variant_id=variant_id)
+    p = paginate(q.order_by(ShopProductPriceHistory.created_at.desc(),
+                            ShopProductPriceHistory.id.desc()))
+    return paginate_response([h.to_dict() for h in p.items], p)
+
+
 @bp.post('/products/generate-sku')
 @require_permission('shop.products.create')
 def generate_product_sku_endpoint():
@@ -973,6 +1080,28 @@ def set_product_status(product_id):
     audit('shop_product_status', 'shop_product', product.id,
           previous_value={'status': previous}, new_value={'status': status})
     return jsonify({'product': payload_for(product)})
+
+
+@bp.delete('/products/<int:product_id>')
+@require_permission('shop.products.archive')
+def delete_product(product_id):
+    """Archive a product (soft delete).
+
+    Sales, stock movements, receipts and warranty records all reference the
+    row, so it is never removed — archiving takes it out of the catalogue,
+    the POS picker and new purchase orders while history stays queryable.
+    """
+    product = ShopProduct.query.get(product_id)
+    if not product:
+        return json_error('Product not found', 404)
+    if product.status == 'archived':
+        return json_error('Product is already archived', 409, 'already_archived')
+    previous = payload_for(product)
+    product.status = 'archived'
+    db.session.commit()
+    audit('shop_product_archived', 'shop_product', product.id,
+          previous_value=previous, new_value=payload_for(product))
+    return jsonify({'product': payload_for(product), 'archived': True})
 
 
 # ── variants ─────────────────────────────────────────────────────────────────

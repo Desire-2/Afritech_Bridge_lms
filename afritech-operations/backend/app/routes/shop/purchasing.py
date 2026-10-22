@@ -100,6 +100,34 @@ def update_supplier(row_id):
     return jsonify({'supplier': row.to_dict(with_stats=True)})
 
 
+@bp.delete('/suppliers/<int:row_id>')
+@require_permission('shop.suppliers.create')
+def deactivate_supplier(row_id):
+    """Retire a supplier (soft delete).
+
+    Blocked while purchase orders are still open — those orders reference the
+    supplier for approval, receiving and reporting. Closed history stays.
+    """
+    row = ShopSupplier.query.get(row_id)
+    if not row:
+        return json_error('Supplier not found', 404)
+    open_orders = ShopPurchaseOrder.query.filter(
+        ShopPurchaseOrder.supplier_id == row.id,
+        ShopPurchaseOrder.status.in_(
+            ('draft', 'pending_approval', 'approved', 'partially_received'))
+    ).count()
+    if open_orders:
+        return json_error(
+            f'{open_orders} purchase order(s) are still open for this supplier',
+            409, 'open_purchase_orders')
+    previous = row.to_dict()
+    row.is_active = False
+    db.session.commit()
+    audit('shop_supplier_deactivated', 'shop_supplier', row.id,
+          previous_value=previous, new_value=row.to_dict(with_stats=True))
+    return jsonify({'supplier': row.to_dict(with_stats=True)})
+
+
 def _next_supplier_code():
     last = ShopSupplier.query.order_by(ShopSupplier.id.desc()).first()
     number = (int(last.code.split('-')[-1]) + 1) if last and last.code.split(
@@ -299,6 +327,31 @@ def cancel_purchase(row_id):
     audit('shop_purchase_cancelled', 'shop_purchase_order', po.id,
           new_value=payload_for(po))
     return jsonify({'purchase_order': payload_for(po)})
+
+
+@bp.delete('/purchases/<int:row_id>')
+@require_permission('shop.purchases.create')
+def delete_purchase_order(row_id):
+    """Hard-delete a draft purchase order.
+
+    Drafts never moved stock or cost, so there is nothing to unwind — the
+    line items go with the parent through the ORM cascade. Anything that has
+    been submitted must be cancelled instead, keeping the approval trail.
+    """
+    po = ShopPurchaseOrder.query.get(row_id)
+    if not po:
+        return json_error('Purchase order not found', 404)
+    if po.status != 'draft':
+        return json_error(
+            'Only draft purchase orders can be deleted — cancel it instead',
+            409, 'not_draft')
+    previous = payload_for(po, include_items=True)
+    po_number = po.po_number
+    db.session.delete(po)
+    db.session.commit()
+    audit('shop_purchase_order_deleted', 'shop_purchase_order', row_id,
+          previous_value=previous, new_value=None)
+    return jsonify({'deleted': True, 'id': row_id, 'po_number': po_number})
 
 
 # ── goods receipts ───────────────────────────────────────────────────────────

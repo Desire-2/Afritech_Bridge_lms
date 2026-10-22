@@ -12,15 +12,22 @@ import { BarcodeInput, BarcodeScanner, ProductScanResult } from '@/components/sh
 import type { BarcodeInputHandle } from '@/components/shop';
 import { BarcodeLookup, lookupBarcode, scanFeedback } from '@/lib/barcode';
 
-type Tab = 'orders' | 'suppliers';
+type Tab = 'orders' | 'suppliers' | 'returns';
 
 type ConfirmState = { title: string; message: string; run: () => void; danger?: boolean; label?: string } | null;
 
 type PoLine = { product_id: string; variant_id: string; quantity: string; unit_cost: string };
 
+type ReturnLine = { product_id: string; variant_id: string; quantity: string; condition: string; note: string };
+
 type ScanNote = { kind: 'ok' | 'info' | 'warn' | 'error'; text: string };
 
 const blankLine = (): PoLine => ({ product_id: '', variant_id: '', quantity: '', unit_cost: '' });
+
+// ShopSupplierReturnItem.condition accepts the SHOP_CONDITIONS vocabulary.
+const RETURN_CONDITIONS = ['good', 'damaged', 'under_inspection', 'wrong_product', 'incomplete'];
+
+const blankReturnLine = (): ReturnLine => ({ product_id: '', variant_id: '', quantity: '1', condition: 'damaged', note: '' });
 
 const emptySupplier = {
   company_name: '', contact_person: '', phone: '', email: '',
@@ -80,6 +87,7 @@ export default function ShopPurchasingPage() {
   const canApprove = can(user, P.shopPurchasesApprove);
   const canReceive = can(user, P.shopPurchasesReceive);
   const canSuppliers = can(user, P.shopSuppliersCreate);
+  const canAdjust = can(user, P.shopInventoryAdjust);
   // Unit costs only exist in the payload for roles holding a cost permission.
   const canSeeCost = can(user, P.shopPricingView) || can(user, P.shopPricingManage)
     || can(user, P.shopPurchasesCreate) || can(user, P.shopPurchasesApprove)
@@ -90,6 +98,7 @@ export default function ShopPurchasingPage() {
   const allTabs: { key: Tab; label: string; perm: string }[] = [
     { key: 'orders', label: 'Purchase orders', perm: P.shopPurchasesView },
     { key: 'suppliers', label: 'Suppliers', perm: P.shopSuppliersView },
+    { key: 'returns', label: 'Supplier returns', perm: P.shopPurchasesView },
   ];
   const tabs = allTabs.filter((t) => can(user, t.perm));
   const active: Tab | '' = tabs.some((t) => t.key === tab) ? tab : (tabs[0]?.key || '');
@@ -106,11 +115,24 @@ export default function ShopPurchasingPage() {
   const showTotal = orderItems.some((o: any) => o.total_amount !== undefined);
 
   const [supQ, setSupQ] = useState('');
-  const suppliers = useFetch(active === 'suppliers' ? '/api/shop/suppliers' : '', [page, supQ], {
-    page, per_page: 15, q: supQ || undefined,
+  const [supStatus, setSupStatus] = useState('');
+  // The endpoint only understands active=true, so "Inactive" is filtered
+  // locally over one wide page (suppliers are few).
+  const supLocal = supStatus === 'inactive';
+  const suppliers = useFetch(active === 'suppliers' ? '/api/shop/suppliers' : '', [page, supQ, supStatus], {
+    page: supLocal ? 1 : page,
+    per_page: supLocal ? 100 : 15,
+    q: supQ || undefined,
+    active: supStatus === 'active' ? 'true' : undefined,
   });
-  const supplierItems = suppliers.data?.items || [];
+  const supplierItems = (suppliers.data?.items || []).filter((s: any) => (supLocal ? !s.is_active : true));
   const showSpend = supplierItems.some((s: any) => s.total_purchased !== undefined);
+
+  const [retStatus, setRetStatus] = useState('');
+  const returns = useFetch(active === 'returns' ? '/api/shop/supplier-returns' : '', [page, retStatus], {
+    page, per_page: 15, status: retStatus || undefined,
+  });
+  const returnItems = returns.data?.items || [];
 
   const [rowErr, setRowErr] = useState('');
   const [confirm, setConfirm] = useState<ConfirmState>(null);
@@ -195,6 +217,14 @@ export default function ShopPurchasingPage() {
     } finally {
       setDetailLoading(false);
     }
+  }
+
+  // Hard-delete is only valid for drafts; errors (e.g. the 409 `not_draft`
+  // race) propagate so the ConfirmDialog can display them in place.
+  async function deleteDraftPo(p: any) {
+    await api(`/api/shop/purchases/${p.id}`, { method: 'DELETE' });
+    if (detail && detail.id === p.id) setDetail(null);
+    orders.reload();
   }
 
   // ── receive goods ─────────────────────────────────────────────────────────
@@ -460,6 +490,82 @@ export default function ShopPurchasingPage() {
     }
   }
 
+  // Deactivate errors (e.g. the 409 `open_purchase_orders` guard) propagate so
+  // the ConfirmDialog shows the backend message instead of a silent close.
+  async function deactivateSupplier(s: any) {
+    await api(`/api/shop/suppliers/${s.id}`, { method: 'DELETE' });
+    suppliers.reload();
+  }
+
+  async function reactivateSupplier(s: any) {
+    setRowErr('');
+    try {
+      await api(`/api/shop/suppliers/${s.id}`, { method: 'PATCH', body: { is_active: true } });
+      suppliers.reload();
+    } catch (err: any) {
+      setRowErr(err.message);
+    }
+  }
+
+  // ── supplier returns ──────────────────────────────────────────────────────
+  const [retOpen, setRetOpen] = useState(false);
+  const [retForm, setRetForm] = useState({ supplier_id: '', reason: 'defective', notes: '', complete: false });
+  const [retLines, setRetLines] = useState<ReturnLine[]>([blankReturnLine()]);
+  const [retBusy, setRetBusy] = useState(false);
+  const [retErr, setRetErr] = useState('');
+
+  function setRetLine(index: number, key: keyof ReturnLine, value: string) {
+    setRetLines((rows) => rows.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
+  }
+
+  async function openCreateReturn() {
+    setRetForm({ supplier_id: '', reason: 'defective', notes: '', complete: false });
+    setRetLines([blankReturnLine()]);
+    setProdQ('');
+    setRetErr('');
+    setRetOpen(true);
+    await Promise.all([loadSuppliers(), loadProducts()]);
+  }
+
+  async function saveReturn(e: React.FormEvent) {
+    e.preventDefault();
+    setRetBusy(true);
+    setRetErr('');
+    try {
+      await api('/api/shop/supplier-returns', {
+        method: 'POST',
+        body: {
+          supplier_id: retForm.supplier_id ? Number(retForm.supplier_id) : undefined,
+          reason: retForm.reason || 'defective',
+          notes: retForm.notes || undefined,
+          items: retLines
+            .filter((l) => l.product_id && l.quantity !== '')
+            .map((l) => ({
+              product_id: Number(l.product_id),
+              variant_id: l.variant_id ? Number(l.variant_id) : undefined,
+              quantity: Number(l.quantity),
+              condition: l.condition || undefined,
+              note: l.note || undefined,
+            })),
+          complete: retForm.complete || undefined,
+        },
+      });
+      setRetOpen(false);
+      returns.reload();
+    } catch (err: any) {
+      setRetErr(err.message);
+    } finally {
+      setRetBusy(false);
+    }
+  }
+
+  // Completing posts stock movements; errors (already-completed or stock 409s)
+  // propagate into the ConfirmDialog.
+  async function completeReturn(r: any) {
+    await api(`/api/shop/supplier-returns/${r.id}/complete`, { method: 'POST', body: {} });
+    returns.reload();
+  }
+
   const productPicker = (
     <Field label="Find products">
       <TextInput value={prodQ} placeholder="Search name or SKU…"
@@ -469,7 +575,7 @@ export default function ShopPurchasingPage() {
 
   return (
     <div>
-      <PageHeader title="Purchasing" subtitle="Purchase orders, goods receipts and suppliers"
+      <PageHeader title="Purchasing" subtitle="Purchase orders, goods receipts, suppliers and returns"
         actions={
           <>
             {active === 'orders' && canCreate && (
@@ -477,6 +583,9 @@ export default function ShopPurchasingPage() {
             )}
             {active === 'suppliers' && canSuppliers && (
               <button className="btn btn-primary" onClick={openCreateSupplier}><i className="bi bi-plus-circle me-1" /> New supplier</button>
+            )}
+            {active === 'returns' && canAdjust && (
+              <button className="btn btn-primary" onClick={openCreateReturn}><i className="bi bi-plus-circle me-1" /> New supplier return</button>
             )}
           </>
         } />
@@ -552,6 +661,15 @@ export default function ShopPurchasingPage() {
                             {p.status === 'draft' && canCreate && (
                               <button className="btn btn-sm btn-outline-primary me-1" onClick={() => act(`/api/shop/purchases/${p.id}/submit`)}>Submit</button>
                             )}
+                            {p.status === 'draft' && canCreate && (
+                              <button className="btn btn-sm btn-outline-danger me-1"
+                                onClick={() => setConfirm({
+                                  title: 'Delete draft purchase order',
+                                  message: `Delete ${p.po_number} permanently? This cannot be undone. Submitted orders must be cancelled instead.`,
+                                  label: 'Delete',
+                                  run: () => deleteDraftPo(p),
+                                })}>Delete</button>
+                            )}
                             {p.status === 'pending_approval' && canApprove && (
                               <button className="btn btn-sm btn-outline-success me-1" onClick={() => act(`/api/shop/purchases/${p.id}/approve`)}>Approve</button>
                             )}
@@ -588,6 +706,12 @@ export default function ShopPurchasingPage() {
               <i className="bi bi-search text-muted" />
               <input className="form-control form-control-sm" style={{ maxWidth: 280 }} placeholder="Search company, code or phone…"
                 value={supQ} onChange={(e) => { setSupQ(e.target.value); setPage(1); }} />
+              <select className="form-select form-select-sm" style={{ width: 190 }} value={supStatus}
+                onChange={(e) => { setSupStatus(e.target.value); setPage(1); }}>
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
             </div>
           </div>
 
@@ -624,6 +748,18 @@ export default function ShopPurchasingPage() {
                           <td><Badge status={s.is_active ? 'active' : 'inactive'} /></td>
                           {canSuppliers && (
                             <td className="text-end">
+                              {s.is_active ? (
+                                <button className="btn btn-sm btn-outline-danger me-1" title="Deactivate"
+                                  onClick={() => setConfirm({
+                                    title: 'Deactivate supplier',
+                                    message: `Deactivate ${s.company_name}? It will no longer be selectable for new purchase orders.`,
+                                    label: 'Deactivate',
+                                    run: () => deactivateSupplier(s),
+                                  })}><i className="bi bi-person-x" /></button>
+                              ) : (
+                                <button className="btn btn-sm btn-outline-success me-1" title="Reactivate"
+                                  onClick={() => reactivateSupplier(s)}><i className="bi bi-person-check" /></button>
+                              )}
                               <button className="btn btn-sm btn-outline-secondary" onClick={() => openEditSupplier(s)}><i className="bi bi-pencil" /></button>
                             </td>
                           )}
@@ -633,7 +769,76 @@ export default function ShopPurchasingPage() {
                   </table>
                 </div>
               </div>
-              <Pagination page={page} pages={suppliers.data?.pages || 1} total={suppliers.data?.total} onPage={setPage} />
+              {!supLocal && <Pagination page={page} pages={suppliers.data?.pages || 1} total={suppliers.data?.total} onPage={setPage} />}
+            </>
+          )}
+        </div>
+      )}
+
+      {active === 'returns' && (
+        <div>
+          <div className="card mb-3">
+            <div className="card-body d-flex flex-wrap gap-2 align-items-center">
+              <span className="small text-muted">Status</span>
+              <select className="form-select form-select-sm" style={{ width: 190 }} value={retStatus}
+                onChange={(e) => { setRetStatus(e.target.value); setPage(1); }}>
+                <option value="">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="sent">Sent</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          </div>
+
+          {returns.error && <ErrorAlert message={returns.error} onRetry={returns.reload} />}
+          {returns.loading && <Loading />}
+          {!returns.loading && !returns.error && returnItems.length === 0 && <EmptyState message="No supplier returns found" />}
+
+          {!returns.loading && !returns.error && returnItems.length > 0 && (
+            <>
+              <div className="card">
+                <div className="table-responsive">
+                  <table className="table table-hover mb-0">
+                    <thead>
+                      <tr>
+                        <th>Return #</th><th>Supplier</th><th>Status</th><th>Reason</th>
+                        <th className="text-end">Credit</th><th>Created</th>
+                        {canAdjust && <th />}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {returnItems.map((r: any) => (
+                        <tr key={r.id}>
+                          <td className="fw-semibold">{r.return_number}</td>
+                          <td>{r.supplier || '—'}</td>
+                          <td><Badge status={r.status} /></td>
+                          <td>{r.reason || '—'}</td>
+                          <td className="text-end money fw-semibold">
+                            {r.credit_amount !== undefined ? fmtMoney(r.credit_amount) : '—'}
+                          </td>
+                          <td>{fmtDate(r.created_at)}</td>
+                          {canAdjust && (
+                            <td className="text-end">
+                              {r.status !== 'completed' && (
+                                <button className="btn btn-sm btn-outline-primary"
+                                  onClick={() => setConfirm({
+                                    title: 'Complete supplier return',
+                                    message: `Complete ${r.return_number}? Stock movements are posted for every line and the return cannot be changed afterwards.`,
+                                    label: 'Complete',
+                                    danger: false,
+                                    run: () => completeReturn(r),
+                                  })}>Complete</button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <Pagination page={page} pages={returns.data?.pages || 1} total={returns.data?.total} onPage={setPage} />
             </>
           )}
         </div>
@@ -818,7 +1023,20 @@ export default function ShopPurchasingPage() {
       </Modal>
 
       <Modal show={detailLoading || !!detail || !!detailErr} title={detail ? detail.po_number : 'Purchase order'} onClose={() => setDetail(null)}
-        footer={<button className="btn btn-outline-secondary" onClick={() => setDetail(null)}>Close</button>}
+        footer={
+          <>
+            {detail && detail.status === 'draft' && canCreate && (
+              <button className="btn btn-outline-danger"
+                onClick={() => setConfirm({
+                  title: 'Delete draft purchase order',
+                  message: `Delete ${detail.po_number} permanently? This cannot be undone. Submitted orders must be cancelled instead.`,
+                  label: 'Delete',
+                  run: () => deleteDraftPo(detail),
+                })}>Delete</button>
+            )}
+            <button className="btn btn-outline-secondary" onClick={() => setDetail(null)}>Close</button>
+          </>
+        }
       >
         {detailLoading && <Loading />}
         {!detailLoading && detailErr && <div className="alert alert-danger py-2 small">{detailErr}</div>}
@@ -925,6 +1143,98 @@ export default function ShopPurchasingPage() {
           </div>
           <Field label="Address"><TextInput value={supForm.address} onChange={(e) => set('address', e.target.value)} /></Field>
           <Field label="Notes"><TextArea rows={2} value={supForm.notes} onChange={(e) => set('notes', e.target.value)} /></Field>
+        </form>
+      </Modal>
+
+      <Modal show={retOpen} title="New supplier return" onClose={() => setRetOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-outline-secondary" onClick={() => setRetOpen(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={saveReturn} disabled={retBusy}>{retBusy ? 'Saving…' : 'Create return'}</button>
+          </>
+        }
+      >
+        <form onSubmit={saveReturn}>
+          {retErr && <div className="alert alert-danger py-2 small">{retErr}</div>}
+          <div className="row">
+            <div className="col-md-6">
+              <Field label="Supplier" required>
+                <SelectInput value={retForm.supplier_id} required onChange={(e) => setRetForm((f) => ({ ...f, supplier_id: e.target.value }))}>
+                  <option value="">Select supplier…</option>
+                  {suppliersList.map((s) => <option key={s.id} value={s.id}>{s.company_name}</option>)}
+                </SelectInput>
+              </Field>
+            </div>
+            <div className="col-md-6">
+              <Field label="Reason">
+                <TextInput value={retForm.reason} placeholder="defective"
+                  onChange={(e) => setRetForm((f) => ({ ...f, reason: e.target.value }))} />
+              </Field>
+            </div>
+          </div>
+          <Field label="Notes"><TextArea rows={2} value={retForm.notes} onChange={(e) => setRetForm((f) => ({ ...f, notes: e.target.value }))} /></Field>
+
+          {productPicker}
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <span className="small fw-semibold text-muted">Return lines</span>
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => setRetLines((rows) => [...rows, blankReturnLine()])}>
+              <i className="bi bi-plus-lg me-1" />Add line
+            </button>
+          </div>
+          {retLines.map((l, i) => {
+            const variants: any[] = l.product_id ? (variantMap[l.product_id] || []) : [];
+            return (
+              <div className="border rounded p-2 mb-2" key={i}>
+                <div className="row g-2">
+                  <div className="col-md-4">
+                    <Field label="Product" required>
+                      <SelectInput value={l.product_id} required
+                        onChange={(e) => { setRetLine(i, 'product_id', e.target.value); setRetLine(i, 'variant_id', ''); ensureVariants(e.target.value); }}>
+                        <option value="">Select product…</option>
+                        {products.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>)}
+                      </SelectInput>
+                    </Field>
+                  </div>
+                  <div className="col-md-3">
+                    <Field label="Variant">
+                      <SelectInput value={l.variant_id} onChange={(e) => setRetLine(i, 'variant_id', e.target.value)}>
+                        <option value="">Default</option>
+                        {variants.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </SelectInput>
+                    </Field>
+                  </div>
+                  <div className="col-md-2">
+                    <Field label="Quantity" required>
+                      <TextInput type="number" step="1" min="1" value={l.quantity} required
+                        onChange={(e) => setRetLine(i, 'quantity', e.target.value)} />
+                    </Field>
+                  </div>
+                  <div className="col-md-3">
+                    <Field label="Condition">
+                      <SelectInput value={l.condition} onChange={(e) => setRetLine(i, 'condition', e.target.value)}>
+                        {RETURN_CONDITIONS.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}
+                      </SelectInput>
+                    </Field>
+                  </div>
+                </div>
+                <div className="row g-2">
+                  <div className="col-md-9">
+                    <Field label="Note"><TextInput value={l.note} placeholder="Optional" onChange={(e) => setRetLine(i, 'note', e.target.value)} /></Field>
+                  </div>
+                  <div className="col-md-3 d-flex align-items-end justify-content-end pb-3">
+                    <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => setRetLines((rows) => rows.filter((_, j) => j !== i))} aria-label="Remove line">
+                      <i className="bi bi-trash" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div className="form-check mb-2">
+            <input className="form-check-input" type="checkbox" id="ret-complete-now" checked={retForm.complete}
+              onChange={(e) => setRetForm((f) => ({ ...f, complete: e.target.checked }))} />
+            <label className="form-check-label small" htmlFor="ret-complete-now">Complete immediately — post stock movements on save</label>
+          </div>
         </form>
       </Modal>
 
