@@ -4,7 +4,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Loader2, FolderOpen, UploadCloud, CheckCircle, Clock, AlertCircle,
-  Target, ListChecks, Calendar, Award, Link2, FileText, X, Check, Users, Paperclip
+  Target, ListChecks, Calendar, Award, Link2, FileText, X, Check, Users, Paperclip,
+  ArrowLeft, ArrowRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 import StudentSubmissionService, {
@@ -28,7 +29,12 @@ interface ProjectPanelProps {
   onSubmitComplete?: (projectId: number) => void;
 }
 
-type PanelMode = 'view' | 'submit';
+/**
+ * Two views: "details" is the reading room (brief + rules + team), "workspace"
+ * is the workbench where the student hands work in. `editing` switches the
+ * workspace between the form and the hand-in receipt.
+ */
+type PanelMode = 'details' | 'workspace';
 
 type SubmissionRow = SubmissionDetail['submission'] | null;
 
@@ -124,6 +130,23 @@ const dueMeta = (due: Date) => {
   return { absolute, relative };
 };
 
+/** One live readiness row for the workspace checklist: filled circle vs empty. */
+const CheckRow: React.FC<{ done: boolean; label: string; hint: string }> = ({ done, label, hint }) => (
+  <li className="flex items-start gap-2.5">
+    <span
+      className={`mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border ${
+        done ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-white/15 bg-white/[0.03] text-transparent'
+      }`}
+    >
+      <Check className="h-2.5 w-2.5" />
+    </span>
+    <span className="min-w-0">
+      <span className={`block text-sm ${done ? 'text-gray-300' : 'text-gray-400'}`}>{label}</span>
+      <span className={`block break-words text-xs ${done ? 'text-gray-500' : 'text-gray-600'}`}>{hint}</span>
+    </span>
+  </li>
+);
+
 export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   projectId,
   onSubmit,
@@ -133,7 +156,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [project, setProject] = useState<ProjectWithStatus | null>(null);
   const [submission, setSubmission] = useState<SubmissionRow>(null);
-  const [mode, setMode] = useState<PanelMode>('view');
+  const [mode, setMode] = useState<PanelMode>('details');
+  const [editing, setEditing] = useState(false);
 
   const [textContent, setTextContent] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -142,7 +166,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const [dragging, setDragging] = useState(false);
 
   const formErrorRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const textAreaId = `project-text-${projectId}`;
   const fileInputId = `project-file-${projectId}`;
   const formErrorId = `project-error-${projectId}`;
@@ -158,8 +182,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
       const row = detail.submission ?? null;
       setProject(detail.project);
       setSubmission(row);
-      // Open the form straight away while there is nothing handed in yet.
-      setMode(isSubmissionHandedIn(row) ? 'view' : 'submit');
+      // Details-first: always land on the reading view, never auto-open the form.
+      setMode('details');
+      setEditing(false);
     } catch (err: any) {
       setLoadError(err?.message || 'Failed to load project');
     } finally {
@@ -213,11 +238,13 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const currentStep = isGraded ? 2 : isSubmitted ? 1 : 0;
   const due = dueDate ? dueMeta(dueDate) : null;
 
-  const openForm = () => {
+  /** Enter the workspace: `startEditing` opens the form, otherwise the receipt. */
+  const openWorkspace = (startEditing: boolean) => {
     setFormError(null);
-    setMode('submit');
-    // Bring the work area into view after the click, but never on load
-    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    setMode('workspace');
+    setEditing(startEditing);
+    // Bring the workbench into view after the click, but never on load
+    requestAnimationFrame(() => workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const rejectFile = (message: string) => {
@@ -313,8 +340,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
       onSubmit?.({ textContent: hasText ? textContent.trim() : undefined, fileUrl });
       setTextContent('');
       setFile(null);
-      setMode('view');
       await loadProject();
+      // loadProject resets to details — stay in the workspace on the receipt
+      setMode('workspace');
+      setEditing(false);
       onSubmitComplete?.(projectId);
     } catch (err: any) {
       const message = err?.message || 'Failed to submit project.';
@@ -420,26 +449,20 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               </div>
             </div>
           </div>
-          {canResubmit && (
+          {isSubmitted || canResubmit ? (
             <Button
               size="sm"
-              onClick={() => {
-                if (mode === 'submit') {
-                  setFormError(null);
-                  setMode('view');
-                } else {
-                  openForm();
-                }
-              }}
-              className={`w-full flex-shrink-0 justify-center sm:w-auto lg:self-start ${
-                mode === 'submit'
-                  ? 'border border-white/10 bg-transparent text-gray-300 hover:bg-white/[0.06] hover:text-white shadow-none'
+              onClick={() => (isSubmitted ? openWorkspace(false) : openWorkspace(true))}
+              className={`w-full flex-shrink-0 justify-center gap-1.5 sm:w-auto lg:self-start ${
+                isSubmitted
+                  ? 'border border-white/15 bg-white/[0.04] text-gray-200 hover:border-white/25 hover:bg-white/[0.08] hover:text-white shadow-none'
                   : 'bg-blue-600 text-white hover:bg-blue-500'
               }`}
             >
-              {mode === 'submit' ? 'Cancel' : isSubmitted ? 'Resubmit' : 'Start Project'}
+              {isSubmitted ? 'Open workspace' : 'Start Project'}
+              {!isSubmitted && <ArrowRight className="h-3.5 w-3.5" />}
             </Button>
-          )}
+          ) : null}
         </div>
 
         {/* Workflow strip lives in the header so the state story reads as one object */}
@@ -477,7 +500,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         </nav>
       </header>
 
-      {/* ── Revision request: impossible to miss, one click from the form ── */}
+      {/* ── Revision request: impossible to miss, one click into the workspace ── */}
       {needsRevision && (
         <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -494,11 +517,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 </div>
               </div>
             </div>
-            {mode !== 'submit' && canResubmit && (
+            {!(mode === 'workspace' && editing) && canResubmit && (
               <Button
                 size="sm"
                 variant="outline"
-                onClick={openForm}
+                onClick={() => openWorkspace(true)}
                 className="flex-shrink-0 border-amber-500/40 text-amber-200 hover:bg-amber-500/10 hover:text-amber-100"
               >
                 Revise work
@@ -508,158 +531,68 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         </div>
       )}
 
-      {/* ── Workspace: brief + hand-in on the left, spec rail on the right ── */}
+      {/* ── Result bands: what happened, one click from the workspace ── */}
+      {mode === 'details' && isSubmitted && !needsRevision && (
+        <div
+          className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4 sm:p-5 ${
+            isGraded
+              ? 'border-emerald-500/25 bg-emerald-500/[0.06]'
+              : 'border-white/[0.07] bg-gray-900'
+          }`}
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border ${
+                isGraded
+                  ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300'
+                  : 'border-white/10 bg-white/[0.04] text-gray-300'
+              }`}
+            >
+              {isGraded ? <CheckCircle className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+            </span>
+            <div className="min-w-0">
+              {isGraded ? (
+                <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="text-lg font-bold tabular-nums text-emerald-300">
+                    {numericGrade !== null ? numericGrade : 'Graded'}
+                  </span>
+                  {numericGrade !== null && project.points_possible > 0 && (
+                    <span className="text-sm text-emerald-300/70">/ {project.points_possible} pts</span>
+                  )}
+                  <span className="text-sm font-medium text-gray-300">Reviewed</span>
+                </p>
+              ) : (
+                <p className="text-sm font-medium text-gray-200">
+                  Handed in · awaiting review
+                </p>
+              )}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-gray-500">
+                <span>
+                  {submission?.submitted_at ? new Date(submission.submitted_at).toLocaleString() : '—'}
+                </span>
+                {status?.is_late && (
+                  <span className="text-red-300">
+                    Late{status.days_late ? ` · ${status.days_late}d` : ''}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openWorkspace(false)}
+            className="flex-shrink-0 border-white/15 bg-white/[0.03] text-gray-200 hover:bg-white/[0.07] hover:text-white"
+          >
+            Open workspace
+          </Button>
+        </div>
+      )}
+
+      {/* ── Details view: brief on the left, spec rail on the right ── */}
+      {mode === 'details' && (
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
-          {/* Work form comes first while it is open — the task at hand */}
-          {mode === 'submit' && canResubmit && (
-            <div ref={formRef} className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6 space-y-4 scroll-mt-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                  Your work
-                </p>
-                <h4 className="mt-1 text-base font-semibold text-white">
-                  {isSubmitted ? 'Revise and resubmit' : 'Hand in your project'}
-                </h4>
-                <p className="mt-1 text-sm text-gray-400">
-                  {needsText && needsFile
-                    ? 'This project needs a written response and a file.'
-                    : needsFile
-                      ? `This project needs a ${submissionFormat === 'presentation' ? 'presentation' : 'file'} upload.`
-                      : 'This project needs a written response.'}
-                </p>
-              </div>
-
-              {needsText && (
-                <div className="space-y-1.5">
-                  <label htmlFor={textAreaId} className="text-xs font-medium text-gray-300">
-                    Written response
-                  </label>
-                  <textarea
-                    id={textAreaId}
-                    value={textContent}
-                    onChange={(e) => {
-                      setTextContent(e.target.value);
-                      setFormError(null);
-                    }}
-                    rows={7}
-                    aria-invalid={formError ? true : undefined}
-                    aria-describedby={formError ? formErrorId : undefined}
-                    placeholder="Describe your project, link to your repository, or paste your write-up…"
-                    className="w-full resize-y rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                  />
-                </div>
-              )}
-
-              {needsFile && (
-                <div className="space-y-1.5">
-                  <label htmlFor={fileInputId} className="text-xs font-medium text-gray-300">
-                    {submissionFormat === 'presentation' ? 'Presentation file' : 'File'}
-                  </label>
-                  {file ? (
-                    <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                      <span className="flex min-w-0 items-center gap-2 text-sm text-gray-300">
-                        <UploadCloud className="h-4 w-4 flex-shrink-0 text-blue-300" />
-                        <span className="truncate">{file.name}</span>
-                        <span className="flex-shrink-0 text-xs text-gray-500">
-                          {FileUploadService.formatFileSize(file.size)}
-                        </span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setFile(null)}
-                        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/[0.06] hover:text-gray-100"
-                        aria-label="Remove file"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                      <input
-                        type="file"
-                        id={fileInputId}
-                        className="sr-only"
-                        accept={fileAccept}
-                        onChange={handleFileChange}
-                        disabled={submitting}
-                      />
-                    </div>
-                  ) : (
-                    <label
-                      htmlFor={fileInputId}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        if (!submitting) setDragging(true);
-                      }}
-                      onDragLeave={() => setDragging(false)}
-                      onDrop={handleFileDrop}
-                      className={`flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors focus-within:ring-2 focus-within:ring-blue-500/40 ${
-                        dragging
-                          ? 'border-blue-500/70 bg-blue-500/[0.06] text-blue-200'
-                          : 'border-white/15 bg-white/[0.02] text-gray-400 hover:border-blue-500/60 hover:text-gray-200'
-                      }`}
-                    >
-                      <UploadCloud className="h-6 w-6" />
-                      <span className="text-sm font-medium">
-                        Choose a file or drop it here
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        Max {maxFileSizeMB} MB
-                        {allowedFileTypes.length > 0 && <> · {allowedFileTypes.join(', ')}</>}
-                      </span>
-                      <input
-                        type="file"
-                        id={fileInputId}
-                        className="sr-only"
-                        accept={fileAccept}
-                        onChange={handleFileChange}
-                        disabled={submitting}
-                      />
-                    </label>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setFormError(null);
-                    setMode('view');
-                  }}
-                  className="text-gray-400 hover:text-gray-200"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => void handleSubmit()}
-                  disabled={submitting}
-                  className="bg-blue-600 text-white hover:bg-blue-500"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Submitting…
-                    </>
-                  ) : (
-                    isSubmitted ? 'Resubmit Project' : 'Submit Project'
-                  )}
-                </Button>
-              </div>
-              {formError && (
-                <Alert
-                  ref={formErrorRef}
-                  tabIndex={-1}
-                  role="alert"
-                  id={formErrorId}
-                  className="border-red-800/60 bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
-                >
-                  <AlertCircle className="h-4 w-4 text-red-400" />
-                  <AlertTitle className="text-red-300">Submission problem</AlertTitle>
-                  <AlertDescription className="text-red-200">{formError}</AlertDescription>
-                </Alert>
-              )}
-            </div>
-          )}
-
           {/* Brief: description beside objectives, task ladder spread across */}
           <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6">
             <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -733,83 +666,6 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             )}
           </section>
 
-          {/* Hand-in receipt + result */}
-          {isSubmitted && submission && (
-            <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-6 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
-                  Handed in
-                </p>
-                {status?.is_late && (
-                  <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300">
-                    Late{status.days_late ? ` · ${status.days_late}d` : ''}
-                  </span>
-                )}
-              </div>
-
-              <p className="flex items-center gap-2 text-sm text-gray-300">
-                <Clock className="h-4 w-4 text-gray-500" />
-                {submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : '—'}
-              </p>
-
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {attachments.map((attachment, index) => (
-                    <a
-                      key={`${attachment.url}-${index}`}
-                      href={attachment.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-blue-300 transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.06] hover:text-blue-200"
-                    >
-                      <Link2 className="h-4 w-4 flex-shrink-0" />
-                      <span className="truncate">{attachment.name || submission.file_name || 'Attached file'}</span>
-                    </a>
-                  ))}
-                </div>
-              )}
-
-              {submission.text_content && (
-                <div className="max-w-[70ch] rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-sm text-gray-300">
-                  <MarkdownRenderer
-                    content={submission.text_content}
-                    variant="compact"
-                    className="prose-sm leading-relaxed"
-                  />
-                </div>
-              )}
-
-              {isGraded && (
-                <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-4 space-y-2.5">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="text-3xl font-bold tabular-nums text-emerald-300">
-                      {numericGrade !== null ? numericGrade : 'Graded'}
-                    </span>
-                    {numericGrade !== null && project.points_possible > 0 && (
-                      <span className="text-sm text-emerald-300/70">/ {project.points_possible} pts</span>
-                    )}
-                    <span className="ml-auto text-xs text-gray-400">
-                      {status?.graded_at && new Date(status.graded_at).toLocaleDateString()}
-                      {status?.grader_name ? ` · ${status.grader_name}` : ''}
-                    </span>
-                  </div>
-                  {(submission.feedback || status?.feedback) && (
-                    <div className="max-w-[68ch] border-t border-emerald-500/15 pt-2.5 text-sm text-gray-300">
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300/80">
-                        Instructor feedback
-                      </p>
-                      <MarkdownRenderer
-                        content={submission.feedback || status?.feedback || ''}
-                        variant="compact"
-                        className="prose-sm leading-relaxed"
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-          )}
         </div>
 
         {/* Spec rail: the hand-in rules, always in view on wide screens */}
@@ -883,6 +739,404 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           </section>
         </aside>
       </div>
+      )}
+
+      {/* ── Workspace view: the hand-in workbench ── */}
+      {mode === 'workspace' && (
+        <div ref={workspaceRef} className="scroll-mt-4">
+          <section className={`relative overflow-hidden rounded-2xl border border-white/[0.07] bg-gray-900 ${stateStyles.wash}`}>
+            <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${stateStyles.rail}`} />
+
+            {/* Workbench header: always one click from the brief */}
+            <div className="relative flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] py-3 pl-6 pr-4 sm:pl-7 sm:pr-5">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFormError(null);
+                  setMode('details');
+                  setEditing(false);
+                }}
+                className="-ml-2 gap-1.5 text-gray-400 hover:text-gray-200"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Project brief
+              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                {dueDate && due && (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                      isOverdue && !isSubmitted && !isGraded
+                        ? 'border-red-500/30 bg-red-500/10 text-red-300'
+                        : 'border-white/10 bg-white/[0.04] text-gray-300'
+                    }`}
+                  >
+                    <Calendar className="h-3 w-3" />
+                    {isOverdue && !isSubmitted && !isGraded
+                      ? `Overdue · ${due.relative}`
+                      : `Due ${due.absolute} · ${due.relative}`}
+                  </span>
+                )}
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${stateStyles.pill}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${stateStyles.dot}`} />
+                  {stateStyles.label}
+                </span>
+              </div>
+            </div>
+
+            <div className="relative grid gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] lg:items-start">
+              {/* Left: the canvas — the form while editing, the receipt afterwards */}
+              <div className="min-w-0">
+                {needsRevision && isSubmitted && (
+                  <div className="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3">
+                    <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+                      <AlertCircle className="h-4 w-4" />
+                      Revision requested
+                    </p>
+                    <div className="mt-1 max-w-[68ch] text-sm text-gray-300">
+                      <MarkdownRenderer
+                        content={submission?.modification_reason || status?.feedback || 'Update your work and resubmit.'}
+                        variant="compact"
+                        className="prose-sm leading-relaxed"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(editing || !isSubmitted) && canResubmit ? (
+                  <div className="space-y-5">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                        Your work
+                      </p>
+                      <h4 className="mt-1 text-base font-semibold text-white">
+                        {isSubmitted ? 'Revise and resubmit' : 'Hand in your project'}
+                      </h4>
+                      <p className="mt-1 text-sm text-gray-400">
+                        {needsText && needsFile
+                          ? 'This project needs a written response and a file.'
+                          : needsFile
+                            ? `This project needs a ${submissionFormat === 'presentation' ? 'presentation' : 'file'} upload.`
+                            : 'This project needs a written response.'}
+                      </p>
+                    </div>
+
+                    {needsText && (
+                      <div className="space-y-1.5">
+                        <label htmlFor={textAreaId} className="text-xs font-medium text-gray-300">
+                          Written response
+                        </label>
+                        <textarea
+                          id={textAreaId}
+                          value={textContent}
+                          onChange={(e) => {
+                            setTextContent(e.target.value);
+                            setFormError(null);
+                          }}
+                          rows={7}
+                          aria-invalid={formError ? true : undefined}
+                          aria-describedby={formError ? formErrorId : undefined}
+                          placeholder="Describe your project, link to your repository, or paste your write-up…"
+                          className="w-full resize-y rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-relaxed text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                        />
+                      </div>
+                    )}
+
+                    {needsFile && (
+                      <div className="space-y-1.5">
+                        <label htmlFor={fileInputId} className="text-xs font-medium text-gray-300">
+                          {submissionFormat === 'presentation' ? 'Presentation file' : 'File'}
+                        </label>
+                        {file ? (
+                          <div className="flex items-center justify-between gap-2 rounded-xl border border-blue-500/30 bg-blue-500/[0.06] px-3 py-2">
+                            <span className="flex min-w-0 items-center gap-2 text-sm text-gray-200">
+                              <CheckCircle className="h-4 w-4 flex-shrink-0 text-emerald-300" />
+                              <span className="truncate">{file.name}</span>
+                              <span className="flex-shrink-0 text-xs text-gray-500">
+                                {FileUploadService.formatFileSize(file.size)}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setFile(null)}
+                              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/[0.06] hover:text-gray-100"
+                              aria-label="Remove file"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                            <input
+                              type="file"
+                              id={fileInputId}
+                              className="sr-only"
+                              accept={fileAccept}
+                              onChange={handleFileChange}
+                              disabled={submitting}
+                            />
+                          </div>
+                        ) : (
+                          <label
+                            htmlFor={fileInputId}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              if (!submitting) setDragging(true);
+                            }}
+                            onDragLeave={() => setDragging(false)}
+                            onDrop={handleFileDrop}
+                            className={`flex min-h-[9.5rem] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors focus-within:ring-2 focus-within:ring-blue-500/40 ${
+                              dragging
+                                ? 'border-blue-500/70 bg-blue-500/[0.06] text-blue-200'
+                                : 'border-white/[0.12] bg-white/[0.02] text-gray-400 hover:border-blue-500/60 hover:bg-blue-500/[0.03] hover:text-gray-200'
+                            }`}
+                          >
+                            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
+                              <UploadCloud className="h-5 w-5 text-blue-300" />
+                            </span>
+                            <span className="text-sm font-medium text-gray-200">
+                              Choose a file or drop it here
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Max {maxFileSizeMB} MB
+                              {allowedFileTypes.length > 0 && <> · {allowedFileTypes.join(', ')}</>}
+                            </span>
+                            <input
+                              type="file"
+                              id={fileInputId}
+                              className="sr-only"
+                              accept={fileAccept}
+                              onChange={handleFileChange}
+                              disabled={submitting}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-4">
+                      {isSubmitted ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setFormError(null);
+                            setEditing(false);
+                          }}
+                          className="text-gray-400 hover:text-gray-200"
+                        >
+                          Discard changes
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-gray-500">
+                          Your file is uploaded only when you hand in.
+                        </p>
+                      )}
+                      <Button
+                        onClick={() => void handleSubmit()}
+                        disabled={submitting}
+                        className="gap-2 bg-blue-600 text-white hover:bg-blue-500"
+                      >
+                        {submitting ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Handing in…
+                          </>
+                        ) : (
+                          <>
+                            <UploadCloud className="h-4 w-4" />
+                            {isSubmitted ? 'Resubmit Project' : 'Hand in Project'}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    {formError && (
+                      <Alert
+                        ref={formErrorRef}
+                        tabIndex={-1}
+                        role="alert"
+                        id={formErrorId}
+                        className="border-red-800/60 bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
+                      >
+                        <AlertCircle className="h-4 w-4 text-red-400" />
+                        <AlertTitle className="text-red-300">Submission problem</AlertTitle>
+                        <AlertDescription className="text-red-200">{formError}</AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                ) : (
+                  /* Receipt: what was handed in, and the result when reviewed */
+                  submission && (
+                    <div className="space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                          <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+                          Handed in
+                        </p>
+                        {status?.is_late && (
+                          <span className="inline-flex items-center rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300">
+                            Late{status.days_late ? ` · ${status.days_late}d` : ''}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="flex items-center gap-2 text-sm text-gray-300">
+                        <Clock className="h-4 w-4 text-gray-500" />
+                        {submission.submitted_at ? new Date(submission.submitted_at).toLocaleString() : '—'}
+                      </p>
+
+                      {attachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {attachments.map((attachment, index) => (
+                            <a
+                              key={`${attachment.url}-${index}`}
+                              href={attachment.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-blue-300 transition-colors hover:border-blue-500/40 hover:bg-blue-500/[0.06] hover:text-blue-200"
+                            >
+                              <Link2 className="h-4 w-4 flex-shrink-0" />
+                              <span className="truncate">{attachment.name || submission.file_name || 'Attached file'}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+
+                      {submission.text_content && (
+                        <div className="max-w-[70ch] rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-sm text-gray-300">
+                          <MarkdownRenderer
+                            content={submission.text_content}
+                            variant="compact"
+                            className="prose-sm leading-relaxed"
+                          />
+                        </div>
+                      )}
+
+                      {isGraded && (
+                        <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-4 space-y-2.5">
+                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <span className="text-3xl font-bold tabular-nums text-emerald-300">
+                              {numericGrade !== null ? numericGrade : 'Graded'}
+                            </span>
+                            {numericGrade !== null && project.points_possible > 0 && (
+                              <span className="text-sm text-emerald-300/70">/ {project.points_possible} pts</span>
+                            )}
+                            <span className="ml-auto text-xs text-gray-400">
+                              {status?.graded_at && new Date(status.graded_at).toLocaleDateString()}
+                              {status?.grader_name ? ` · ${status.grader_name}` : ''}
+                            </span>
+                          </div>
+                          {(submission.feedback || status?.feedback) && (
+                            <div className="max-w-[68ch] border-t border-emerald-500/15 pt-2.5 text-sm text-gray-300">
+                              <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-300/80">
+                                Instructor feedback
+                              </p>
+                              <MarkdownRenderer
+                                content={submission.feedback || status?.feedback || ''}
+                                variant="compact"
+                                className="prose-sm leading-relaxed"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {canResubmit && (
+                        <div className="flex justify-end border-t border-white/[0.06] pt-4">
+                          <Button
+                            size="sm"
+                            onClick={() => openWorkspace(true)}
+                            className="gap-1.5 bg-blue-600 text-white hover:bg-blue-500"
+                          >
+                            <UploadCloud className="h-4 w-4" />
+                            {needsRevision ? 'Start revision' : 'Resubmit'}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Right: the rulebook — live checklist and hand-in rules */}
+              <aside className="space-y-4 self-start lg:sticky lg:top-4">
+                <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                    Before you hand in
+                  </p>
+                  <ul className="mt-3 space-y-3">
+                    {needsText && (
+                      <CheckRow
+                        done={!!textContent.trim()}
+                        label="Written response"
+                        hint={textContent.trim() ? 'Added' : 'Still empty'}
+                      />
+                    )}
+                    {needsFile && (
+                      <CheckRow
+                        done={!!file}
+                        label="File attached"
+                        hint={
+                          file
+                            ? file.name
+                            : `Max ${maxFileSizeMB} MB${allowedFileTypes.length > 0 ? ` · ${allowedFileTypes.join(', ')}` : ''}`
+                        }
+                      />
+                    )}
+                    {dueDate && due && (
+                      <CheckRow
+                        done={!isOverdue || isSubmitted || isGraded}
+                        label="Deadline"
+                        hint={`${due.absolute} · ${isOverdue && !isSubmitted && !isGraded ? 'passed' : due.relative}`}
+                      />
+                    )}
+                  </ul>
+                </section>
+
+                <section className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                    Hand-in rules
+                  </p>
+                  <dl className="mt-3 space-y-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-3">
+                      <dt className="text-gray-500">Format</dt>
+                      <dd className="text-right font-medium text-gray-200">{requirements.label}</dd>
+                    </div>
+                    {needsFile && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-gray-500">Files</dt>
+                        <dd className="text-right font-medium text-gray-200">
+                          {allowedFileTypes.length > 0 ? allowedFileTypes.join(', ') : 'Any type'}
+                          <span className="block font-normal text-gray-500">up to {maxFileSizeMB} MB</span>
+                        </dd>
+                      </div>
+                    )}
+                    {project.points_possible > 0 && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-gray-500">Points</dt>
+                        <dd className="text-right font-medium text-gray-200">{project.points_possible}</dd>
+                      </div>
+                    )}
+                    {dueDate && due && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-gray-500">Due</dt>
+                        <dd className="text-right font-medium text-gray-200">
+                          {due.absolute}
+                          <span className="block font-normal text-gray-500">{due.relative}</span>
+                        </dd>
+                      </div>
+                    )}
+                    {project.collaboration_allowed && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="text-gray-500">Team</dt>
+                        <dd className="text-right font-medium text-gray-200">
+                          Up to {project.max_team_size} students
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Team roster + team chat room */}
       {project.collaboration_allowed && <TeamSection projectId={projectId} />}
