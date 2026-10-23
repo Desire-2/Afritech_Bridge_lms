@@ -99,7 +99,7 @@ def unsubscribe_status():
         'email_enabled': pref.email_enabled if pref else True,
         'category_settings': category_settings,
         'available_categories': [
-            'announcements', 'grades', 'forum',
+            'announcements', 'grades', 'forum', 'team_chat',
             'enrollment', 'achievement', 'system'
         ]
     }), 200

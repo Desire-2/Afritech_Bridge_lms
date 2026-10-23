@@ -2,8 +2,11 @@
 Email notification helpers for Afritec Bridge LMS
 Centralizes email sending for various events
 """
+import html
 import logging
 import os
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -1437,8 +1440,258 @@ def send_team_assignment_notification(
             html_content=email_html
         )
     except Exception as e:
-        logger.error(f"\u274c Failed to send team assignment notification: {str(e)}")
+        logger.error(f"❌ Failed to send team assignment notification: {str(e)}")
         return False
+
+
+# ── Team chat message notifications ────────────────────────────────────────
+
+# A teammate is emailed at most once per chat room per window: a burst of
+# short messages shouldn't land as a stack of near-identical emails for
+# every member who is probably already reading the room.
+TEAM_CHAT_NOTICE_TTL = 600  # seconds
+_team_chat_notices: dict = {}
+_team_chat_notices_lock = threading.Lock()
+
+
+def _member_display_name(user) -> str:
+    """A name that never renders as 'None None' (mirrors TeamChatMessage.to_dict)."""
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return name or user.username or user.email or f"User {user.id}"
+
+
+def _project_workspace_url(project) -> str:
+    """Learn-page deep link that opens the project's workspace tab.
+
+    Mirrors the frontend placement rule: a project surfaces on the last
+    lesson of each covered module (whole-course projects on the last lesson
+    of the final module), and the learn page honours ``?lesson=`` and
+    ``?tab=project`` on load. Falls back to the project detail page when no
+    lesson can be found.
+    """
+    frontend_url = os.environ.get(
+        'FRONTEND_URL', 'https://study.afritechbridge.online'
+    ).rstrip('/')
+    try:
+        from ..models.course_models import Lesson, Module
+
+        module_ids = project.get_modules()
+        query = Module.query.filter_by(course_id=project.course_id)
+        if module_ids:
+            query = query.filter(Module.id.in_(module_ids))
+        modules = query.order_by(Module.order.asc()).all()
+        for module in modules:
+            lessons = module.lessons.order_by(Lesson.order.asc()).all()
+            if lessons:
+                return (
+                    f"{frontend_url}/learn/{project.course_id}"
+                    f"?lesson={lessons[-1].id}&tab=project"
+                )
+    except Exception as e:
+        logger.debug(f"Could not build learn-page link for project {project.id}: {e}")
+    return f"{frontend_url}/student/projects/{project.id}"
+
+
+def _team_chat_email_html(
+    recipient_name,
+    sender_name,
+    project_title,
+    course_title,
+    preview_html,
+    sent_at_label,
+    chat_url,
+    unsub_token,
+):
+    course_suffix = f" in <strong>{html.escape(course_title)}</strong>" if course_title else ""
+    timestamp_line = (
+        f'<p style="margin:10px 0 0;font-size:12px;color:#64748b;">{sent_at_label}</p>'
+        if sent_at_label
+        else ""
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>New team message</title>
+    </head>
+    <body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+      <div style="max-width:600px;margin:0 auto;padding:24px;">
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px;border-radius:16px 16px 0 0;text-align:center;">
+          <h1 style="color:#fff;margin:0 0 8px 0;font-size:22px;">💬 New Team Message</h1>
+          <p style="color:#c4b5fd;margin:0;font-size:14px;">{html.escape(project_title)}</p>
+        </div>
+        <!-- Body -->
+        <div style="background:#1e293b;color:#e2e8f0;padding:32px;border-radius:0 0 16px 16px;">
+          <p style="font-size:16px;margin-top:0;">Hello <strong>{html.escape(recipient_name)}</strong>,</p>
+          <p style="font-size:15px;line-height:1.7;">
+            <strong>{html.escape(sender_name)}</strong> sent a message in your project
+            team chat for <strong>{html.escape(project_title)}</strong>{course_suffix}.
+          </p>
+
+          <!-- Message card -->
+          <div style="background:#334155;padding:20px;border-radius:12px;margin:24px 0;border-left:4px solid #6366f1;">
+            <p style="margin:0 0 10px 0;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Message from {html.escape(sender_name)}</p>
+            <p style="margin:0;font-size:15px;line-height:1.6;color:#f1f5f9;">{preview_html}</p>
+            {timestamp_line}
+          </div>
+
+          <!-- CTA -->
+          <div style="text-align:center;margin:28px 0;">
+            <a href="{chat_url}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;padding:14px 32px;border-radius:10px;font-weight:700;font-size:16px;">
+              Open team chat &rarr;
+            </a>
+          </div>
+
+          <p style="font-size:13px;color:#94a3b8;line-height:1.6;">
+            You receive this because you are on the team for this project.
+            Reply from the chat to keep everyone in the loop.
+          </p>
+          {get_email_footer(unsubscribe_token=unsub_token, email_category='team_chat')}
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+
+def _send_team_chat_email(payload: dict) -> bool:
+    try:
+        brevo_service.send_email(
+            to_emails=[payload["email"]],
+            subject=payload["subject"],
+            html_content=payload["html"],
+        )
+        logger.info(f"📧 Team chat notification sent to {payload['email']}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send team chat notification to {payload['email']}: {e}")
+        return False
+
+
+def notify_team_of_chat_message(
+    recipients,
+    sender_name,
+    message_body,
+    project,
+    submission_id,
+    sent_at=None,
+    background=True,
+):
+    """Email every teammate about a new team chat message (never the sender).
+
+    Preference checks, unsubscribe tokens, throttling and link building run
+    while the caller's DB session is still alive; the actual sends then run
+    in one background thread so the chat response is never delayed by SMTP.
+    Returns the number of recipients a notification was queued for.
+    """
+    try:
+        if not recipients:
+            return 0
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send team chat notifications")
+            return 0
+
+        # Phase 1 — request context: resolve plain data, no ORM objects survive.
+        candidates = []
+        for user in recipients:
+            if not user or not user.email:
+                continue
+            if not _should_send_email(user, 'team_chat'):
+                continue
+            candidates.append({
+                "id": user.id,
+                "email": user.email,
+                "name": _member_display_name(user),
+                "unsub_token": _get_unsub_token(user),
+            })
+        if not candidates:
+            return 0
+
+        # Phase 2 — throttle: one email per (room, recipient) per TTL window.
+        now = time.time()
+        ready = []
+        with _team_chat_notices_lock:
+            for key in [k for k, until in _team_chat_notices.items() if until <= now]:
+                del _team_chat_notices[key]
+            for person in candidates:
+                key = (submission_id, person["id"])
+                if _team_chat_notices.get(key, 0) > now:
+                    continue
+                _team_chat_notices[key] = now + TEAM_CHAT_NOTICE_TTL
+                ready.append(person)
+        if not ready:
+            return 0
+
+        # Phase 3 — render once per recipient and send.
+        preview = (message_body or "").strip()
+        if len(preview) > 400:
+            preview = preview[:400] + "…"
+        preview_html = html.escape(preview).replace("\n", "<br>")
+
+        course_title = ""
+        try:
+            if project.course:
+                course_title = project.course.title
+        except (AttributeError, TypeError):
+            pass
+
+        chat_url = _project_workspace_url(project)
+        subject = f"💬 {sender_name} sent a team message — {project.title}"[:150]
+        sent_at_label = ""
+        if sent_at is not None:
+            try:
+                sent_at_label = sent_at.strftime("%d %b %Y, %H:%M")
+            except AttributeError:
+                sent_at_label = str(sent_at)
+
+        payloads = [
+            {
+                "email": person["email"],
+                "subject": subject,
+                "html": _team_chat_email_html(
+                    recipient_name=person["name"],
+                    sender_name=sender_name,
+                    project_title=project.title,
+                    course_title=course_title,
+                    preview_html=preview_html,
+                    sent_at_label=sent_at_label,
+                    chat_url=chat_url,
+                    unsub_token=person["unsub_token"],
+                ),
+            }
+            for person in ready
+        ]
+
+        if not background:
+            return sum(1 for p in payloads if _send_team_chat_email(p))
+
+        app = None
+        try:
+            from flask import current_app
+            app = current_app._get_current_object()
+        except Exception:
+            app = None
+
+        def _send_all():
+            if app is not None:
+                with app.app_context():
+                    for p in payloads:
+                        _send_team_chat_email(p)
+            else:
+                for p in payloads:
+                    _send_team_chat_email(p)
+
+        thread = threading.Thread(
+            target=_send_all, daemon=True,
+            name=f"team-chat-email-{submission_id}")
+        thread.start()
+        return len(payloads)
+    except Exception as e:
+        logger.error(f"❌ Failed to notify team of chat message: {e}", exc_info=True)
+        return 0
 
 
 def send_cohort_start_notification(enrollment):

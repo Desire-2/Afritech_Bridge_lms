@@ -19,6 +19,7 @@ const CATEGORY_LABELS: Record<string, { label: string; icon: string; desc: strin
   announcements: { label: 'Course Announcements', icon: '📢', desc: 'Updates from instructors about your courses' },
   grades: { label: 'Grades & Feedback', icon: '📝', desc: 'Assignment, quiz, and project grading notifications' },
   forum: { label: 'Forum Activity', icon: '💬', desc: 'Replies, mentions, and likes on forum posts' },
+  team_chat: { label: 'Team Chat Messages', icon: '👥', desc: 'Emails when a teammate posts in your project team chat' },
   enrollment: { label: 'Enrollment & Payments', icon: '🎓', desc: 'Application status, payment confirmations' },
   achievement: { label: 'Achievements', icon: '🏆', desc: 'Badges, streaks, and milestone notifications' },
   system: { label: 'System & Maintenance', icon: '⚙️', desc: 'Platform updates and maintenance notices' },

@@ -3333,6 +3333,35 @@ def send_team_chat_message(project_id):
         db.session.add(message)
         db.session.commit()
 
+        # Email the rest of the team about the new message. Never let a
+        # mail-provider hiccup turn a successfully saved message into a 500.
+        try:
+            from ..utils.email_notifications import notify_team_of_chat_message
+
+            recipient_ids = _member_ids - {current_user_id}
+            recipients = (
+                User.query.filter(
+                    User.id.in_(list(recipient_ids)),
+                    User.email.isnot(None),
+                    User.deleted_at.is_(None),
+                ).all()
+                if recipient_ids
+                else []
+            )
+            if recipients:
+                notify_team_of_chat_message(
+                    recipients=recipients,
+                    sender_name=message.to_dict()["sender_name"],
+                    message_body=body,
+                    project=project,
+                    submission_id=submission.id,
+                    sent_at=message.created_at,
+                )
+        except Exception:
+            logger.error(
+                "Failed to queue team chat notification emails", exc_info=True
+            )
+
         return jsonify({"message": message.to_dict()}), 201
 
     except Exception as e:
