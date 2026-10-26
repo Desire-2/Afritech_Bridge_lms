@@ -90,6 +90,28 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const [uploadingImage, setUploadingImage] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const moduleFormRef = useRef<HTMLDivElement>(null);
+  const lessonEditFormRef = useRef<HTMLDivElement>(null);
+
+  // Bring a form into view and focus it, respecting reduced-motion.
+  const focusEditForm = (el: HTMLElement | null) => {
+    if (!el) return;
+    const reduce = typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
+  };
+
+  // Clicking "Edit" must land you ON the form you asked to edit.
+  useEffect(() => {
+    if (editingModule) focusEditForm(moduleFormRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingModule]);
+
+  useEffect(() => {
+    if (editingLesson) focusEditForm(lessonEditFormRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingLesson]);
 
   // Keyboard shortcuts for markdown formatting
   useEffect(() => {
@@ -836,6 +858,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
   const startEditingModule = (module: EnhancedModule) => {
     setEditingModule(module);
+    // Only one form is editable at a time — close the others.
+    setEditingLesson(null);
+    setShowLessonForm({ moduleId: null });
+    setShowModuleForm(false);
     setModuleForm({
       title: module.title,
       description: module.description || '',
@@ -846,6 +872,19 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
   const startEditingLesson = (moduleId: number, lesson: EnhancedLesson) => {
     setEditingLesson({ moduleId, lesson });
+    // Only one form is editable at a time — close the others, make sure the
+    // module is expanded so the row being edited is visible, and start in
+    // edit mode (not the previous lesson's preview/split state).
+    setEditingModule(null);
+    setShowModuleForm(false);
+    setShowLessonForm({ moduleId: null });
+    setExpandedModules((prev) => {
+      const next = new Set(prev);
+      next.add(moduleId);
+      return next;
+    });
+    setShowMarkdownPreview(false);
+    setSplitView(false);
     setLessonForm({
       title: lesson.title,
       content_type: (lesson.content_type as 'text' | 'video' | 'pdf' | 'mixed') || 'text',
@@ -1404,10 +1443,25 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
       {/* Module Form */}
       {(showModuleForm || editingModule) && (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h4 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-            {editingModule ? 'Edit Module' : 'Create New Module'}
-          </h4>
+        <div
+          ref={moduleFormRef}
+          tabIndex={-1}
+          className={`rounded-lg p-6 shadow-sm focus:outline-none ${
+            editingModule
+              ? 'border-2 border-blue-400 bg-blue-50/50 dark:border-blue-600 dark:bg-blue-950/40'
+              : 'border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800'
+          }`}
+        >
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <h4 className="text-lg font-semibold text-slate-900 dark:text-white">
+              {editingModule ? 'Edit Module' : 'Create New Module'}
+            </h4>
+            {editingModule && (
+              <span className="inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full border border-blue-300 bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800 dark:border-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                ✏️ Editing: {editingModule.title}
+              </span>
+            )}
+          </div>
           
           <div className="space-y-4">
             <div>
@@ -1552,7 +1606,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                               <span className="sm:hidden">AI</span>
                             </button>
                             <button
-                              onClick={() => setShowLessonForm({ moduleId: module.id })}
+                              onClick={() => {
+                                setEditingLesson(null);
+                                setShowLessonForm({ moduleId: module.id });
+                              }}
                               className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
                             >
                               <span className="hidden sm:inline">Add Lesson</span>
@@ -1561,9 +1618,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             <button
                               onClick={() => startEditingModule(module)}
                               disabled={!!actionLoading}
-                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              className={`text-xs sm:text-sm px-2 sm:px-3 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                                editingModule?.id === module.id
+                                  ? 'bg-blue-600 text-white ring-2 ring-blue-300 dark:ring-blue-700'
+                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                              }`}
                             >
-                              Edit
+                              {editingModule?.id === module.id ? 'Editing' : 'Edit'}
                             </button>
                             <button
                               onClick={() => handlePublishModule(module.id, module.is_published)}
@@ -1981,8 +2042,12 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         <div
                                           ref={provided.innerRef}
                                           {...provided.draggableProps}
-                                          className={`p-2 sm:p-3 border border-slate-200 dark:border-slate-600 rounded-lg ${
-                                            snapshot.isDragging ? 'shadow-lg bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'
+                                          className={`p-2 sm:p-3 border rounded-lg ${
+                                            snapshot.isDragging
+                                              ? 'border-slate-200 dark:border-slate-600 shadow-lg bg-white dark:bg-slate-800'
+                                              : editingLesson?.lesson.id === lesson.id
+                                                ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300 dark:border-blue-600 dark:bg-blue-900/30 dark:ring-blue-800'
+                                                : 'border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/50'
                                           }`}
                                         >
                                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -2014,9 +2079,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                               <button
                                                 onClick={() => startEditingLesson(module.id, lesson as EnhancedLesson)}
                                                 disabled={!!actionLoading}
-                                                className="text-xs px-2 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                                className={`text-xs px-2 py-1 rounded disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                  editingLesson?.lesson.id === lesson.id
+                                                    ? 'bg-blue-600 text-white ring-2 ring-blue-300 dark:ring-blue-700'
+                                                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-300'
+                                                }`}
                                               >
-                                                Edit
+                                                {editingLesson?.lesson.id === lesson.id ? 'Editing' : 'Edit'}
                                               </button>
                                               <button
                                                 onClick={() => handlePublishLesson(module.id, lesson.id, (lesson as EnhancedLesson).is_published)}
@@ -2064,8 +2133,19 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
                       {/* Edit Lesson Form */}
                       {editingLesson?.moduleId === module.id && (
-                        <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50">
-                          <h5 className="font-medium text-slate-900 dark:text-white mb-4">Edit Lesson</h5>
+                        <div
+                          ref={lessonEditFormRef}
+                          tabIndex={-1}
+                          className="border-t-2 border-blue-400 bg-blue-50/60 p-4 focus:outline-none dark:border-blue-700 dark:bg-blue-950/40"
+                        >
+                          <div className="mb-4 flex flex-wrap items-center gap-2">
+                            <h5 className="font-medium text-slate-900 dark:text-white">Edit Lesson</h5>
+                            {editingLesson && (
+                              <span className="inline-flex max-w-[14rem] items-center gap-1 truncate rounded-full border border-blue-300 bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800 dark:border-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                                ✏️ Editing: {editingLesson.lesson.title}
+                              </span>
+                            )}
+                          </div>
                           
                           <div className="space-y-4">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
