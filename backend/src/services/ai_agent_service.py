@@ -1324,6 +1324,7 @@ class AIAgentService:
                     previous_sections_content=accumulated_content,
                     course_context=course_context,
                     difficulty_level=difficulty_level,
+                    hierarchy=outline,
                 )
             except Exception as e:
                 logger.error(f"Section generation failed for '{section.get('heading')}': {e}")
@@ -1485,18 +1486,30 @@ class AIAgentService:
         start_time = time.time()
         total_steps = 3
         
-        # Build course context text for prompts
+        # Build hierarchy-aware course context text for prompts:
+        # lessons are labeled PRIOR KNOWLEDGE (taught) vs UPCOMING (planned)
+        # so enhancement deepens this lesson without duplicating others.
         course_ctx = ""
         if course_context:
-            course_ctx = "\n\n===== FULL COURSE STRUCTURE (for cross-reference) ====="
+            course_ctx = "\n\n===== FULL COURSE STRUCTURE (learning hierarchy — do not duplicate any of it) ====="
             for mod in course_context:
                 is_current = mod.get('title', '') == module_title
                 marker = " ← CURRENT MODULE" if is_current else ""
                 course_ctx += f"\n\nModule {mod.get('order', '?')}: {mod.get('title', 'Untitled')}{marker}"
                 for les in mod.get('lessons', []):
                     course_ctx += f"\n  - Lesson: {les.get('title', 'Untitled')}"
-                    if les.get('content_summary'):
+                    has_content = les.get('has_content')
+                    if has_content is True:
+                        course_ctx += " [PRIOR KNOWLEDGE]"
+                    elif has_content is False:
+                        course_ctx += " [UPCOMING]"
+                    topics = les.get('covered_topics')
+                    if topics:
+                        course_ctx += "\n    Topics covered: " + "; ".join(topics[:12])
+                    elif les.get('content_summary'):
                         course_ctx += f" — Topics: {les['content_summary'][:150]}"
+            course_ctx += ("\n\n[HIERARCHY: reference prior lessons in one sentence instead of re-teaching them; "
+                           "never repeat a topic listed above; do not preempt UPCOMING lessons.]")
         
         # ----- Step 1: Analysis -----
         if task_id:

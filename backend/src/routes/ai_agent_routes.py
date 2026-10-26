@@ -106,11 +106,68 @@ def _lesson_for_generation(lesson_id, course_id):
     return lesson, None
 
 
+def _extract_lesson_topics(content_data: str):
+    """
+    Extract (covered_topics, content_summary) from lesson markdown.
+
+    covered_topics: every distinct '## ' section heading (what the lesson
+                    actually teaches) — this is the unit of duplication
+                    detection for hierarchical generation.
+    content_summary: a short join of the first headings, for compact
+                     prompt rendering. Returns ([], '') for placeholder
+                     stub rows ("Content to be developed...") so planned
+                     but unwritten lessons are never treated as prior
+                     knowledge.
+    """
+    if not content_data:
+        return [], ''
+    # Auto-saved outline stubs carry no real content
+    if 'Content to be developed' in content_data and len(content_data) < 400:
+        return [], ''
+    import re
+    covered, seen = [], set()
+    for header in re.findall(r'^##\s+(.+)$', content_data, re.MULTILINE):
+        header = header.strip()
+        if not header or header.lower() in seen:
+            continue
+        seen.add(header.lower())
+        covered.append(header[:100])
+        if len(covered) >= 12:
+            break
+    if covered:
+        summary = "; ".join(covered[:6])[:240]
+    else:
+        summary = content_data[:200].replace('\n', ' ').strip()
+    return covered, summary
+
+
+def _lesson_context_data(lesson) -> dict:
+    """
+    Serialize a Lesson row for generation prompts.
+
+    Adds has_content so prompt builders can split lessons into
+    PRIOR KNOWLEDGE (written content the learner already studied) vs
+    UPCOMING (planned stubs) — the backbone of the hierarchy contract.
+    """
+    covered, summary = _extract_lesson_topics(lesson.content_data)
+    return {
+        'title': lesson.title,
+        'description': (lesson.description or '')[:150],
+        'order': lesson.order,
+        'duration_minutes': lesson.duration_minutes or 0,
+        'content_summary': summary,
+        'covered_topics': covered,
+        'has_content': bool(summary),
+    }
+
+
 def _gather_course_context(course_id: int, exclude_module_id: int = None) -> list:
     """
     Gather full course structure with all modules and their lessons for cross-reference.
     Returns a list of dicts suitable for passing to generators as course_context.
-    This prevents content duplication across modules and lessons.
+    Each lesson carries covered_topics (its ## headings) and has_content so
+    generators can reason about the learning hierarchy: what the student has
+    already studied, what is planned but unwritten, and what must not repeat.
     """
     modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
     context = []
@@ -124,23 +181,7 @@ def _gather_course_context(course_id: int, exclude_module_id: int = None) -> lis
         }
         lessons = Lesson.query.filter_by(module_id=mod.id).order_by(Lesson.order).all()
         for les in lessons:
-            # Extract a brief content summary from lesson content
-            content_summary = ''
-            if les.content_data:
-                import re
-                headers = re.findall(r'^##\s+(.+)$', les.content_data, re.MULTILINE)
-                if headers:
-                    content_summary = "; ".join(headers[:6])
-                else:
-                    content_summary = les.content_data[:200].replace('\n', ' ')
-            
-            mod_data['lessons'].append({
-                'title': les.title,
-                'description': (les.description or '')[:150],
-                'order': les.order,
-                'duration_minutes': les.duration_minutes or 0,
-                'content_summary': content_summary,
-            })
+            mod_data['lessons'].append(_lesson_context_data(les))
         context.append(mod_data)
     return context
 
@@ -880,12 +921,7 @@ def generate_multiple_lessons():
         
         # Get existing lessons in this module for context
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         # Gather full course context for cross-module awareness
         course_context = _gather_course_context(course_id)
@@ -984,12 +1020,7 @@ def generate_lesson_content():
         
         # Get existing lessons in this module for context
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         lesson_title = data.get('lesson_title', '')
         lesson_description = data.get('lesson_description', '')
@@ -1123,12 +1154,7 @@ def generate_comprehensive_lesson():
         
         # Get existing lessons in this module for context
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         logger.info(f"Generating COMPREHENSIVE lesson: {lesson_title} for module: {module.title} (difficulty: {difficulty_level}, existing lessons: {len(existing_lessons)})")
         
@@ -2183,12 +2209,7 @@ def create_task_session():
         
         # Get existing lessons
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         depth_level = data.get('depth_level', 'comprehensive')
         if depth_level not in ['basic', 'standard', 'comprehensive', 'expert']:
@@ -2345,12 +2366,7 @@ def generate_lesson_with_tasks():
         
         # Get existing lessons
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         depth_level = data.get('depth_level', 'comprehensive')
         if depth_level not in ['basic', 'standard', 'comprehensive', 'expert']:
@@ -2524,12 +2540,7 @@ def generate_deep_lesson():
         
         # Get existing lessons
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order,
-            'duration_minutes': lesson.duration_minutes or 0
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         logger.info(f"Generating deep lesson: {data.get('lesson_title')}")
         
@@ -2605,11 +2616,7 @@ def create_chapter_session():
         
         # Get existing lessons
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         target_chapters = data.get('target_chapters', 5)
         chapter_depth = data.get('chapter_depth', 'deep')
@@ -2805,11 +2812,7 @@ def generate_lesson_by_chapters():
         
         # Get existing lessons
         existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        existing_lessons_data = [{
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'order': lesson.order
-        } for lesson in existing_lessons]
+        existing_lessons_data = [_lesson_context_data(lesson) for lesson in existing_lessons]
         
         target_chapters = data.get('target_chapters', 5)
         chapter_depth = data.get('chapter_depth', 'deep')

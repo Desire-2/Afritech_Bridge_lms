@@ -25,7 +25,7 @@ class CourseGenerator:
         if not course_context:
             return ""
         
-        text = "\n\n===== FULL COURSE STRUCTURE (including lessons — for deduplication reference) ====="
+        text = "\n\n===== FULL COURSE STRUCTURE (learning hierarchy — build on this, never duplicate it) ====="
         for mod in course_context:
             text += f"\n\nModule {mod.get('order', '?')}: {mod.get('title', 'Untitled')}"
             if mod.get('description'):
@@ -38,11 +38,23 @@ class CourseGenerator:
                     text += f"\n    • Lesson {les.get('order', '?')}: {les.get('title', 'Untitled')}"
                     if les.get('description'):
                         text += f" — {les['description'][:100]}"
-                    if les.get('content_summary'):
+                    has_content = les.get('has_content')
+                    if has_content is True:
+                        text += " [PRIOR KNOWLEDGE — already taught]"
+                    elif has_content is False:
+                        text += " [UPCOMING — planned, not yet written]"
+                    topics = les.get('covered_topics')
+                    if topics:
+                        text += "\n      Topics: " + "; ".join(topics[:12])
+                    elif les.get('content_summary'):
                         text += f"\n      Topics: {les['content_summary'][:180]}"
             else:
                 text += "\n    (no lessons yet)"
-        text += "\n\n[CRITICAL: Review the above structure carefully. Any NEW modules you generate MUST cover topics NOT already addressed by existing modules or their lessons. Avoid topic overlap at both the module level and individual lesson level.]"
+        text += ("\n\n[HIERARCHY RULES — the sequence above is what the learner studies in order:"
+                 "\n1. Modules/lessons marked PRIOR KNOWLEDGE were already taught — new content builds on them by reference, never by restating them."
+                 "\n2. Items marked UPCOMING are planned but unwritten — reserve their topics; do not create lessons for them."
+                 "\n3. Any topic listed under Topics was already taught — a NEW module covering it is a duplication. If partially covered, go deeper on a genuinely new angle or omit it."
+                 "\n4. Avoid topic overlap at BOTH the module level and the individual lesson level.]")
         return text
 
     def generate_course_outline(self, topic: str, target_audience: str = "",
@@ -166,13 +178,18 @@ Course Title: {course_title}
 Course Description: {course_description}
 Course Objectives: {course_objectives}{existing_modules_text}{course_context_text}
 
-===== DUPLICATE AVOIDANCE CHECKLIST =====
+===== HIERARCHY CONTRACT — NEW MODULES CONTINUE THE COURSE =====
+Modules/lessons listed above are the learning sequence: PRIOR KNOWLEDGE items were already taught, UPCOMING items are planned but unwritten.
 Before generating each module, you MUST:
-1. Review ALL existing module titles, descriptions, and objectives above
-2. Review ALL existing lesson titles and topics covered
-3. Ensure each new module covers a DISTINCT topic area not already addressed
-4. Ensure suggested lessons within new modules do NOT overlap with existing lesson titles or topics
-5. If a topic is partially covered, go DEEPER or cover a complementary angle — never rehash
+1. Review ALL existing module titles, descriptions, objectives and the Topics listed per lesson
+2. The FIRST new module builds on the LAST existing module — name what it continues from
+   in its description, and make its first suggested lesson bridge from the prior module's
+   final lesson by title (e.g., "Building on '<last lesson>' …")
+3. No suggested lesson may repeat or paraphrase any topic listed above
+4. Topics reserved by UPCOMING lessons are off-limits for the new modules
+5. If a topic is partially covered, go DEEPER on a genuinely new angle — never rehash
+6. New module objectives and lesson descriptions assume the earlier sequence's knowledge
+   rather than restating it — continuity in descriptions, no re-teaching
 
 Create {num_modules} detailed module outlines that:
 1. Have clear, progressive module titles (Module {start_module_num} through Module {start_module_num + num_modules - 1})
@@ -270,12 +287,18 @@ Course Description: {course_description}
 Course Objectives: {course_objectives}{existing_modules_text}{course_context_text}
 {'Module Title: ' + module_title if module_title else 'Generate a suitable module title'}
 
-===== DUPLICATE AVOIDANCE CHECKLIST =====
+===== HIERARCHY CONTRACT — THIS MODULE CONTINUES THE COURSE =====
+The modules/lessons listed above are the learning sequence: PRIOR KNOWLEDGE items were already taught, UPCOMING items are planned but unwritten.
 Before generating, you MUST:
-1. Review ALL existing module titles, descriptions, objectives, and their lesson topics
-2. Ensure this new module covers a DISTINCT topic area not already addressed
-3. Ensure suggested lessons do NOT overlap with any existing lesson titles or topics
-4. If a topic is partially covered somewhere, go DEEPER or cover a complementary angle
+1. Review ALL existing module titles, descriptions, objectives, and the Topics listed per lesson
+2. This new module (the NEXT module) builds on the LAST existing module — name the module
+   it continues from in its description, and make its first suggested lesson bridge from
+   the prior module's final lesson by title (e.g., "Building on '<last lesson>' …")
+3. Ensure suggested lessons do NOT overlap with any topic listed above
+4. Topics reserved by UPCOMING lessons are off-limits — reserve them, do not claim them
+5. If a topic is partially covered somewhere, go DEEPER on a genuinely new angle
+6. The module assumes the earlier sequence's knowledge — objectives reference continuity
+   rather than restating what came before
 
 Create a detailed module outline that:
 1. {"Uses the provided module title" if module_title else "Suggests a clear, descriptive module title"}

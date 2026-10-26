@@ -158,11 +158,17 @@ class LessonGenerator:
 
     def _build_course_context_text(self, course_context: Optional[List[Dict[str, Any]]] = None,
                                      current_module_title: str = "") -> str:
-        """Build a text block describing the full course structure for cross-module awareness."""
+        """Build a hierarchy-aware text block of the full course structure.
+
+        Every lesson is rendered with the topics it actually teaches
+        (covered_topics / content_summary) and a PRIOR KNOWLEDGE vs UPCOMING
+        label from has_content, so generation prompts can both build on what
+        the learner already studied and avoid repeating it.
+        """
         if not course_context:
             return ""
-        
-        text = "\n\n===== FULL COURSE STRUCTURE (for cross-reference — DO NOT duplicate content) ====="
+
+        text = "\n\n===== FULL COURSE STRUCTURE (learning hierarchy — build on this, never duplicate it) ====="
         for mod in course_context:
             is_current = mod.get('title', '') == current_module_title
             marker = " ← CURRENT MODULE" if is_current else ""
@@ -177,9 +183,23 @@ class LessonGenerator:
                     text += f"\n  - Lesson {les.get('order', '?')}: {les.get('title', 'Untitled')}"
                     if les.get('description'):
                         text += f" — {les['description'][:120]}"
-                    if les.get('content_summary'):
-                        text += f"\n    Topics covered: {les['content_summary'][:200]}"
-        text += "\n\n[CRITICAL: Reference this structure. Do NOT repeat topics already covered in other modules/lessons. Focus on NEW, UNIQUE content that adds value and builds on what came before.]"
+                    has_content = les.get('has_content')
+                    if has_content is True:
+                        text += " [PRIOR KNOWLEDGE — already taught]"
+                    elif has_content is False:
+                        text += " [UPCOMING — planned, not yet written]"
+                    topics = les.get('covered_topics')
+                    if topics:
+                        text += "\n    Topics covered: " + "; ".join(topics[:12])
+                    elif les.get('content_summary'):
+                        text += f"\n    Topics covered: {les['content_summary'][:240]}"
+            else:
+                text += "\n    (no lessons yet)"
+        text += ("\n\n[HIERARCHY RULES — modules and lessons form a sequence the learner reads in order:"
+                 "\n1. PRIOR KNOWLEDGE lessons were already studied — build on them by REFERENCE only; never re-teach their listed topics."
+                 "\n2. UPCOMING lessons are planned but unwritten — do not preempt their topics; defer advanced material to them with a one-line forward reference."
+                 "\n3. If content from another lesson is needed here, cite it in one sentence (\"covered in depth in <lesson>\") instead of repeating it."
+                 "\n4. No section heading you write may repeat or paraphrase a topic listed above.]")
         return text
 
     def generate_lesson_content(self, course_title: str, module_title: str,
@@ -199,28 +219,67 @@ class LessonGenerator:
             module_objectives: Module learning objectives
             lesson_title: Lesson title (optional)
             lesson_description: Brief lesson description (optional)
-            existing_lessons: List of existing lessons in the module for context
-            course_context: Full course structure with all modules/lessons for cross-reference
+            existing_lessons: Sequence context for the module — each dict may carry
+                content_summary/covered_topics/has_content so prior-knowledge
+                (has_content) lessons are built upon and upcoming stubs are not
+                preempted
+            course_context: Full course structure with covered_topics/has_content
+                per lesson for cross-module hierarchy awareness
             
         Returns:
-            Dict with lesson title, description, objectives, and markdown content
+            Dict with lesson title, description, objectives, markdown content,
+            plus builds_on / assumes_knowledge hierarchy metadata
         """
         existing_lessons_text = ""
         if existing_lessons and len(existing_lessons) > 0:
-            existing_lessons_text = "\n\nExisting Lessons in this Module:\n"
-            for lesson in existing_lessons:
-                existing_lessons_text += f"\n{lesson['order']}. {lesson['title']}"
+            # Exclude the lesson being (re)generated from its own prior knowledge
+            target_key = (lesson_title or '').strip().lower()
+            sequence = [
+                les for les in existing_lessons
+                if not (target_key and str(les.get('title', '')).strip().lower() == target_key)
+            ]
+            prior = [les for les in sequence if les.get('has_content', True)]
+            upcoming = [les for les in sequence if not les.get('has_content', True)]
+
+            def _lesson_line(lesson):
+                line = f"\n{lesson.get('order', '?')}. {lesson['title']}"
                 if lesson.get('description'):
-                    existing_lessons_text += f"\n   Description: {lesson['description']}"
+                    line += f"\n   Description: {lesson['description']}"
                 if lesson.get('duration_minutes'):
-                    existing_lessons_text += f"\n   Duration: {lesson['duration_minutes']} minutes"
-                if lesson.get('content_summary'):
-                    existing_lessons_text += f"\n   Topics covered: {lesson['content_summary'][:200]}"
-            existing_lessons_text += f"\n\n[IMPORTANT: Analyze the existing {len(existing_lessons)} lesson(s) above. Generate the NEXT lesson (Lesson {len(existing_lessons) + 1}) that:"
-            existing_lessons_text += "\n- Builds upon previous lessons naturally"
-            existing_lessons_text += "\n- Covers NEW content not already taught"
-            existing_lessons_text += "\n- Fills gaps in the learning progression"
-            existing_lessons_text += "\n- Maintains logical flow and difficulty progression]"
+                    line += f"\n   Duration: {lesson['duration_minutes']} minutes"
+                topics = lesson.get('covered_topics')
+                if topics:
+                    line += "\n   Topics covered: " + "; ".join(topics[:12])
+                elif lesson.get('content_summary'):
+                    line += f"\n   Topics covered: {lesson['content_summary'][:240]}"
+                return line
+
+            if prior:
+                existing_lessons_text = "\n\nPRIOR KNOWLEDGE — lessons the learner has ALREADY STUDIED (read in this order):"
+                for lesson in prior:
+                    existing_lessons_text += _lesson_line(lesson)
+            if upcoming:
+                existing_lessons_text += "\n\nUPCOMING PLANNED LESSONS in this module (not yet written — do NOT cover their topics here):"
+                for lesson in upcoming:
+                    existing_lessons_text += f"\n{lesson.get('order', '?')}. {lesson['title']}"
+                    if lesson.get('description'):
+                        existing_lessons_text += f" — {lesson['description'][:160]}"
+            if sequence:
+                next_num = max(int(les.get('order') or 0) for les in sequence) + 1
+                if lesson_title:
+                    existing_lessons_text += (
+                        f"\n\n[CONTEXT: the lesson you are writing sits AFTER the {len(prior)} prior-knowledge "
+                        f"lesson(s) and BEFORE the {len(upcoming)} upcoming planned lesson(s) listed above. "
+                        "It must continue from the prior knowledge without repeating it.]"
+                    )
+                else:
+                    existing_lessons_text += f"\n\n[IMPORTANT: Generate the NEXT lesson (Lesson {next_num}) that:"
+                    existing_lessons_text += "\n- Builds upon the PRIOR KNOWLEDGE lessons naturally (bridge to them, never re-teach them)"
+                    existing_lessons_text += "\n- Covers NEW content not already taught"
+                    existing_lessons_text += "\n- Fills gaps in the learning progression without preempting UPCOMING lessons"
+                    existing_lessons_text += "\n- Maintains logical flow and difficulty progression]"
+            else:
+                existing_lessons_text += "\n\n[This is the FIRST lesson of the module — orient the learner and preview what follows.]"
         
         # Cross-module context
         course_context_text = self._build_course_context_text(course_context, module_title)
@@ -235,13 +294,27 @@ Difficulty Level: {difficulty_level}{existing_lessons_text}{course_context_text}
 {'Lesson Title: ' + lesson_title if lesson_title else 'You MUST generate a SPECIFIC, DESCRIPTIVE lesson title that clearly reflects the topic being taught. Do NOT use generic titles like "Course Lesson", "Lesson Title", or "Module Lesson".'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
-===== DUPLICATE AVOIDANCE CHECKLIST =====
-Before generating, you MUST:
-1. Review ALL existing lesson titles, descriptions, and topics covered (listed above)
-2. Review the FULL COURSE STRUCTURE (if provided) including other modules' lessons
-3. Ensure this lesson's content does NOT repeat topics already taught
-4. If a topic was introduced elsewhere, go DEEPER into a specific aspect or cover a new angle
-5. Cross-reference section headers — avoid reusing the same heading topics
+===== HIERARCHY CONTRACT — BUILD ON WHAT CAME BEFORE =====
+Lessons are studied IN ORDER. PRIOR KNOWLEDGE lessons (listed above) are what this learner already knows; UPCOMING lessons are planned and must not be preempted; the FULL COURSE STRUCTURE shows every other module's taught topics.
+
+MANDATORY:
+1. BRIDGE: Start the Introduction with a "Building on previous lessons" paragraph —
+   one sentence naming the prior lesson(s) this continues from (by title), then 2-3
+   bullets of the exact concepts from those lessons this lesson assumes.
+   (If there are no prior lessons, orient the learner at the start of the course
+   and preview what follows instead.)
+2. ASSUME, NEVER RETEACH: A concept listed as prior knowledge may appear at most
+   once, as one recall sentence: "As covered in '<lesson title>', <one-sentence recap>."
+   Never re-derive, re-explain, or re-list what a prior lesson already taught.
+3. SIDEWAYS REFERENCE: If a needed subtopic already appears in ANY "Topics covered"
+   list above (including other modules), do NOT teach it — cite it in one sentence
+   ("covered in depth in '<lesson title>'") and continue.
+4. ZERO REPEATED HEADINGS: no ## section heading may repeat or closely paraphrase a
+   topic already listed above. If a topic was introduced elsewhere, go DEEPER into a
+   specific aspect or cover a genuinely new angle.
+5. SCOPE BOUNDARY: teach only THIS lesson's objectives. Material that belongs to an
+   UPCOMING lesson or a later module gets a one-line forward reference
+   ("we deepen this in '<lesson>'") — never full coverage here.
 
 ===== CRITICAL REQUIREMENTS =====
 
@@ -311,6 +384,8 @@ Format as JSON:
   "learning_objectives": "• Specific measurable objective 1\\n• Specific measurable objective 2\\n• Specific measurable objective 3\\n• Specific measurable objective 4",
   "duration_minutes": 60,
   "content_type": "text",
+  "builds_on": ["Exact title of the prior lesson(s) this lesson continues from"],
+  "assumes_knowledge": ["Specific concept the learner already has from those prior lessons"],
   "content_data": "# Introduction\\n\\n[400-500 word engaging introduction...]\\n\\n## Section 1: [Topic]\\n\\n[500-800 words of detailed content...]\\n\\n## Section 2: [Topic]\\n\\n[500-800 words...]\\n\\n[Continue for all sections...]\\n\\n## Worked Examples\\n\\n[Detailed examples with solutions...]\\n\\n## Key Takeaways\\n\\n[Specific actionable points...]\\n\\n## Discussion Questions\\n\\n[Thought-provoking questions...]"
 }}"""
         
@@ -1164,12 +1239,33 @@ This lesson has provided you with a comprehensive foundation in {lesson_title}. 
         """Step 1: Generate a detailed lesson outline with sections, topics, and structure."""
         existing_text = ""
         if existing_lessons:
-            existing_text = "\n\nExisting Lessons in this Module:\n"
-            for les in existing_lessons:
-                existing_text += f"  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
-                if les.get('content_summary'):
-                    existing_text += f" — Topics: {les['content_summary'][:150]}"
-                existing_text += "\n"
+            # Exclude the lesson being outlined from its own prior knowledge
+            target_key = (lesson_title or '').strip().lower()
+            sequence = [
+                les for les in existing_lessons
+                if not (target_key and str(les.get('title', '')).strip().lower() == target_key)
+            ]
+            prior = [les for les in sequence if les.get('has_content', True)]
+            upcoming = [les for les in sequence if not les.get('has_content', True)]
+            if prior:
+                existing_text = "\n\nPRIOR KNOWLEDGE — lessons the learner has ALREADY STUDIED (in order):"
+                for les in prior:
+                    existing_text += f"\n  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
+                    if les.get('description'):
+                        existing_text += f" — {les['description'][:120]}"
+                    topics = les.get('covered_topics')
+                    if topics:
+                        existing_text += "\n      Topics: " + "; ".join(topics[:12])
+                    elif les.get('content_summary'):
+                        existing_text += f"\n      Topics: {les['content_summary'][:180]}"
+            if upcoming:
+                existing_text += "\n\nUPCOMING PLANNED LESSONS in this module (not yet written — reserve their topics, do NOT plan them here):"
+                for les in upcoming:
+                    existing_text += f"\n  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
+                    if les.get('description'):
+                        existing_text += f" — {les['description'][:160]}"
+            if not sequence:
+                existing_text += "\n\n[This is the FIRST lesson of the module — orient the learner and preview what follows.]"
 
         course_ctx = self._build_course_context_text(course_context, module_title)
 
@@ -1191,11 +1287,13 @@ Return ONLY valid JSON:
   "description": "3-4 sentence description of what this lesson covers and its value",
   "learning_objectives": ["Objective 1 with action verb", "Objective 2", "Objective 3", "Objective 4", "Objective 5"],
   "duration_minutes": 60,
+  "builds_on": ["Exact title of the prior lesson(s) this outline continues from (omit for the first lesson)"],
+  "assumes_knowledge": ["Specific concept the learner already has from those prior lessons"],
   "sections": [
     {{
       "id": "introduction",
       "heading": "Introduction",
-      "description": "What this section covers and its purpose",
+      "description": "The bridge from prior lessons (name them, state assumed concepts) plus what this section covers and its purpose",
       "target_words": 500,
       "key_topics": ["topic1", "topic2"]
     }},
@@ -1248,8 +1346,10 @@ Return ONLY valid JSON:
 REQUIREMENTS:
 - Plan 5-7 main sections plus intro and summary
 - Each section must have SPECIFIC, unique topics (not generic)
-- Ensure NO overlap with existing lessons listed above
+- Ensure ZERO overlap with PRIOR KNOWLEDGE topics listed above — this lesson builds on them by reference, never repeats them
+- The Introduction's description MUST specify the bridge: which prior lesson(s) it continues from (by title) and which concepts it assumes from them
 - Each section should build on the previous one
+- Do not preempt UPCOMING planned lessons — reserve their topics for them
 - Include practical applications and real-world examples in the plan        CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object."""
 
         result, provider = rate_limit_handler.execute_with_retry(
@@ -1332,8 +1432,14 @@ REQUIREMENTS:
                                       previous_sections_content: str = "",
                                       course_context: Optional[List[Dict[str, Any]]] = None,
                                       difficulty_level: str = "intermediate",
-                                      session_id: str = None, task_id: str = None) -> Optional[str]:
-        """Step 2+: Generate a single section of a lesson with full context."""
+                                      session_id: str = None, task_id: str = None,
+                                      hierarchy: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Step 2+: Generate a single section of a lesson with full context.
+
+        hierarchy: optional dict with builds_on / assumes_knowledge carried
+        from the lesson outline, so each section continues the lesson's
+        place in the course sequence instead of restating prior lessons.
+        """
         course_ctx = self._build_course_context_text(course_context, module_title)
         
         prev_ctx = ""
@@ -1342,13 +1448,24 @@ REQUIREMENTS:
             truncated = previous_sections_content[:3000]
             prev_ctx = f"\n\n--- CONTENT ALREADY WRITTEN IN THIS LESSON (for continuity) ---\n{truncated}\n--- END OF PREVIOUS CONTENT ---"
 
+        hier_ctx = ""
+        if hierarchy:
+            builds_on = [str(b) for b in (hierarchy.get('builds_on') or []) if b]
+            assumes = [str(a) for a in (hierarchy.get('assumes_knowledge') or []) if a]
+            if builds_on or assumes:
+                hier_ctx = "\n\n===== LESSON HIERARCHY (planned in the outline) ====="
+                if builds_on:
+                    hier_ctx += "\nBuilds on — continue from these, never re-teach: " + "; ".join(builds_on[:5])
+                if assumes:
+                    hier_ctx += "\nAssumes the learner already knows (one-sentence recall max each): " + "; ".join(assumes[:8])
+
         prompt = f"""You are an expert professor writing a SINGLE SECTION of a comprehensive lesson.
 
 Course: {course_title}
 Module: {module_title}
 Lesson: {lesson_title}
 Lesson Description: {lesson_description}
-Difficulty Level: {difficulty_level}{course_ctx}{prev_ctx}
+Difficulty Level: {difficulty_level}{course_ctx}{prev_ctx}{hier_ctx}
 
 ===== SECTION TO WRITE =====
 Heading: {section.get('heading', 'Section')}
@@ -1367,6 +1484,10 @@ Key Topics to Cover: {', '.join(section.get('key_topics', []))}
 8. DO NOT repeat content from other lessons in the course (shown in course structure)
 9. Build naturally on what came before — reference previous sections where relevant
 10. Write as a professor teaching, not summarizing
+11. If hierarchy is shown above: when writing the Introduction, open with the bridge —
+    name the prior lesson(s) by title and state the assumed concepts
+12. Assume the listed prior knowledge: at most one recall sentence per concept
+    ("As covered in '<lesson>', <one sentence>"), never a re-explanation
 
 Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
 
@@ -1481,9 +1602,20 @@ Return ONLY a JSON object:
                 existing_text += f"  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
                 if les.get('description'):
                     existing_text += f" — {les['description'][:100]}"
+                if les.get('has_content') is True:
+                    existing_text += " [PRIOR KNOWLEDGE — already taught]"
+                elif les.get('has_content') is False:
+                    existing_text += " [UPCOMING — planned]"
+                topics = les.get('covered_topics')
+                if topics:
+                    existing_text += "\n      Topics: " + "; ".join(topics[:10])
+                elif les.get('content_summary'):
+                    existing_text += f"\n      Topics: {les['content_summary'][:180]}"
                 existing_text += "\n"
-            start_num = len(existing_lessons) + 1
-            existing_text += f"\n[Generate {num_lessons} NEW lessons starting from Lesson {start_num}. DO NOT repeat existing topics.]"
+            start_num = max(int(les.get('order') or 0) for les in existing_lessons) + 1
+            existing_text += (f"\n[Generate {num_lessons} NEW lessons starting from Lesson {start_num}. "
+                              "They continue the sequence: build on the prior-knowledge lessons and "
+                              "overlap NONE of the topics listed above.]")
         
         course_ctx = self._build_course_context_text(course_context, module_title)
         
@@ -1497,6 +1629,11 @@ Objectives: {module_objectives}{existing_text}{course_ctx}
 ===== CRITICAL =====
 - Each lesson title MUST be SPECIFIC and UNIQUE — no generic titles
 - Ensure ZERO overlap between lessons — each covers a distinct sub-topic
+- HIERARCHY: each lesson's description must state what it builds on — name the
+  lesson it continues from (the first new lesson continues from the last existing
+  lesson or prior module; every subsequent one continues from its predecessor),
+  and set "builds_on" accordingly
+- Do not cover topics already listed as Topics above — those were taught or planned
 - Content will be generated SEPARATELY — just provide the outline here
 - Progress from fundamentals to advanced topics
 
@@ -1506,7 +1643,8 @@ Return ONLY valid JSON:
     {{
       "order": {start_num},
       "title": "Specific descriptive lesson title",
-      "description": "2-3 sentences on what this lesson covers and its value",
+      "description": "2-3 sentences: what this lesson covers, what it continues from, and its value",
+      "builds_on": ["Title of the previous lesson this continues from"],
       "learning_objectives": "• Objective 1\\n• Objective 2\\n• Objective 3",
       "duration_minutes": 60
     }}
