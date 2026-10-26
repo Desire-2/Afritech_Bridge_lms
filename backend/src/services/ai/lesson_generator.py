@@ -549,6 +549,21 @@ Format as JSON:
                     existing_context += section.get('title', 'Untitled')
             existing_context += "\n\n[Generate sections that complement and extend this existing content]"
 
+        def _report_phase(step: int, description: str) -> None:
+            """Push a real milestone to the background task's progress bar.
+
+            Each report below marks an actual event in this run (model call
+            started, response parsed, retry triggered) — never a time-based
+            estimate. The wrapper's complete_step() supplies the final 100%.
+            """
+            if not task_id:
+                return
+            try:
+                from .task_manager import task_manager
+                task_manager.update_progress(task_id, step, 3, description)
+            except Exception:  # pragma: no cover - task_manager optional standalone
+                logger.debug("Could not report mixed content progress", exc_info=True)
+
         template_structure = self.TEMPLATES.get(template_id, None) if template_id else None
         template_guidance = ""
         if template_structure:
@@ -568,6 +583,7 @@ Format as JSON:
             template_guidance, template_id
         )
 
+        _report_phase(1, "Requesting lesson sections from the model...")
         result, provider = rate_limit_handler.execute_with_retry(
             self.provider.make_ai_request,
             prompt,
@@ -584,6 +600,7 @@ Format as JSON:
                 sections = parsed['sections']
 
         if sections is not None:
+            _report_phase(2, "Structuring sections for the editor...")
             # Merge onto the selected template so slots stay filled in template
             # order and any extra AI sections are appended at the end.
             if template_structure:
@@ -599,6 +616,7 @@ Format as JSON:
 
             # Text sections came back skeletal (e.g. truncated JSON recovery).
             # Ask once more, this time showing the model what it already wrote.
+            _report_phase(2, "Text sections too short - expanding the lesson...")
             retry_prompt = (
                 f"{prompt}\n\n"
                 "CRITICAL RETRY INSTRUCTION: Your previous attempt produced text sections "
@@ -624,18 +642,21 @@ Format as JSON:
                         retry_sections = self._merge_sections_with_template(template_structure, retry_sections)
                     retry_sections = self._normalize_mixed_sections(retry_sections)
                     if not self._mixed_text_is_thin(retry_sections):
+                        _report_phase(2, "Structuring sections for the editor...")
                         return {
                             "sections": retry_sections,
                             "lesson_title": lesson_title,
                             "template_used": template_id
                         }
             # First attempt's sections are better than the skeleton fallback.
+            _report_phase(2, "Structuring sections for the editor...")
             return {
                 "sections": sections,
                 "lesson_title": lesson_title,
                 "template_used": template_id
             }
 
+        _report_phase(2, "No valid sections - building a fallback template...")
         return fallback_generators.generate_fallback_mixed_content(lesson_title, template_id)
 
     def _normalize_mixed_sections(self, sections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

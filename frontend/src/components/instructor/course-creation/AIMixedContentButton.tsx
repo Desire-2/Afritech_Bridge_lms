@@ -66,8 +66,13 @@ export const AIMixedContentButton: React.FC<AIMixedContentButtonProps> = ({
                 style={{ width: `${barWidth}%` }}
               />
             </div>
-            <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-300 tabular-nums min-w-[36px]">
+            <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-300 tabular-nums min-w-[64px]">
               {percent > 0 ? `${percent}%` : formatTime(elapsedSeconds)}
+              {percent > 0 && elapsedSeconds > 0 && (
+                <span className="ml-1 font-normal opacity-70">
+                  · {formatTime(elapsedSeconds)}
+                </span>
+              )}
             </span>
             {progress?.status === 'rate_limited' && (
               <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300 shrink-0">

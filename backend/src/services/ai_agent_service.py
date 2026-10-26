@@ -15,6 +15,7 @@ Uses OpenRouter AI (primary) and Google Gemini (fallback) for course content gen
 import json
 import time
 import hashlib
+import inspect
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Callable, Generator
@@ -571,7 +572,8 @@ class AIAgentService:
                               module_description: str, lesson_title: str,
                               lesson_description: str = "",
                               template_id: Optional[str] = None,
-                              existing_sections: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+                              existing_sections: Optional[List[Dict[str, Any]]] = None,
+                              task_id: Optional[str] = None) -> AIResponse:
         """Generate mixed content lesson with enhanced handling"""
         cache_key = f"mixed_{course_title}_{module_title}_{lesson_title}_{template_id}"
         
@@ -582,7 +584,10 @@ class AIAgentService:
             lesson_description, template_id, existing_sections,
             # Sections are structural blocks the instructor edits afterwards, so
             # the prose-oriented quality gate would only burn extra API calls.
-            skip_quality_check=True
+            skip_quality_check=True,
+            # Forwarded to the generator so it can report real phase progress
+            # (and rate-limit waits) on the background task's status endpoint.
+            task_id=task_id,
         )
     
     def generate_lesson_section(self, lesson_title: str, section_type: str,
@@ -1110,8 +1115,18 @@ class AIAgentService:
             task = task_manager.tasks.get(task_id)
             if task is not None and task.status.value != 'rate_limited':
                 task.progress = 10.0
-        
-        result = method(**(method_kwargs or {}))
+
+        resolved_kwargs = dict(method_kwargs or {})
+        if task_id and 'task_id' not in resolved_kwargs:
+            # Forward the task id to methods that accept it so they can report
+            # real phase milestones (and rate-limit waits) while they run.
+            try:
+                if 'task_id' in inspect.signature(method).parameters:
+                    resolved_kwargs['task_id'] = task_id
+            except (TypeError, ValueError):  # pragma: no cover - exotic callables
+                pass
+
+        result = method(**resolved_kwargs)
         
         if task_id:
             task_manager.complete_step(task_id, 1, 1, "Content generated")

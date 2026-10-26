@@ -2368,6 +2368,9 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             showDialog={showMixedContentAI}
                                             onToggleDialog={() => setShowMixedContentAI(!showMixedContentAI)}
                                             onGenerate={handleMixedContentAIGenerate}
+                                            progress={mixedGenProgress}
+                                            elapsedSeconds={mixedGenElapsed}
+                                            onCancel={handleCancelMixedGen}
                                           />
                                         </div>
                                         <MixedContentBuilder
