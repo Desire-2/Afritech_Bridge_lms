@@ -59,6 +59,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   
   // New filtering and sorting states
   const [filterModuleId, setFilterModuleId] = useState<number | null>(null);
+  // null = follow the automatic expand/collapse rule for the module breakdown.
+  const [moduleBreakdownExpanded, setModuleBreakdownExpanded] = useState<boolean | null>(null);
   const [sortBy, setSortBy] = useState<'title' | 'created_at' | 'module' | 'lesson' | 'points' | 'due_date'>('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
@@ -176,6 +178,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       setSelectedLessonId(null);
     }
   }, [selectedModuleId, modules]);
+
+  // Re-open the module breakdown only when choosing is actually required:
+  // clearing a module filter re-expands it (the instructor is picking again),
+  // while applying a filter collapses it back to the automatic rule.
+  const prevFilterModuleIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previous = prevFilterModuleIdRef.current;
+    if (previous !== null && filterModuleId === null) {
+      setModuleBreakdownExpanded(true);
+    } else if (previous === null && filterModuleId !== null) {
+      setModuleBreakdownExpanded(null);
+    }
+    prevFilterModuleIdRef.current = filterModuleId;
+  }, [filterModuleId]);
 
   const isAnswerBasedQuestion = (type: QuizQuestionForm['question_type']) =>
     type === 'multiple_choice' || type === 'true_false';
@@ -2034,6 +2050,21 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       title: lesson.title
     })) || [];
   };
+
+  // Per-module assessment counts for the Overview breakdown — computed once
+  // for the summary header and the card grid (previously recomputed per card).
+  const moduleBreakdown = (course.modules || []).map((module) => {
+    const assignments = assessments?.assignments?.filter(a => a.module_id === module.id).length || 0;
+    const quizzes = assessments?.quizzes?.filter(q => q.module_id === module.id).length || 0;
+    const projects = assessments?.projects?.filter(p => p.module_ids?.includes(module.id)).length || 0;
+    return { module, assignments, quizzes, projects, total: assignments + quizzes + projects };
+  });
+  const moduleBreakdownTotal = moduleBreakdown.reduce((sum, m) => sum + m.total, 0);
+  // Auto rule: long listings start collapsed; short, meaningful ones open
+  // straight away. A course with no assessments yet stays collapsed.
+  const autoExpandModuleBreakdown =
+    moduleBreakdown.length > 0 && moduleBreakdown.length <= 6 && moduleBreakdownTotal > 0;
+  const isModuleBreakdownExpanded = moduleBreakdownExpanded ?? autoExpandModuleBreakdown;
 
   // Enhanced filter and search functions with module filtering and sorting
   const filterAssessments = <T extends { 
@@ -4030,20 +4061,38 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         {/* Module Breakdown */}
         {!filterModuleId && course.modules && course.modules.length > 0 && (
           <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-700">
-            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4 flex items-center space-x-2">
-              <span>📚</span>
-              <span>Assessments by Module</span>
+            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4">
+              <button
+                type="button"
+                onClick={() => setModuleBreakdownExpanded(!isModuleBreakdownExpanded)}
+                aria-expanded={isModuleBreakdownExpanded}
+                aria-controls="assessments-by-module-grid"
+                className="group w-full flex items-center justify-between gap-3 text-left"
+              >
+                <span className="flex items-center space-x-2 min-w-0">
+                  <span aria-hidden="true">📚</span>
+                  <span>Assessments by Module</span>
+                  <span className="text-xs font-normal text-slate-400 dark:text-slate-500 truncate">
+                    · {moduleBreakdown.length} module{moduleBreakdown.length === 1 ? '' : 's'}
+                    {' · '}{moduleBreakdownTotal} assessment{moduleBreakdownTotal === 1 ? '' : 's'}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                  {isModuleBreakdownExpanded ? 'Collapse' : 'Expand'}
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className={`w-4 h-4 transition-transform motion-reduce:transition-none ${isModuleBreakdownExpanded ? 'rotate-180' : ''}`}
+                  >
+                    <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                  </svg>
+                </span>
+              </button>
             </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {course.modules.map(module => {
-                const moduleStats = {
-                  assignments: assessments?.assignments?.filter(a => a.module_id === module.id).length || 0,
-                  quizzes: assessments?.quizzes?.filter(q => q.module_id === module.id).length || 0,
-                  projects: assessments?.projects?.filter(p => p.module_ids?.includes(module.id)).length || 0
-                };
-                const total = moduleStats.assignments + moduleStats.quizzes + moduleStats.projects;
-                
-                return (
+            {isModuleBreakdownExpanded && (
+              <div id="assessments-by-module-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {moduleBreakdown.map(({ module, assignments, quizzes, projects, total }) => (
                   <div 
                     key={module.id} 
                     onClick={() => setFilterModuleId(module.id)}
@@ -4056,20 +4105,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       <span className="text-slate-600 dark:text-slate-400">{total} assessments</span>
                       <div className="flex space-x-1">
                         <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded-full">
-                          {moduleStats.assignments}
+                          {assignments}
                         </span>
                         <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 rounded-full">
-                          {moduleStats.quizzes}
+                          {quizzes}
                         </span>
                         <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded-full">
-                          {moduleStats.projects}
+                          {projects}
                         </span>
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
