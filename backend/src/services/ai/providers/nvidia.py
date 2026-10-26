@@ -308,6 +308,10 @@ class NVIDIAProvider(AIProvider):
                 url, headers=headers, json=payload,
                 timeout=self.timeout, stream=stream,
             )
+            # text/event-stream has no charset; requests defaults text/* to
+            # ISO-8859-1, which corrupts symbols/emoji in iter_lines(
+            # decode_unicode=True) and error .text. Force UTF-8.
+            resp.encoding = "utf-8"
             if resp.status_code >= 400:
                 detail = (resp.text or "")[:500]
                 raise self._error_for_status(resp.status_code, detail, resp.headers)

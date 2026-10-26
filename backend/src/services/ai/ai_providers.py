@@ -929,6 +929,11 @@ class AIProviderManager:
                     timeout=self.nvidia_timeout,
                     stream=True,
                 )
+                # text/event-stream has no charset and requests defaults text/*
+                # to ISO-8859-1 — decoding SSE lines that way corrupts every
+                # symbol, accent and emoji (√ → â…, · → Â·). Force UTF-8 before
+                # any .text/iter_lines(decode_unicode=True) use.
+                response.encoding = 'utf-8'
 
                 if response.status_code >= 400:
                     status_code = response.status_code
