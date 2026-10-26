@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertCircle, RefreshCw, Users, MessageSquare, Mail, Phone, Send, Crown, Lock } from 'lucide-react';
+import { Loader2, AlertCircle, RefreshCw, Users, MessageSquare, Mail, Phone, Send, Crown, Lock, ArrowDown } from 'lucide-react';
 import StudentSubmissionService, {
   TeamChatMessage,
   TeamDashboardData,
@@ -42,9 +42,11 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
   const [sending, setSending] = useState(false);
   const [draft, setDraft] = useState('');
   const [chatError, setChatError] = useState<string | null>(null);
+  const [hasNew, setHasNew] = useState(false);
 
   const lastIdRef = useRef(0);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
 
   const inTeam = !!team?.in_team && !!team?.team;
   const members = team?.team?.members ?? [];
@@ -95,8 +97,10 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
       const page = await StudentSubmissionService.getTeamChat(projectId, {
         after: lastIdRef.current || undefined,
       });
+      const fresh = page.messages.filter((message) => message.id > lastIdRef.current);
       setViewerId(page.viewer_id);
       appendMessages(page.messages);
+      if (fresh.length && !nearBottomRef.current) setHasNew(true);
     } catch {
       /* keep the room as it was */
     }
@@ -108,10 +112,31 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
     return () => clearInterval(timer);
   }, [inTeam, pollChat]);
 
-  // Keep the newest message in view
-  useEffect(() => {
+  const isNearBottom = () => {
     const container = messagesRef.current;
-    if (container) container.scrollTop = container.scrollHeight;
+    if (!container) return true;
+    return container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+  };
+
+  const jumpToLatest = () => {
+    const container = messagesRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    nearBottomRef.current = true;
+    setHasNew(false);
+  };
+
+  const handleChatScroll = () => {
+    const near = isNearBottom();
+    nearBottomRef.current = near;
+    if (near && hasNew) setHasNew(false);
+  };
+
+  // Keep the newest message in view — but never yank a reader who has
+  // scrolled up; they get a "New messages" button instead.
+  useEffect(() => {
+    if (nearBottomRef.current) jumpToLatest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length]);
 
   const handleSend = async () => {
@@ -121,6 +146,9 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
     setChatError(null);
     try {
       const created = await StudentSubmissionService.sendTeamChatMessage(projectId, body);
+      // A message you just sent means the room is yours again — jump down
+      nearBottomRef.current = true;
+      setHasNew(false);
       appendMessages([created]);
       setDraft('');
     } catch (err: any) {
@@ -154,10 +182,10 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
     return (
       <div className="rounded-2xl border border-red-800/50 bg-red-900/20 p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-3 text-sm text-red-200">
-          <AlertCircle className="h-4 w-4 text-red-400" />
+          <AlertCircle className="h-4 w-4 text-red-400" aria-hidden="true" />
           <span>{loadError || 'Could not load your team.'}</span>
           <Button size="sm" variant="outline" onClick={() => void loadInitial()}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
             Try again
           </Button>
         </div>
@@ -169,7 +197,7 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
     return (
       <div className="rounded-2xl border border-white/[0.07] bg-gray-900 p-4 sm:p-5">
         <div className="flex items-center gap-3 text-sm text-gray-400">
-          <Users className="h-4 w-4 text-gray-500" />
+          <Users className="h-4 w-4 text-gray-500" aria-hidden="true" />
           You are not on a team for this project yet. Once you are assigned one,
           your teammates and the team chat will appear here.
         </div>
@@ -184,11 +212,11 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
         <div>
           <div className="flex items-center gap-2.5">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
-              <Users className="h-4 w-4" />
+              <Users className="h-4 w-4" aria-hidden="true" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">Your team</h4>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 {members.length} {members.length === 1 ? 'member' : 'members'}
               </p>
             </div>
@@ -207,38 +235,38 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-white">{member.name}</span>
                     {member.is_primary && (
-                      <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-300">
-                        <Crown className="h-3 w-3" />
+                      <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium uppercase text-amber-300">
+                        <Crown className="h-3 w-3" aria-hidden="true" />
                         Lead
                       </span>
                     )}
                     {member.is_me && (
-                      <span className="rounded border border-white/15 bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium uppercase text-gray-300">
+                      <span className="rounded border border-white/15 bg-white/[0.06] px-1.5 py-0.5 text-[11px] font-medium uppercase text-gray-300">
                         You
                       </span>
                     )}
                   </div>
-                  <div className="mt-1.5 flex flex-col gap-1 text-xs text-gray-400">
+                  <div className="mt-1 flex flex-col gap-0.5 text-xs text-gray-400">
                     {member.email && (
                       <a
                         href={`mailto:${member.email}`}
-                        className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
+                        className="flex min-w-0 items-center gap-1.5 py-1.5 hover:text-blue-300 hover:underline"
                       >
-                        <Mail className="h-3.5 w-3.5 flex-shrink-0" />
+                        <Mail className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                         <span className="truncate">{member.email}</span>
                       </a>
                     )}
                     {member.phone ? (
                       <a
                         href={`tel:${member.phone}`}
-                        className="flex min-w-0 items-center gap-1.5 hover:text-blue-300 hover:underline"
+                        className="flex min-w-0 items-center gap-1.5 py-1.5 hover:text-blue-300 hover:underline"
                       >
-                        <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                        <Phone className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                         <span className="truncate">{member.phone}</span>
                       </a>
                     ) : (
-                      <span className="flex items-center gap-1.5 text-gray-500">
-                        <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="flex items-center gap-1.5 py-1.5 text-gray-400">
+                        <Phone className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                         No phone number on file
                       </span>
                     )}
@@ -254,25 +282,31 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/25 bg-blue-500/10 text-blue-300">
-                <MessageSquare className="h-4 w-4" />
+                <MessageSquare className="h-4 w-4" aria-hidden="true" />
               </span>
               <h4 className="text-sm font-semibold text-white">Team chat</h4>
             </div>
-            <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
-              <Lock className="h-3.5 w-3.5" />
+            <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
               Only your team can see this room
             </span>
           </div>
 
           <div
             ref={messagesRef}
-            className="mt-4 max-h-80 min-h-[5rem] space-y-2 overflow-y-auto pr-1"
+            tabIndex={0}
+            aria-label="Team chat messages"
+            onScroll={handleChatScroll}
+            className="scrollbar-thin mt-4 max-h-80 min-h-[5rem] space-y-2 overflow-y-auto pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
             aria-live="polite"
           >
             {messages.length === 0 ? (
-              <p className="py-6 text-center text-sm text-gray-500">
-                No messages yet — say hello to your team.
-              </p>
+              <div className="flex flex-col items-center gap-2 py-6 text-center">
+                <span className="rounded-full bg-white/[0.04] p-3">
+                  <MessageSquare className="h-5 w-5 text-gray-400" aria-hidden="true" />
+                </span>
+                <p className="text-sm text-gray-400">No messages yet — say hello to your team.</p>
+              </div>
             ) : (
               messages.map((message) => {
                 const mine = message.sender_id === viewerId;
@@ -297,8 +331,8 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
                         {message.body}
                       </p>
                       <p
-                        className={`mt-1 text-right text-[10px] ${
-                          mine ? 'text-blue-100/70' : 'text-gray-500'
+                        className={`mt-1 text-right text-[11px] ${
+                          mine ? 'text-blue-50' : 'text-gray-400'
                         }`}
                       >
                         {formatTime(message.created_at)}
@@ -309,6 +343,18 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
               })
             )}
           </div>
+
+          {hasNew && (
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              role="status"
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-500/40 bg-blue-500/15 py-2 text-xs font-semibold text-blue-100 transition-colors hover:bg-blue-500/25"
+            >
+              <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+              New messages
+            </button>
+          )}
 
           {chatError && (
             <p className="mt-2 text-xs text-red-400" role="alert">
@@ -337,22 +383,27 @@ export const TeamSection: React.FC<TeamSectionProps> = ({ projectId }) => {
                 }
               }}
               rows={2}
+              enterkeyhint="send"
               placeholder="Message your team…"
               className="flex-1 resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-gray-200 placeholder-gray-400 focus:border-blue-500/60 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
             />
             <Button
               type="submit"
+              aria-label="Send message"
               disabled={sending || !draft.trim()}
               className="h-[46px] bg-blue-600 text-white hover:bg-blue-500"
             >
               {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
-                <Send className="h-4 w-4" />
+                <Send className="h-4 w-4" aria-hidden="true" />
               )}
               <span className="ml-1.5 hidden sm:inline">Send</span>
             </Button>
           </form>
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            Enter to send · Shift+Enter for a new line
+          </p>
         </div>
       </div>
     </section>

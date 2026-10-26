@@ -42,9 +42,9 @@ type SubmissionRow = SubmissionDetail['submission'] | null;
 type PanelState = 'not_submitted' | 'submitted' | 'graded' | 'needs_revision' | 'overdue';
 
 /**
- * One state drives the whole panel: the accent rail, the status pill, the
- * icon tile and the workflow strip all read from here, so the project's
- * situation is legible at a glance instead of hiding in a small badge.
+ * One state drives the whole panel: the status pill, the workflow strip and
+ * the action chips all read from here, so the project's situation is legible
+ * at a glance instead of hiding in a small badge.
  */
 const STATE_STYLES: Record<PanelState, {
   label: string;
@@ -66,7 +66,6 @@ const STATE_STYLES: Record<PanelState, {
     label: 'Submitted',
     pill: 'border-blue-500/30 bg-blue-500/10 text-blue-300',
     dot: 'bg-blue-400',
-    tile: 'border-blue-500/25 bg-blue-500/10 text-blue-300',
     accent: 'text-blue-300',
     stepDone: 'bg-blue-500/90 text-white',
     stepRing: 'ring-blue-500/40',
@@ -75,7 +74,6 @@ const STATE_STYLES: Record<PanelState, {
     label: 'Graded',
     pill: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
     dot: 'bg-emerald-400',
-    tile: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
     accent: 'text-emerald-300',
     stepDone: 'bg-emerald-500/90 text-white',
     stepRing: 'ring-emerald-500/40',
@@ -84,7 +82,6 @@ const STATE_STYLES: Record<PanelState, {
     label: 'Needs revision',
     pill: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
     dot: 'bg-amber-400',
-    tile: 'border-amber-500/25 bg-amber-500/10 text-amber-300',
     accent: 'text-amber-300',
     stepDone: 'bg-amber-500/90 text-white',
     stepRing: 'ring-amber-500/40',
@@ -93,7 +90,6 @@ const STATE_STYLES: Record<PanelState, {
     label: 'Overdue',
     pill: 'border-red-500/30 bg-red-500/10 text-red-300',
     dot: 'bg-red-400',
-    tile: 'border-red-500/25 bg-red-500/10 text-red-300',
     accent: 'text-red-300',
     stepDone: 'bg-red-500/90 text-white',
     stepRing: 'ring-red-500/40',
@@ -127,13 +123,13 @@ const CheckRow: React.FC<{ done: boolean; label: string; hint: string }> = ({ do
           : 'border-gray-300 bg-gray-100 text-transparent dark:border-white/15 dark:bg-white/[0.03]'
       }`}
     >
-      <Check className="h-2.5 w-2.5" />
+      <Check className="h-2.5 w-2.5" aria-hidden="true" />
     </span>
     <span className="min-w-0">
       <span className={`block text-sm ${done ? 'text-gray-900 dark:text-gray-200' : 'text-gray-500 dark:text-gray-400'}`}>
         {label}
       </span>
-      <span className={`block break-words text-xs ${done ? 'text-gray-500 dark:text-gray-500' : 'text-gray-400 dark:text-gray-600'}`}>
+      <span className={`block break-words text-xs ${done ? 'text-gray-500 dark:text-gray-400' : 'text-gray-400'}`}>
         {hint}
       </span>
     </span>
@@ -160,6 +156,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
   const formErrorRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const detailsCardRef = useRef<HTMLDivElement>(null);
   const textAreaId = `project-text-${projectId}`;
   const fileInputId = `project-file-${projectId}`;
   const formErrorId = `project-error-${projectId}`;
@@ -238,19 +235,31 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
       ? (numericGrade / project.points_possible) * 100
       : null;
 
+  const prefersReducedMotion = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   /** Enter the workspace: `startEditing` opens the form, otherwise the receipt. */
   const openWorkspace = (startEditing: boolean) => {
     setFormError(null);
     setMode('workspace');
     setEditing(startEditing);
-    // Bring the workbench into view after the click, but never on load
-    requestAnimationFrame(() => workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    // Bring the workbench into view after the click, but never on load;
+    // reduced-motion users get an instant jump and focus follows the view.
+    requestAnimationFrame(() => {
+      workspaceRef.current?.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block: 'start',
+      });
+      workspaceRef.current?.focus({ preventScroll: true });
+    });
   };
 
   const backToDetails = () => {
     setFormError(null);
     setMode('details');
     setEditing(false);
+    requestAnimationFrame(() => detailsCardRef.current?.focus({ preventScroll: true }));
   };
 
   /** The orange revision panel — shown in the details card and on the receipt. */
@@ -258,7 +267,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
     <div className="overflow-hidden rounded-xl border-2 border-orange-400 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 shadow-lg dark:from-orange-950/40 dark:via-amber-950/30 dark:to-yellow-950/20">
       <div className="flex flex-wrap items-center gap-3 bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3">
         <div className="rounded-lg bg-white/20 p-1.5">
-          <AlertCircle className="h-5 w-5 text-white" />
+          <AlertCircle className="h-5 w-5 text-white" aria-hidden="true" />
         </div>
         <h4 className="text-base font-bold text-white sm:text-lg">Revision requested</h4>
         {!(mode === 'workspace' && editing) && canResubmit && (
@@ -267,7 +276,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             onClick={() => openWorkspace(true)}
             className="ml-auto gap-1.5 bg-white/20 text-white hover:bg-white/30"
           >
-            <Edit className="h-4 w-4" />
+            <Edit className="h-4 w-4" aria-hidden="true" />
             Revise work
           </Button>
         )}
@@ -389,6 +398,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
       // loadProject resets to details — stay in the workspace on the receipt
       setMode('workspace');
       setEditing(false);
+      // The form unmounts with focus inside it — land on the receipt instead
+      requestAnimationFrame(() => workspaceRef.current?.focus({ preventScroll: true }));
       onSubmitComplete?.(projectId);
     } catch (err: any) {
       const message = err?.message || 'Failed to submit project.';
@@ -428,7 +439,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   if (loadError || !project) {
     return (
       <Alert variant="destructive" className="bg-red-900/20 border-red-800/50">
-        <AlertCircle className="h-4 w-4" />
+        <AlertCircle className="h-4 w-4" aria-hidden="true" />
         <AlertTitle>Could not load project</AlertTitle>
         <AlertDescription className="flex items-center gap-3">
           <span>{loadError || 'Project not found.'}</span>
@@ -444,39 +455,43 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
     <div className="space-y-4">
       {/* ── Details view: one green hero card, mirroring the assignment panel ── */}
       {mode === 'details' && (
-        <Card className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 shadow-xl dark:from-green-950 dark:via-emerald-950 dark:to-teal-950">
+        <Card
+          ref={detailsCardRef}
+          tabIndex={-1}
+          className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500/60 dark:from-green-950 dark:via-emerald-950 dark:to-teal-950"
+        >
           <CardHeader className="pb-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className="bg-green-600 text-white shadow-md hover:bg-green-700">
-                <FolderOpen className="mr-1 h-3 w-3" />
+              <Badge className="whitespace-nowrap bg-green-600 text-white shadow-md hover:bg-green-700">
+                <FolderOpen className="mr-1 h-3 w-3" aria-hidden="true" />
                 Project
               </Badge>
               {isGraded && (
-                <Badge variant="outline" className="border-green-300 bg-white/50 backdrop-blur-sm">
-                  <Award className="mr-1 h-3 w-3 text-green-600" />
+                <Badge variant="outline" className="whitespace-nowrap border-green-400 bg-green-100 text-green-800">
+                  <Award className="mr-1 h-3 w-3 text-green-700" aria-hidden="true" />
                   Graded
                 </Badge>
               )}
               {isSubmitted && !isGraded && !needsRevision && (
-                <Badge variant="outline" className="border-yellow-300 bg-white/50 backdrop-blur-sm">
-                  <Clock className="mr-1 h-3 w-3 text-yellow-600" />
+                <Badge variant="outline" className="whitespace-nowrap border-yellow-400 bg-yellow-100 text-yellow-800">
+                  <Clock className="mr-1 h-3 w-3 text-yellow-700" aria-hidden="true" />
                   Pending Review
                 </Badge>
               )}
               {needsRevision && (
-                <Badge variant="outline" className="border-orange-400 bg-orange-100 text-orange-800">
-                  <AlertCircle className="mr-1 h-3 w-3" />
+                <Badge variant="outline" className="whitespace-nowrap border-orange-400 bg-orange-100 text-orange-800">
+                  <AlertCircle className="mr-1 h-3 w-3" aria-hidden="true" />
                   Needs Revision
                 </Badge>
               )}
               {isOverdue && !isSubmitted && (
-                <Badge variant="outline" className="border-red-400 bg-red-100 text-red-800">
-                  <AlertTriangle className="mr-1 h-3 w-3" />
+                <Badge variant="outline" className="whitespace-nowrap border-red-400 bg-red-100 text-red-800">
+                  <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
                   Overdue
                 </Badge>
               )}
               {status?.is_late && (
-                <Badge variant="outline" className="border-red-400 bg-red-100 text-red-800">
+                <Badge variant="outline" className="whitespace-nowrap border-red-400 bg-red-100 text-red-800">
                   Late{status.days_late ? ` · ${status.days_late}d` : ''}
                 </Badge>
               )}
@@ -487,7 +502,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-600 dark:text-gray-400">
               {dueDate && due && (
                 <span className="inline-flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5" />
+                  <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
                   {isOverdue && !isSubmitted ? (
                     <span className="font-medium text-red-600 dark:text-red-400">Overdue · {due.relative}</span>
                   ) : (
@@ -500,13 +515,13 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               )}
               {project.points_possible > 0 && (
                 <span className="inline-flex items-center gap-1.5">
-                  <Award className="h-3.5 w-3.5" />
+                  <Award className="h-3.5 w-3.5" aria-hidden="true" />
                   <span className="font-medium text-gray-900 dark:text-gray-200">{project.points_possible}</span> pts
                 </span>
               )}
               {project.collaboration_allowed && (
                 <span className="inline-flex items-center gap-1.5">
-                  <Users className="h-3.5 w-3.5" />
+                  <Users className="h-3.5 w-3.5" aria-hidden="true" />
                   Teams of up to {project.max_team_size}
                 </span>
               )}
@@ -542,16 +557,16 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                               ? stateStyles.stepDone
                               : current
                                 ? `bg-white dark:bg-white/[0.06] ring-2 ${stateStyles.stepRing} ${stateStyles.accent}`
-                                : 'bg-gray-200 text-gray-500 dark:bg-white/[0.04] dark:text-gray-500'
+                                : 'bg-gray-200 text-gray-500 dark:bg-white/[0.04] dark:text-gray-400'
                           }`}
                         >
-                          {done ? <Check className="h-3 w-3" /> : index + 1}
+                          {done ? <Check className="h-3 w-3" aria-hidden="true" /> : index + 1}
                         </span>
                         <span
                           className={`text-xs font-medium ${
                             done || current
                               ? 'text-gray-900 dark:text-gray-200'
-                              : 'text-gray-500'
+                              : 'text-gray-500 dark:text-gray-400'
                           }`}
                         >
                           {label}
@@ -568,7 +583,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="rounded-xl border border-green-100 bg-white p-4 text-center shadow-md transition-all hover:shadow-lg dark:border-green-900 dark:bg-gray-800 sm:p-5">
                 <div className="mb-2 flex justify-center">
                   <div className="rounded-lg bg-green-100 p-2 dark:bg-green-900">
-                    <Award className="h-5 w-5 text-green-600 dark:text-green-400" />
+                    <Award className="h-5 w-5 text-green-600 dark:text-green-400" aria-hidden="true" />
                   </div>
                 </div>
                 <div className="text-2xl font-bold text-green-600 sm:text-3xl dark:text-green-400">
@@ -579,7 +594,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
               {dueDate && (
                 <div
-                  className={`rounded-xl bg-white p-4 text-center shadow-md transition-all hover:lg:shadow-lg dark:bg-gray-800 sm:p-5 ${
+                  className={`rounded-xl bg-white p-4 text-center shadow-md transition-all lg:hover:shadow-lg dark:bg-gray-800 sm:p-5 ${
                     isOverdue
                       ? 'border-2 border-red-400 dark:border-red-600'
                       : isDueSoon
@@ -604,8 +619,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                             : isDueSoon
                               ? 'text-yellow-600 dark:text-yellow-400'
                               : 'text-blue-600 dark:text-blue-400'
-                        }`}
-                      />
+                        }`} aria-hidden="true" />
                     </div>
                   </div>
                   <div
@@ -628,7 +642,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="col-span-2 rounded-xl border border-purple-100 bg-white p-4 text-center shadow-md transition-all hover:shadow-lg dark:border-purple-900 dark:bg-gray-800 sm:p-5 lg:col-span-1">
                 <div className="mb-2 flex justify-center">
                   <div className="rounded-lg bg-purple-100 p-2 dark:bg-purple-900">
-                    <FileText className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                    <FileText className="h-5 w-5 text-purple-600 dark:text-purple-400" aria-hidden="true" />
                   </div>
                 </div>
                 <div className="text-xl font-bold capitalize text-purple-600 sm:text-2xl dark:text-purple-400">
@@ -643,7 +657,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="rounded-xl border-l-4 border-teal-500 bg-gradient-to-r from-teal-50 to-cyan-50 p-6 shadow-lg dark:from-teal-950/30 dark:to-cyan-950/30 sm:p-7">
                 <h4 className="mb-5 flex items-center text-lg font-bold text-gray-900 sm:text-xl dark:text-white">
                   <div className="mr-3 rounded-lg bg-teal-100 p-2 shadow-sm dark:bg-teal-900">
-                    <Target className="h-6 w-6 text-teal-600 dark:text-teal-400" />
+                    <Target className="h-6 w-6 text-teal-600 dark:text-teal-400" aria-hidden="true" />
                   </div>
                   Project Objectives
                 </h4>
@@ -662,7 +676,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="rounded-xl border-l-4 border-purple-500 bg-gradient-to-r from-purple-50 to-fuchsia-50 p-6 shadow-lg dark:from-purple-950/30 dark:to-fuchsia-950/30 sm:p-7">
                 <h4 className="mb-5 flex items-center text-lg font-bold text-gray-900 sm:text-xl dark:text-white">
                   <div className="mr-3 rounded-lg bg-purple-100 p-2 shadow-sm dark:bg-purple-900">
-                    <ListChecks className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+                    <ListChecks className="h-6 w-6 text-purple-600 dark:text-purple-400" aria-hidden="true" />
                   </div>
                   Project Tasks
                 </h4>
@@ -670,7 +684,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   <ol className="grid gap-x-8 gap-y-3.5 sm:grid-cols-2">
                     {project.tasks.map((task, index) => (
                       <li key={index} className="flex min-w-0 gap-3">
-                        <span className="mt-0.5 w-5 flex-shrink-0 font-mono text-xs tabular-nums text-gray-500">
+                        <span className="mt-0.5 w-5 flex-shrink-0 font-mono text-xs tabular-nums text-gray-500 dark:text-gray-400">
                           {String(index + 1).padStart(2, '0')}
                         </span>
                         <div className="min-w-0 flex-1">
@@ -703,7 +717,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             <div className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 p-6 shadow-lg dark:from-blue-950/30 dark:to-indigo-950/30 sm:p-7">
               <h4 className="mb-5 flex items-center text-lg font-bold text-gray-900 sm:text-xl dark:text-white">
                 <div className="mr-3 rounded-lg bg-blue-100 p-2 shadow-sm dark:bg-blue-900">
-                  <AlertCircle className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                  <AlertCircle className="h-6 w-6 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                 </div>
                 Submission Requirements
               </h4>
@@ -711,21 +725,21 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 <ul className="space-y-3 text-sm text-gray-700 sm:text-base dark:text-gray-300">
                   {needsText && (
                     <li className="flex items-start gap-2">
-                      <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" />
+                      <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" aria-hidden="true" />
                       <span>Provide a written response in the workspace editor</span>
                     </li>
                   )}
                   {needsFile && (
                     <>
                       <li className="flex items-start gap-2">
-                        <Upload className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" />
+                        <Upload className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" aria-hidden="true" />
                         <span>
                           Upload {submissionFormat === 'presentation' ? 'presentation' : 'files'}:{' '}
                           <strong>{allowedFileTypes.length > 0 ? allowedFileTypes.join(', ') : 'any type'}</strong>
                         </span>
                       </li>
                       <li className="flex items-start gap-2">
-                        <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-orange-500" />
+                        <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-orange-500" aria-hidden="true" />
                         <span>
                           Maximum file size: <strong>{maxFileSizeMB}MB</strong> per file
                         </span>
@@ -737,8 +751,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       <Clock
                         className={`mt-0.5 h-5 w-5 flex-shrink-0 ${
                           isOverdue ? 'text-red-500' : isDueSoon ? 'text-yellow-500' : 'text-purple-500'
-                        }`}
-                      />
+                        }`} aria-hidden="true" />
                       <div>
                         <span
                           className={
@@ -776,7 +789,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   )}
                   {project.points_possible > 0 && (
                     <li className="flex items-start gap-2">
-                      <Award className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" />
+                      <Award className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" aria-hidden="true" />
                       <span>
                         Worth <strong>{project.points_possible} points</strong>
                       </span>
@@ -784,7 +797,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   )}
                   {project.collaboration_allowed && (
                     <li className="flex items-start gap-2">
-                      <Users className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" />
+                      <Users className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500" aria-hidden="true" />
                       <span>
                         Team of up to <strong>{project.max_team_size} students</strong>
                       </span>
@@ -799,7 +812,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
               <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-slate-50 to-gray-100 p-6 shadow-lg dark:border-slate-700 dark:from-slate-900/50 dark:to-gray-800/50 sm:p-7">
                 <h4 className="mb-5 flex items-center text-lg font-bold text-gray-900 sm:text-xl dark:text-white">
                   <div className="mr-3 rounded-lg bg-slate-100 p-2 shadow-sm dark:bg-slate-800">
-                    <FileText className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                    <FileText className="h-6 w-6 text-slate-600 dark:text-slate-400" aria-hidden="true" />
                   </div>
                   Project Status &amp; Result
                 </h4>
@@ -860,8 +873,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       <div className="mb-2 flex items-center justify-between">
                         <h5 className="text-sm font-semibold text-gray-900 dark:text-white">Grade</h5>
                         <div className="flex items-center gap-2">
-                          <Award className="h-4 w-4 text-green-600 dark:text-green-400" />
-                          <span className="text-lg font-bold text-green-600 dark:text-green-400">
+                          <Award className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
+                          <span className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400">
                             {numericGrade}/{project.points_possible}
                           </span>
                         </div>
@@ -878,7 +891,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
                     <h5 className="mb-3 flex items-center text-sm font-semibold text-gray-900 dark:text-white">
                       <span className="mr-2 rounded bg-blue-100 p-1 dark:bg-blue-900/50">
-                        <MessageSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        <MessageSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                       </span>
                       Instructor Feedback
                     </h5>
@@ -892,7 +905,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       </div>
                       {status?.grader_name && (
                         <p className="mt-3 flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400">
-                          <Award className="h-3 w-3" />
+                          <Award className="h-3 w-3" aria-hidden="true" />
                           Graded by {status.grader_name}
                         </p>
                       )}
@@ -906,7 +919,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
             {needsRevision && revisionPanel}
 
             {/* Action buttons */}
-            <div className="flex w-full flex-col gap-3 border-t border-green-900/10 pt-4 sm:flex-row sm:gap-4 dark:border-white/10">
+            <div className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-col gap-3 rounded-b-xl border-t border-green-900/10 bg-gradient-to-t from-green-50 via-emerald-50 to-teal-50 px-6 pb-6 pt-4 sm:flex-row sm:gap-4 dark:border-white/10 dark:from-green-950 dark:via-emerald-950 dark:to-teal-950">
               {isGraded && !needsRevision ? (
                 <>
                   <Button
@@ -914,16 +927,17 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     className="min-h-[3rem] w-full flex-1 transform justify-center border border-green-500/20 bg-gradient-to-r from-green-600 to-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:scale-[1.02] hover:from-green-700 hover:to-emerald-700 hover:shadow-xl sm:min-h-[4rem] sm:w-auto sm:px-6 sm:py-4 sm:text-lg md:py-6 md:text-xl"
                   >
                     <span className="mr-2 rounded-full bg-white/20 p-1 sm:mr-3">
-                      <Award className="h-4 w-4 sm:h-5 sm:w-5" />
+                      <Award className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                     </span>
-                    <span className="truncate">View Grade &amp; Feedback</span>
+                    <span className="truncate sm:hidden">View Grade</span>
+                    <span className="truncate hidden sm:inline">View Grade &amp; Feedback</span>
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => window.open('/student/assessments', '_blank')}
                     className="min-h-[3rem] w-full border-2 px-3 py-3 hover:bg-gray-50 sm:min-h-[4rem] sm:w-auto sm:px-4 sm:py-4 md:px-6 md:py-6 dark:hover:bg-gray-800"
                   >
-                    <FileText className="mr-2 h-4 w-4 sm:h-5 sm:w-5" />
+                    <FileText className="mr-2 h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                     <span className="hidden sm:inline">All Grades</span>
                     <span className="sm:hidden">Grades</span>
                   </Button>
@@ -936,11 +950,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   >
                     <span className="flex w-full items-center justify-center">
                       <span className="mr-2 rounded-full bg-white/20 p-1 sm:mr-3">
-                        <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5" />
+                        <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                       </span>
                       <span className="truncate">View Submission</span>
                       {isPendingReview && (
-                        <span className="ml-2 animate-pulse rounded-full bg-yellow-400/90 px-2 py-1 text-xs font-bold text-yellow-900">
+                        <span className="ml-2 animate-pulse whitespace-nowrap rounded-full bg-yellow-400/90 px-2 py-1 text-xs font-bold text-yellow-900">
                           <span className="hidden sm:inline">Under Review</span>
                           <span className="sm:hidden">Review</span>
                         </span>
@@ -955,10 +969,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     >
                       <span className="flex w-full items-center justify-center">
                         <span className="mr-2 rounded-full bg-white/20 p-1 sm:mr-3">
-                          <Edit className="h-4 w-4 sm:h-5 sm:w-5" />
+                          <Edit className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                         </span>
                         <span className="truncate">Resubmit Project</span>
-                        <span className="ml-2 rounded-full bg-white/20 px-2 py-1 text-xs font-bold">Required</span>
+                        <span className="ml-2 whitespace-nowrap rounded-full bg-white/20 px-2 py-1 text-xs font-bold">Required</span>
                       </span>
                     </Button>
                   )}
@@ -970,12 +984,12 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                 >
                   <span className="flex w-full items-center justify-center">
                     <span className="mr-2 rounded-full bg-white/20 p-1 sm:mr-3">
-                      <Edit className="h-4 w-4 sm:h-5 sm:w-5" />
+                      <Edit className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
                     </span>
                     <span className="truncate hidden sm:inline">Start Project</span>
                     <span className="truncate sm:hidden">Start</span>
                     <span
-                      className={`ml-2 rounded-full px-2 py-1 text-xs font-bold ${
+                      className={`ml-2 whitespace-nowrap rounded-full px-2 py-1 text-xs font-bold ${
                         isOverdue ? 'bg-red-500 text-white' : 'bg-white/20 text-white'
                       }`}
                     >
@@ -991,31 +1005,31 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
       {/* ── Workspace view: the hand-in workbench ── */}
       {mode === 'workspace' && (
-        <div ref={workspaceRef} className="scroll-mt-4">
+        <div ref={workspaceRef} tabIndex={-1} className="scroll-mt-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500/60">
           <Card className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-white to-emerald-50 shadow-xl dark:from-green-950 dark:via-gray-900 dark:to-emerald-950">
             <CardHeader className="border-b dark:border-gray-700">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Badge className="bg-green-600 text-white shadow-md hover:bg-green-700">
-                      <FolderOpen className="mr-1 h-3 w-3" />
+                    <Badge className="whitespace-nowrap bg-green-600 text-white shadow-md hover:bg-green-700">
+                      <FolderOpen className="mr-1 h-3 w-3" aria-hidden="true" />
                       Workspace
                     </Badge>
                     {dueDate && due && (
                       <span
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+                        className={`inline-flex items-center whitespace-nowrap gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
                           isOverdue && !isSubmitted && !isGraded
                             ? 'border-red-400 bg-red-100 text-red-800'
                             : 'border-gray-300 bg-white/70 text-gray-700 dark:border-white/15 dark:bg-white/[0.06] dark:text-gray-300'
                         }`}
                       >
-                        <Calendar className="h-3 w-3" />
+                        <Calendar className="h-3 w-3" aria-hidden="true" />
                         {isOverdue && !isSubmitted && !isGraded
                           ? `Overdue · ${due.relative}`
                           : `Due ${due.absolute} · ${due.relative}`}
                       </span>
                     )}
-                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${stateStyles.pill}`}>
+                    <span className={`inline-flex items-center whitespace-nowrap gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${stateStyles.pill}`}>
                       <span className={`h-1.5 w-1.5 rounded-full ${stateStyles.dot}`} />
                       {stateStyles.label}
                     </span>
@@ -1024,7 +1038,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     {project.title}
                   </h3>
                   <p className="mt-1 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                    {(editing || !isSubmitted) ? <Edit className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+                    {(editing || !isSubmitted) ? <Edit className="h-4 w-4" aria-hidden="true" /> : <CheckCircle className="h-4 w-4" aria-hidden="true" />}
                     {(editing || !isSubmitted)
                       ? isSubmitted
                         ? 'Update and resubmit your project'
@@ -1041,7 +1055,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     title="Close submission form"
                     className="h-11 w-11 p-0 hover:bg-gray-100 dark:hover:bg-gray-800"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-5 w-5" aria-hidden="true" />
                   </Button>
                 )}
               </div>
@@ -1062,8 +1076,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       <AlertCircle
                         className={`h-6 w-6 flex-shrink-0 ${
                           isOverdue ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'
-                        }`}
-                      />
+                        }`} aria-hidden="true" />
                       <AlertTitle
                         className={
                           isOverdue
@@ -1092,7 +1105,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   {isSubmitted && needsRevision && (
                     <div className="overflow-hidden rounded-xl border-2 border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50 shadow-md dark:from-orange-950/30 dark:to-amber-950/20">
                       <div className="flex items-center gap-2 bg-gradient-to-r from-orange-400 to-amber-400 px-4 py-2.5">
-                        <Edit className="h-4 w-4 text-white" />
+                        <Edit className="h-4 w-4 text-white" aria-hidden="true" />
                         <h4 className="text-base font-bold text-white">Resubmitting Project</h4>
                       </div>
                       <div className="space-y-3 p-4 sm:p-5">
@@ -1120,7 +1133,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       id={formErrorId}
                       className="border-2 border-red-400 bg-red-50 shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:bg-red-950/30"
                     >
-                      <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                      <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" aria-hidden="true" />
                       <AlertTitle className="font-bold text-red-800 dark:text-red-300">
                         {isSubmitted ? 'Resubmission Error' : 'Submission Error'}
                       </AlertTitle>
@@ -1132,7 +1145,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     {/* Left: the fields */}
                     <div className="min-w-0 space-y-6">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Your work</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">Your work</p>
                         <h4 className="mt-1 text-base font-semibold text-gray-900 dark:text-white">
                           {isSubmitted ? 'Revise and resubmit' : 'Hand in your project'}
                         </h4>
@@ -1145,7 +1158,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                             className="mb-3 block text-base font-bold text-gray-900 flex items-center dark:text-white"
                           >
                             <span className="mr-2 rounded-lg bg-green-100 p-1.5 dark:bg-green-900">
-                              <FileText className="h-4 w-4 text-green-600 dark:text-green-400" />
+                              <FileText className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
                             </span>
                             Written response <span className="ml-1 text-red-500">*</span>
                           </label>
@@ -1180,7 +1193,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                             className="mb-3 block text-base font-bold text-gray-900 flex items-center dark:text-white"
                           >
                             <span className="mr-2 rounded-lg bg-blue-100 p-1.5 dark:bg-blue-900">
-                              <Upload className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                              <Upload className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                             </span>
                             {submissionFormat === 'presentation' ? 'Presentation file' : 'File'}{' '}
                             {!needsText && <span className="ml-1 text-red-500">*</span>}
@@ -1189,7 +1202,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           {file ? (
                             <div className="flex items-center justify-between gap-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2.5 dark:border-green-800 dark:bg-green-950/30">
                               <span className="flex min-w-0 items-center gap-2 text-sm text-gray-900 dark:text-gray-200">
-                                <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-600 dark:text-green-400" />
+                                <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />
                                 <span className="truncate">{file.name}</span>
                                 <span className="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400">
                                   {FileUploadService.formatFileSize(file.size)}
@@ -1198,10 +1211,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setFile(null)}
-                                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md text-red-600 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/30"
+                                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md text-red-600 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/30"
                                 aria-label="Remove file"
                               >
-                                <X className="h-4 w-4" />
+                                <X className="h-4 w-4" aria-hidden="true" />
                               </button>
                               <input
                                 type="file"
@@ -1236,7 +1249,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                               />
                               <label htmlFor={fileInputId} className="cursor-pointer">
                                 <div className="mx-auto mb-4 w-fit rounded-full bg-green-100 p-4 dark:bg-green-900">
-                                  <Upload className="h-10 w-10 text-green-600 dark:text-green-400" />
+                                  <Upload className="h-10 w-10 text-green-600 dark:text-green-400" aria-hidden="true" />
                                 </div>
                                 <p className="text-base font-bold text-gray-900 dark:text-white">
                                   Click to upload or drag and drop
@@ -1247,7 +1260,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                                     {allowedFileTypes.length > 0 ? allowedFileTypes.join(', ') : 'any type'}
                                   </span>
                                 </p>
-                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-500">
+                                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                                   Maximum size: <span className="font-semibold">{maxFileSizeMB}MB</span> per file
                                 </p>
                               </label>
@@ -1264,7 +1277,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           disabled={submitting}
                           className="w-full border-2 px-8 py-6 hover:bg-gray-50 sm:w-auto dark:hover:bg-gray-800"
                         >
-                          <X className="mr-2 h-5 w-5" />
+                          <X className="mr-2 h-5 w-5" aria-hidden="true" />
                           Cancel
                         </Button>
                         <Button
@@ -1278,12 +1291,12 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                         >
                           {submitting ? (
                             <>
-                              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                              <Loader2 className="mr-2 h-5 w-5 animate-spin" aria-hidden="true" />
                               {isSubmitted ? 'Resubmitting…' : 'Submitting…'}
                             </>
                           ) : (
                             <>
-                              <Send className="mr-2 h-5 w-5" />
+                              <Send className="mr-2 h-5 w-5" aria-hidden="true" />
                               {isSubmitted ? 'Resubmit Project' : 'Hand in Project'}
                             </>
                           )}
@@ -1294,7 +1307,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     {/* Right: the rulebook */}
                     <aside className="space-y-4 self-start lg:sticky lg:top-4">
                       <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-5">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
                           Before you hand in
                         </p>
                         <ul className="mt-3 space-y-3">
@@ -1327,28 +1340,28 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       </section>
 
                       <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 sm:p-5">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
                           Hand-in rules
                         </p>
                         <dl className="mt-3 space-y-2.5 text-xs">
                           <div className="flex items-start justify-between gap-3">
-                            <dt className="text-gray-500">Format</dt>
+                            <dt className="text-gray-500 dark:text-gray-400">Format</dt>
                             <dd className="text-right font-medium text-gray-900 dark:text-gray-100">
                               {requirements.label}
                             </dd>
                           </div>
                           {needsFile && (
                             <div className="flex items-start justify-between gap-3">
-                              <dt className="text-gray-500">Files</dt>
+                              <dt className="text-gray-500 dark:text-gray-400">Files</dt>
                               <dd className="text-right font-medium text-gray-900 dark:text-gray-100">
                                 {allowedFileTypes.length > 0 ? allowedFileTypes.join(', ') : 'Any type'}
-                                <span className="block font-normal text-gray-500">up to {maxFileSizeMB} MB</span>
+                                <span className="block font-normal text-gray-500 dark:text-gray-400">up to {maxFileSizeMB} MB</span>
                               </dd>
                             </div>
                           )}
                           {project.points_possible > 0 && (
                             <div className="flex items-start justify-between gap-3">
-                              <dt className="text-gray-500">Points</dt>
+                              <dt className="text-gray-500 dark:text-gray-400">Points</dt>
                               <dd className="text-right font-medium text-gray-900 dark:text-gray-100">
                                 {project.points_possible}
                               </dd>
@@ -1356,16 +1369,16 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           )}
                           {dueDate && due && (
                             <div className="flex items-start justify-between gap-3">
-                              <dt className="text-gray-500">Due</dt>
+                              <dt className="text-gray-500 dark:text-gray-400">Due</dt>
                               <dd className="text-right font-medium text-gray-900 dark:text-gray-100">
                                 {due.absolute}
-                                <span className="block font-normal text-gray-500">{due.relative}</span>
+                                <span className="block font-normal text-gray-500 dark:text-gray-400">{due.relative}</span>
                               </dd>
                             </div>
                           )}
                           {project.collaboration_allowed && (
                             <div className="flex items-start justify-between gap-3">
-                              <dt className="text-gray-500">Team</dt>
+                              <dt className="text-gray-500 dark:text-gray-400">Team</dt>
                               <dd className="text-right font-medium text-gray-900 dark:text-gray-100">
                                 Up to {project.max_team_size} students
                               </dd>
@@ -1383,11 +1396,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     <div className="mb-6 text-center">
                       <div className="relative mb-4 inline-block">
                         <div className="flex h-20 w-20 animate-pulse items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-emerald-500 shadow-lg">
-                          <CheckCircle className="h-10 w-10 text-white" />
+                          <CheckCircle className="h-10 w-10 text-white" aria-hidden="true" />
                         </div>
                         {isGraded && (
                           <div className="absolute -right-2 -top-2 flex h-8 w-8 items-center justify-center rounded-full bg-yellow-400 shadow-md">
-                            <Award className="h-5 w-5 text-yellow-900" />
+                            <Award className="h-5 w-5 text-yellow-900" aria-hidden="true" />
                           </div>
                         )}
                       </div>
@@ -1469,7 +1482,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     {(attachments.length > 0 || submission.text_content) && (
                       <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5 shadow-md dark:border-gray-700 dark:bg-gray-800">
                         <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                          <Paperclip className="h-4 w-4 text-green-600 dark:text-green-400" />
+                          <Paperclip className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
                           Your submission
                         </p>
                         {attachments.length > 0 && (
@@ -1482,7 +1495,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                                 rel="noopener noreferrer"
                                 className="inline-flex max-w-full items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 transition-colors hover:border-blue-400 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-900/40"
                               >
-                                <Link2 className="h-4 w-4 flex-shrink-0" />
+                                <Link2 className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                                 <span className="truncate">
                                   {attachment.name || submission.file_name || 'Attached file'}
                                 </span>
@@ -1508,10 +1521,10 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                         <div className="mb-4 text-center">
                           <div className="mb-3 flex justify-center">
                             <div className="rounded-full bg-green-100 p-3 dark:bg-green-900">
-                              <Award className="h-8 w-8 text-green-600 dark:text-green-400" />
+                              <Award className="h-8 w-8 text-green-600 dark:text-green-400" aria-hidden="true" />
                             </div>
                           </div>
-                          <p className="mb-2 text-xl font-bold text-gray-900 sm:text-2xl dark:text-white">
+                          <p className="mb-2 text-xl font-bold tabular-nums text-gray-900 sm:text-2xl dark:text-white">
                             {numericGrade} / {project.points_possible} Points
                           </p>
                           {gradePercent !== null && (
@@ -1565,7 +1578,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       <div className="mb-6 rounded-xl border-l-4 border-blue-500 bg-blue-50 p-5 shadow-md dark:bg-blue-950/30 sm:p-6">
                         <h4 className="mb-4 flex items-center text-base font-bold text-gray-900 sm:text-lg dark:text-white">
                           <span className="mr-3 rounded-lg bg-blue-100 p-1.5 dark:bg-blue-900">
-                            <MessageSquare className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                            <MessageSquare className="h-5 w-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
                           </span>
                           Instructor Feedback
                         </h4>
@@ -1579,7 +1592,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           </div>
                           {status?.grader_name && (
                             <p className="mt-3 flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400">
-                              <Award className="h-3 w-3" />
+                              <Award className="h-3 w-3" aria-hidden="true" />
                               Graded by {status.grader_name}
                             </p>
                           )}
@@ -1597,7 +1610,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                         onClick={backToDetails}
                         className="flex-1 border-2 py-6 text-base hover:bg-gray-50 sm:flex-none dark:hover:bg-gray-800"
                       >
-                        <ArrowLeft className="mr-2 h-5 w-5" />
+                        <ArrowLeft className="mr-2 h-5 w-5" aria-hidden="true" />
                         Back to details
                       </Button>
                       {isGraded && (
@@ -1606,7 +1619,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           onClick={() => window.open('/student/assessments', '_blank')}
                           className="flex-1 border-2 py-6 text-base hover:bg-gray-50 sm:flex-none dark:hover:bg-gray-800"
                         >
-                          <Award className="mr-2 h-5 w-5" />
+                          <Award className="mr-2 h-5 w-5" aria-hidden="true" />
                           All Grades
                         </Button>
                       )}
@@ -1615,7 +1628,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           onClick={() => openWorkspace(true)}
                           className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 py-6 text-base font-bold text-white shadow-lg hover:shadow-xl sm:flex-none hover:from-green-700 hover:to-emerald-700"
                         >
-                          <Edit className="mr-2 h-5 w-5" />
+                          <Edit className="mr-2 h-5 w-5" aria-hidden="true" />
                           {needsRevision ? 'Start revision' : 'Resubmit Project'}
                         </Button>
                       )}
