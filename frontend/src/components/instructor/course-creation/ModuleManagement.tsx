@@ -10,6 +10,7 @@ import { aiAgentService } from '@/services/ai-agent.service';
 import { AIContentButton } from './AIContentButton';
 import { AIMixedContentButton } from './AIMixedContentButton';
 import MixedContentBuilder, { builderItemsToContentData, type ContentSection } from '@/components/instructor/content/MixedContentBuilder';
+import { textToMixedContentData, mixedContentToText, firstMediaUrl, lessonSectionCount } from '@/lib/lesson-content';
 import { toast } from 'sonner';
 
 interface ModuleManagementProps {
@@ -92,6 +93,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const imageInputRef = useRef<HTMLInputElement>(null);
   const moduleFormRef = useRef<HTMLDivElement>(null);
   const lessonEditFormRef = useRef<HTMLDivElement>(null);
+  const lessonContentBackupRef = useRef<{ type: string; content: string } | null>(null);
 
   // Bring a form into view and focus it, respecting reduced-motion.
   const focusEditForm = (el: HTMLElement | null) => {
@@ -320,6 +322,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   };
 
   const resetLessonForm = () => {
+    lessonContentBackupRef.current = null;
     setLessonForm({
       title: '',
       content_type: 'text',
@@ -329,6 +332,62 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       duration_minutes: '',
       is_published: false
     });
+  };
+
+  // Changing content type must transform the instructor's existing content,
+  // never corrupt or silently wipe it: text <-> mixed converts through the
+  // markdown analyser (headers -> sections, standalone media lines ->
+  // video/pdf/image sections), and switches to the URL-only types carry the
+  // matching URL while stashing the full payload for restore on the way back.
+  const handleContentTypeChange = (newContentType: string) => {
+    const previousType = lessonForm.content_type;
+    if (newContentType === previousType) return;
+
+    const currentContent = lessonForm.content_data || '';
+    let nextContent = currentContent;
+    let note: string | null = null;
+
+    if (newContentType === 'mixed') {
+      if (previousType === 'text') {
+        if (currentContent.trim()) {
+          nextContent = textToMixedContentData(currentContent);
+          const count = lessonSectionCount(nextContent, 'mixed');
+          note = `Text analysed \u2014 ${count} section${count === 1 ? '' : 's'} created`;
+        }
+      } else if ((previousType === 'video' || previousType === 'pdf') && currentContent.trim()) {
+        // A standalone URL line is promoted by the mixed editor's analyser.
+        note = `${previousType === 'video' ? 'Video' : 'PDF'} URL promoted to its own section`;
+      }
+    } else if (newContentType === 'text') {
+      if (previousType === 'mixed') {
+        nextContent = mixedContentToText(currentContent);
+        note = 'Mixed content flattened into editable text';
+      }
+    } else if (newContentType === 'video' || newContentType === 'pdf') {
+      // URL-only types: carry over the matching URL when one exists and stash
+      // the full payload so returning to text/mixed restores it intact.
+      if ((previousType === 'text' || previousType === 'mixed') && currentContent.trim()) {
+        lessonContentBackupRef.current = { type: previousType, content: currentContent };
+      }
+      nextContent = firstMediaUrl(currentContent, newContentType);
+    }
+
+    if (newContentType === 'text' || newContentType === 'mixed') {
+      const stash = lessonContentBackupRef.current;
+      lessonContentBackupRef.current = null;
+      if (stash) {
+        nextContent =
+          stash.type === newContentType
+            ? stash.content
+            : newContentType === 'text'
+              ? mixedContentToText(stash.content)
+              : textToMixedContentData(stash.content);
+        note = 'Previous content restored';
+      }
+    }
+
+    setLessonForm({ ...lessonForm, content_type: newContentType, content_data: nextContent });
+    if (note) toast.success(note);
   };
 
   // Helper function to get content data configuration based on content type
@@ -871,6 +930,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   };
 
   const startEditingLesson = (moduleId: number, lesson: EnhancedLesson) => {
+    lessonContentBackupRef.current = null;
     setEditingLesson({ moduleId, lesson });
     // Only one form is editable at a time — close the others, make sure the
     // module is expanded so the row being edited is visible, and start in
@@ -1735,15 +1795,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                 </label>
                                 <select
                                   value={lessonForm.content_type}
-                                  onChange={(e) => {
-                                    const newContentType = e.target.value as any;
-                                    setLessonForm({ 
-                                      ...lessonForm, 
-                                      content_type: newContentType,
-                                      // Clear content_data when changing type to avoid confusion
-                                      content_data: ''
-                                    });
-                                  }}
+                                  onChange={(e) => handleContentTypeChange(e.target.value)}
                                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                                 >
                                   <option value="text">📝 Text Content</option>
@@ -2167,14 +2219,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                 </label>
                                 <select
                                   value={lessonForm.content_type}
-                                  onChange={(e) => {
-                                    const newContentType = e.target.value as any;
-                                    setLessonForm({ 
-                                      ...lessonForm, 
-                                      content_type: newContentType
-                                      // Keep existing content_data when editing
-                                    });
-                                  }}
+                                  onChange={(e) => handleContentTypeChange(e.target.value)}
                                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                                 >
                                   <option value="text">📝 Text Content</option>

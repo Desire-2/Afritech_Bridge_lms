@@ -729,7 +729,7 @@ export function contentDataToBuilderItems(raw: string): LessonBuilderItem[] {
         content: isMedia ? String(block.url || block.content || '') : String(block.content || ''),
         metadata: {
           title: String(block.title || ''),
-          caption: String(block.caption || block.description || ''),
+          caption: String(block.caption || block.description || block.alt || ''),
           url: String(block.url || ''),
         },
       });
@@ -737,6 +737,98 @@ export function contentDataToBuilderItems(raw: string): LessonBuilderItem[] {
   });
 
   return items;
+}
+
+// ── Content-type migration (instructor "change content type" flow) ────────
+
+/**
+ * Transform a `content_type === "text"` markdown payload into mixed-content
+ * storage. The shared markdown analyser already performs the section
+ * analysis — H2-H6 / HTML / standalone-bold headers open a section, and
+ * standalone video / pdf / image lines become media blocks — so this only
+ * re-serializes that analysis through the builder's canonical contract. The
+ * mixed editor then opens with exactly the structure it would produce after
+ * its first save: every header its own section, media promoted out of prose.
+ */
+export function textToMixedContentData(markdown: string): string {
+  if (!markdown.trim()) return '';
+  return builderItemsToContentData(contentDataToBuilderItems(markdown));
+}
+
+/**
+ * Flatten mixed-content storage back into markdown for
+ * `content_type === "text"`. Media blocks become standalone lines (bare URL
+ * for video/pdf, `![alt](src)` for images) so switching back to mixed
+ * re-promotes them through the same markdown analyser — switching types can
+ * never leave raw JSON sitting inside a text lesson. Blocks belonging to an
+ * untitled section merge into their neighbours (markdown has no boundary
+ * marker for those); nothing is dropped, only regrouped.
+ */
+export function mixedContentToText(raw: string): string {
+  const { sections } = normalizeMixedContent(raw);
+  const chunks: string[] = [];
+
+  for (const section of sections) {
+    const parts: string[] = [];
+    if (section.title.trim()) parts.push(`## ${section.title.trim()}`);
+
+    for (const block of section.blocks) {
+      const url = String(block.url || '').trim();
+      switch (block.type) {
+        case 'heading': {
+          const heading = String(block.content || block.title || '').trim();
+          if (heading) parts.push(`## ${heading}`);
+          break;
+        }
+        case 'video':
+        case 'pdf':
+          if (url) parts.push(url);
+          break;
+        case 'image':
+          if (url) {
+            const alt = String(block.caption || block.alt || block.title || '').trim();
+            parts.push(`![${alt}](${url})`);
+          }
+          break;
+        case 'code': {
+          const language = String(block.language || '').trim();
+          parts.push('```' + language + '\n' + String(block.content || '') + '\n```');
+          break;
+        }
+        case 'resource': {
+          const title = String(block.title || block.content || '').trim() || url;
+          parts.push(url ? `- [${title}](${url})` : String(block.content || ''));
+          break;
+        }
+        default: {
+          const content = String(block.content || '');
+          if (content.trim()) parts.push(content);
+        }
+      }
+    }
+
+    const chunk = parts.filter((part) => part.trim() !== '').join('\n\n');
+    if (chunk) chunks.push(chunk);
+  }
+
+  return chunks.join('\n\n');
+}
+
+/**
+ * First stored URL of the given media kind, searching mixed-content storage
+ * or raw markdown (the fallback parser promotes a standalone video/pdf line
+ * into a media block, so both formats answer the same way).
+ */
+export function firstMediaUrl(raw: string, kind: 'video' | 'pdf'): string {
+  if (!raw.trim()) return '';
+  for (const section of normalizeMixedContent(raw).sections) {
+    for (const block of section.blocks) {
+      if (block.type !== kind) continue;
+      const url = String(block.url || block.content || '').trim();
+      if (url) return url;
+    }
+  }
+  return '';
 }
 
 // ── Video coverage index space ────────────────────────────────────────────

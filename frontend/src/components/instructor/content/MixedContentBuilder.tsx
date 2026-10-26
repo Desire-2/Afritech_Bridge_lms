@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { 
   Plus, GripVertical, Trash2, Type, Video, FileText, 
@@ -145,6 +145,26 @@ export default function MixedContentBuilder({
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [textEditorPreview, setTextEditorPreview] = useState<Record<string, boolean>>({});
   const lastEmittedValueRef = useRef(''); // Track last value sent to parent to prevent feedback loop
+  const [recsDismissed, setRecsDismissed] = useState(false);
+
+  // Media sections this lesson is missing, with the types its own wording
+  // mentions listed first — offered as one-click "add" suggestions.
+  const recommendedTypes = useMemo(() => {
+    const present = new Set(sections.map((s) => s.type));
+    const text = sections
+      .filter((s) => s.type === 'text')
+      .map((s) => s.content)
+      .join('\n')
+      .toLowerCase();
+    const candidates: { type: ContentSection['type']; label: string; Icon: typeof Video; signal: boolean }[] = [
+      { type: 'video', label: 'Video', Icon: Video, signal: /\b(watch|video|recording|lecture|clip|demo|play)\b/.test(text) },
+      { type: 'pdf', label: 'PDF', Icon: FileText, signal: /\b(pdf|handout|worksheet|download|attached|chapter|reading|document)\b/.test(text) },
+      { type: 'image', label: 'Image', Icon: ImageIcon, signal: /\b(screenshot|diagram|figure|illustration|chart|image|photo)\b/.test(text) },
+    ];
+    return candidates
+      .filter((candidate) => !present.has(candidate.type))
+      .sort((a, b) => Number(b.signal) - Number(a.signal));
+  }, [sections]);
 
   // Elapsed-time ticker while AI generation runs
   useEffect(() => {
@@ -182,7 +202,20 @@ export default function MixedContentBuilder({
     onChange(serialized);
   };
 
-  // Add new section
+  // Bring a freshly added section into view — the list grows downward, so
+  // the new card is usually below the fold. Respects reduced-motion.
+  const scrollSectionIntoView = (id: string) => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(`[data-section-id="${id}"]`);
+      if (!el) return;
+      const reduce = typeof window !== 'undefined' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+      el.focus({ preventScroll: true });
+    });
+  };
+
+  // Add section
   const addSection = (type: ContentSection['type']) => {
     const newSection: ContentSection = {
       id: `section-${Date.now()}`,
@@ -195,6 +228,7 @@ export default function MixedContentBuilder({
     setSections(newSections);
     updateParent(newSections);
     setEditingSection(newSection.id);
+    scrollSectionIntoView(newSection.id);
   };
 
   // Remove section
@@ -1230,6 +1264,40 @@ export default function MixedContentBuilder({
             </button>
           </div>
 
+          {/* Section recommendations — enrich this lesson with missing media */}
+          {sections.length > 0 && !recsDismissed && recommendedTypes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2 bg-indigo-50/60 dark:bg-indigo-900/15 border border-indigo-200/70 dark:border-indigo-800/40 rounded-xl text-xs">
+              <span className="font-semibold text-indigo-700 dark:text-indigo-300 flex items-center gap-1 mr-0.5">
+                <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                Suggested sections
+              </span>
+              {recommendedTypes.map((rec) => (
+                <button
+                  key={rec.type}
+                  type="button"
+                  onClick={() => addSection(rec.type)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 font-medium bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700/50 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-slate-700 dark:text-slate-200 transition-colors"
+                  title={`Add a ${rec.label} section${rec.signal ? ' — your text mentions it' : ''}`}
+                >
+                  <rec.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                  {rec.label}
+                  {rec.signal && (
+                    <span className="text-[10px] font-normal text-indigo-500 dark:text-indigo-400">mentioned</span>
+                  )}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setRecsDismissed(true)}
+                className="ml-auto p-1.5 rounded-md text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 hover:bg-white/70 dark:hover:bg-slate-800/70 transition-colors"
+                aria-label="Dismiss section suggestions"
+                title="Dismiss suggestions"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* Sections List */}
           {sections.length === 0 ? (
             <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-10 text-center bg-slate-50/50 dark:bg-slate-800/30">
@@ -1262,7 +1330,9 @@ export default function MixedContentBuilder({
                           <div
                             ref={provided.innerRef}
                             {...provided.draggableProps}
-                            className={`border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 border-l-[3px] ${TYPE_COLORS[section.type]?.border || 'border-l-slate-300'} transition-shadow ${
+                            data-section-id={section.id}
+                            tabIndex={-1}
+                            className={`border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 border-l-[3px] focus:outline-none ${TYPE_COLORS[section.type]?.border || 'border-l-slate-300'} transition-shadow ${
                               snapshot.isDragging ? 'shadow-xl ring-2 ring-blue-400/50' : 'hover:shadow-sm'
                             }`}
                           >

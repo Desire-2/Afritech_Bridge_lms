@@ -15,7 +15,8 @@
     "build:worker": "opennextjs-cloudflare",
     "preview": "opennextjs-cloudflare && wrangler dev",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts || true",
-    "test:video": "npx --yes tsx --test \"src/app/(learn)/learn/[id]/utils/__tests__/videoCoverage.test.ts\""
+    "test:video": "npx --yes tsx --test \"src/app/(learn)/learn/[id]/utils/__tests__/videoCoverage.test.ts\"",
+    "test:content": "npx --yes tsx --test \"src/lib/__tests__/lesson-content.test.ts\""
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
