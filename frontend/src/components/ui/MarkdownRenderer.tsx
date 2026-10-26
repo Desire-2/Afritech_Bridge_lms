@@ -10,6 +10,7 @@ import {
 import { MarkdownCode, MarkdownPre } from '@/components/ui/markdown-code';
 import { cn, parseImageDimensions } from '@/lib/utils';
 import 'highlight.js/styles/atom-one-dark.css';
+import 'katex/dist/katex.min.css';
 
 interface MarkdownRendererProps {
   content: string;

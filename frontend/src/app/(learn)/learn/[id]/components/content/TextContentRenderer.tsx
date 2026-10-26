@@ -8,6 +8,7 @@ import {
   lessonUrlTransform,
 } from "@/lib/markdown";
 import "highlight.js/styles/atom-one-dark.css";
+import "katex/dist/katex.min.css";
 import { parseImageDimensions } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ZoomIn, ZoomOut } from "lucide-react";

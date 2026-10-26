@@ -16,7 +16,8 @@
     "preview": "opennextjs-cloudflare && wrangler dev",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts || true",
     "test:video": "npx --yes tsx --test \"src/app/(learn)/learn/[id]/utils/__tests__/videoCoverage.test.ts\"",
-    "test:content": "npx --yes tsx --test \"src/lib/__tests__/lesson-content.test.ts\""
+    "test:content": "npx --yes tsx --test \"src/lib/__tests__/lesson-content.test.ts\"",
+    "test:markdown": "npx --yes tsx --test \"tests/markdown-sanitization.test.ts\" \"tests/markdown-math.test.ts\""
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
@@ -66,6 +67,7 @@
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.4",
     "jwt-decode": "^4.0.0",
+    "katex": "^0.16.22",
     "lucide-react": "^0.364.0",
     "next": "^16.0.7",
     "next-themes": "^0.4.4",
@@ -77,9 +79,11 @@
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.4",
     "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "sonner": "^1.7.2",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
