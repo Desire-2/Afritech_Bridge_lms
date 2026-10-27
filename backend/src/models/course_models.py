@@ -99,20 +99,23 @@ class Course(db.Model):
                 pass
 
         # --- fallback: build from individual boolean columns ---
+        # Keep this in the same canonical order as the CourseSettings UI
+        # (paypal, mobile_money, stripe, kpay, flutterwave, momo_pay_code,
+        # bank_transfer) so the first listed method is the default applicants
+        # get auto-selected.
         methods = []
-        kpay_on = getattr(self, 'kpay_enabled', True)
-        if kpay_on:
-            methods.append('kpay')
         if self.paypal_enabled:
             methods.append('paypal')
         if self.mobile_money_enabled:
             methods.append('mobile_money')
-        if self.bank_transfer_enabled:
-            methods.append('bank_transfer')
+        if getattr(self, 'kpay_enabled', True):
+            methods.append('kpay')
         if getattr(self, 'flutterwave_enabled', False):
             methods.append('flutterwave')
         if getattr(self, 'momo_pay_code_enabled', False):
             methods.append('momo_pay_code')
+        if self.bank_transfer_enabled:
+            methods.append('bank_transfer')
 
         # Do NOT resurrect a hardcoded ['kpay'] default here. If the instructor
         # disabled every enabled method, an empty list is the honest answer —

@@ -690,13 +690,13 @@ def update_course(course_id):
                     _old_methods = []
             except (json.JSONDecodeError, TypeError):
                 _old_methods = []
+            # Canonical order mirrors the CourseSettings UI so the first
+            # listed method is the one applicants get auto-selected.
             _methods = []
             if course.paypal_enabled:
                 _methods.append("paypal")
             if course.mobile_money_enabled:
                 _methods.append("mobile_money")
-            if course.bank_transfer_enabled:
-                _methods.append("bank_transfer")
             # Stripe has no boolean column — preserve any existing entry.
             if "stripe" in _old_methods:
                 _methods.append("stripe")
@@ -706,6 +706,8 @@ def update_course(course_id):
                 _methods.append("flutterwave")
             if course.momo_pay_code_enabled:
                 _methods.append("momo_pay_code")
+            if course.bank_transfer_enabled:
+                _methods.append("bank_transfer")
             course.payment_methods = json.dumps(_methods) if _methods else None
 
         if "momo_ussd_code" in data:

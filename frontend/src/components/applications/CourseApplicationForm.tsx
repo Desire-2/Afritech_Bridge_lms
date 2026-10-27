@@ -63,6 +63,13 @@ function formatSavedAt(iso?: string | null): string {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Canonical order — mirrors CourseSettings' PAYMENT_METHOD_OPTIONS so the
+// method shown first in settings is also the first card on the application
+// form and the one auto-selected for the applicant.
+const PAYMENT_METHOD_ORDER: string[] = [
+  'paypal', 'mobile_money', 'stripe', 'kpay', 'flutterwave', 'momo_pay_code', 'bank_transfer',
+];
+
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   kpay: 'K-Pay',
   paypal: 'PayPal',
@@ -262,7 +269,7 @@ export default function CourseApplicationForm({
   const effectiveRemainingBalance =
     wps?.remaining_balance ?? (effectiveOriginalPrice > effectiveAmountDue ? effectiveOriginalPrice - effectiveAmountDue : null);
   const effectivePaymentSummary = wps ?? courseData?.payment_summary ?? null;
-  const effectiveEnabledMethods: string[] =
+  const rawEnabledMethods: string[] =
     (wps?.enabled_methods && wps.enabled_methods.length > 0)
       ? wps.enabled_methods
       : (courseData?.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
@@ -270,6 +277,16 @@ export default function CourseApplicationForm({
         : (courseData?.payment_methods && courseData.payment_methods.length > 0
             ? courseData.payment_methods
             : []); // No hardcoded default — never display a method the course did not enable
+  // Present in canonical order so the auto-selected default is always the
+  // primary (top) method from the course settings, not whichever position it
+  // happens to occupy in the stored JSON.
+  const effectiveEnabledMethods: string[] = rawEnabledMethods
+    .slice()
+    .sort((a, b) => {
+      const ia = PAYMENT_METHOD_ORDER.indexOf(a);
+      const ib = PAYMENT_METHOD_ORDER.indexOf(b);
+      return (ia === -1 ? PAYMENT_METHOD_ORDER.length : ia) - (ib === -1 ? PAYMENT_METHOD_ORDER.length : ib);
+    });
   const effectiveRequireBeforeApp =
     wps?.require_payment_before_application ?? selectedWindow?.require_payment_before_application ?? courseData?.require_payment_before_application ?? false;
   const effectiveScholarshipPct =

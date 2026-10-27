@@ -661,6 +661,15 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setSuccess(null);
 
     try {
+      const enabledMethodsSet = new Set<string>([
+        ...(paypalEnabled ? ['paypal'] : []),
+        ...(mobileMoneyEnabled ? ['mobile_money'] : []),
+        ...(bankTransferEnabled ? ['bank_transfer'] : []),
+        ...(stripeEnabled ? ['stripe'] : []),
+        ...(kpayEnabled ? ['kpay'] : []),
+        ...(flutterwaveEnabled ? ['flutterwave'] : []),
+        ...(momoPayCodeEnabled ? ['momo_pay_code'] : []),
+      ]);
       const payload: Record<string, unknown> = {
         enrollment_type: paymentEnabled ? 'paid' : 'free',
         price: paymentEnabled ? coursePrice : null,
@@ -683,16 +692,12 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         installment_interval_days: installmentEnabled ? installmentIntervalDays : null,
         require_payment_before_application: requirePaymentBeforeApplication,
         payment_deadline_days: paymentDeadlineDays > 0 ? paymentDeadlineDays : null,
-        // Build methods array from toggles
-        payment_methods: [
-          ...(paypalEnabled ? ['paypal'] : []),
-          ...(mobileMoneyEnabled ? ['mobile_money'] : []),
-          ...(bankTransferEnabled ? ['bank_transfer'] : []),
-          ...(stripeEnabled ? ['stripe'] : []),
-          ...(kpayEnabled ? ['kpay'] : []),
-          ...(flutterwaveEnabled ? ['flutterwave'] : []),
-          ...(momoPayCodeEnabled ? ['momo_pay_code'] : []),
-        ],
+        // Build methods array from toggles, in the same order as the settings
+        // UI (PAYMENT_METHOD_OPTIONS) so the first checkbox the instructor
+        // sees on top is also the first/default method applicants get.
+        payment_methods: PAYMENT_METHOD_OPTIONS
+          .filter((opt) => enabledMethodsSet.has(opt.value))
+          .map((opt) => opt.value),
       };
 
       const response = await fetch(`${API_URL}/courses/${course.id}`, {
