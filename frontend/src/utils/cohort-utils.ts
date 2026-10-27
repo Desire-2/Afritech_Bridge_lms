@@ -37,7 +37,7 @@ export function computeWindowStatus(window?: ApplicationWindowData | null): Coho
 
 interface CourseWithWindows {
   application_windows?: ApplicationWindowData[];
-  application_window?: ApplicationWindowData;
+  application_window?: ApplicationWindowData | null;
   application_start_date?: string | null;
   application_end_date?: string | null;
   cohort_start_date?: string | null;
@@ -176,7 +176,7 @@ export function getNextCohort(
 export function buildCohortOptionsFromCourse(
   courseId: number,
   courseTitle: string,
-  course: CourseWithWindows & { application_window?: ApplicationWindowData }
+  course: CourseWithWindows & { application_window?: ApplicationWindowData | null }
 ): CohortOption[] {
   const windows = normalizeApplicationWindows(course);
 

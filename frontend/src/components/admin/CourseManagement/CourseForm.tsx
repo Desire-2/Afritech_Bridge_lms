@@ -37,6 +37,10 @@ const EMPTY_FORM: CourseFormData = {
   bank_transfer_enabled: false,
   kpay_enabled: true,
   flutterwave_enabled: false,
+  momo_pay_code_enabled: false,
+  momo_ussd_code: null,
+  momo_recipient_name: null,
+  payment_methods: [],
   bank_transfer_details: null,
   installment_enabled: false,
   installment_count: null,
@@ -108,6 +112,10 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
         bank_transfer_enabled: course.bank_transfer_enabled ?? false,
         kpay_enabled: course.kpay_enabled ?? true,
         flutterwave_enabled: course.flutterwave_enabled ?? false,
+        momo_pay_code_enabled: course.momo_pay_code_enabled ?? false,
+        momo_ussd_code: course.momo_ussd_code ?? null,
+        momo_recipient_name: course.momo_recipient_name ?? null,
+        payment_methods: course.payment_methods ?? [],
         bank_transfer_details: course.bank_transfer_details ?? null,
         installment_enabled: course.installment_enabled ?? false,
         installment_count: course.installment_count ?? null,
@@ -144,6 +152,15 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
     if (!formData.instructor_id) return "Please select an instructor";
     if (formData.enrollment_type === "paid") {
       if (!formData.price || formData.price <= 0) return "Paid courses must have a price greater than 0";
+      const hasMethod =
+        formData.paypal_enabled ||
+        formData.mobile_money_enabled ||
+        formData.bank_transfer_enabled ||
+        formData.kpay_enabled ||
+        formData.flutterwave_enabled ||
+        formData.momo_pay_code_enabled ||
+        (formData.payment_methods || []).includes("stripe");
+      if (!hasMethod) return "Please enable at least one payment method";
     }
     if (formData.payment_mode === "partial") {
       if (!formData.partial_payment_amount && !formData.partial_payment_percentage) {
@@ -189,6 +206,20 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
       if (!payload.cohort_start_date) delete payload.cohort_start_date;
       if (!payload.cohort_end_date) delete payload.cohort_end_date;
       if (!payload.start_date) delete payload.start_date;
+
+      // Rebuild accepted payment methods from toggles (canonical order;
+      // stripe rides only in payment_methods — there is no stripe boolean)
+      const methods: string[] = [];
+      if (payload.paypal_enabled) methods.push("paypal");
+      if (payload.mobile_money_enabled) methods.push("mobile_money");
+      if ((formData.payment_methods || []).includes("stripe")) methods.push("stripe");
+      if (payload.kpay_enabled) methods.push("kpay");
+      if (payload.flutterwave_enabled) methods.push("flutterwave");
+      if (payload.momo_pay_code_enabled) methods.push("momo_pay_code");
+      if (payload.bank_transfer_enabled) methods.push("bank_transfer");
+      payload.payment_methods = methods;
+      payload.momo_ussd_code = payload.momo_ussd_code || null;
+      payload.momo_recipient_name = payload.momo_recipient_name || null;
 
       if (isEditMode) {
         await AdminService.updateCourse(courseId!, payload);
@@ -585,7 +616,7 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
 
                 {/* Payment Methods */}
                 <div>
-                  <label className={labelClass}>Payment Methods</label>
+                  <label className={labelClass}>Accepted Payment Methods</label>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-1">
                     {[
                       { field: "kpay_enabled" as const, label: "K-Pay (MTN/Airtel)" },
@@ -593,6 +624,7 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
                       { field: "mobile_money_enabled" as const, label: "Mobile Money" },
                       { field: "bank_transfer_enabled" as const, label: "Bank Transfer" },
                       { field: "flutterwave_enabled" as const, label: "Flutterwave" },
+                      { field: "momo_pay_code_enabled" as const, label: "MoMo Pay Code (USSD)" },
                     ].map(({ field, label }) => (
                       <label
                         key={field}
@@ -612,8 +644,59 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
                         <span className="text-sm text-slate-300">{label}</span>
                       </label>
                     ))}
+                    {/* Stripe has no boolean column — it lives only in payment_methods */}
+                    <label
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
+                        (formData.payment_methods || []).includes("stripe")
+                          ? "border-accent/40 bg-accent/5"
+                          : "border-brand-lighter bg-brand-light hover:border-slate-500"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(formData.payment_methods || []).includes("stripe")}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          const cur = formData.payment_methods || [];
+                          set(
+                            "payment_methods",
+                            on ? [...cur, "stripe"] : cur.filter((m) => m !== "stripe")
+                          );
+                        }}
+                        className="rounded border-slate-500 text-accent focus:ring-accent"
+                      />
+                      <span className="text-sm text-slate-300">Stripe</span>
+                    </label>
                   </div>
                 </div>
+
+                {/* MoMo Pay Code config */}
+                {formData.momo_pay_code_enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelClass}>MoMo USSD Code</label>
+                      <input
+                        type="text"
+                        name="momo_ussd_code"
+                        value={formData.momo_ussd_code || ""}
+                        onChange={handleChange}
+                        className={inputClass}
+                        placeholder="e.g. *123*1*000000#"
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>MoMo Recipient Name</label>
+                      <input
+                        type="text"
+                        name="momo_recipient_name"
+                        value={formData.momo_recipient_name || ""}
+                        onChange={handleChange}
+                        className={inputClass}
+                        placeholder="Account holder name"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Bank Transfer Details */}
                 {formData.bank_transfer_enabled && (

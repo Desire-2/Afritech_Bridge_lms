@@ -2,6 +2,8 @@
  * TypeScript Type Definitions for API Services
  */
 
+import type { SkillAssessmentConfig } from '@/types/api';
+
 // ============== User & Authentication ==============
 export interface User {
   id: number;
@@ -53,7 +55,7 @@ export interface PaymentSummary {
   total_price: number | null;
   original_price?: number | null;
   currency: string;
-  payment_mode: 'full' | 'partial' | 'installment';
+  payment_mode: 'full' | 'partial';
   amount_due_now: number | null;
   remaining_balance?: number;
   partial_payment_percentage?: number;
@@ -86,14 +88,18 @@ export interface Course {
   price?: number | null;
   currency?: string;
   // Payment configuration
-  payment_mode?: 'full' | 'partial' | 'installment';
+  payment_mode?: 'full' | 'partial';
   partial_payment_amount?: number | null;
   partial_payment_percentage?: number | null;
   payment_methods?: string[];
   paypal_enabled?: boolean;
   mobile_money_enabled?: boolean;
   bank_transfer_enabled?: boolean;
-  stripe_enabled?: boolean;
+  kpay_enabled?: boolean;
+  flutterwave_enabled?: boolean;
+  momo_pay_code_enabled?: boolean;
+  momo_ussd_code?: string | null;
+  momo_recipient_name?: string | null;
   bank_transfer_details?: string | null;
   require_payment_before_application?: boolean;
   installment_enabled?: boolean;

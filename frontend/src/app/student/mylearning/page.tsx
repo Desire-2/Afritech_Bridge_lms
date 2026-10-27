@@ -481,7 +481,7 @@ const MyLearningPage = () => {
             ? selectedCourseForPayment.cohort_payment_methods
             : (selectedCourseForPayment.payment_methods && selectedCourseForPayment.payment_methods.length > 0)
               ? selectedCourseForPayment.payment_methods
-              : ['kpay'];
+              : []; // No hardcoded default — PaymentModal shows a clear "not configured" state
         
         return (
           <PaymentModal
@@ -492,7 +492,7 @@ const MyLearningPage = () => {
             amount={selectedCourseForPayment.cohort_effective_price || 0}
             currency={selectedCourseForPayment.cohort_currency || 'USD'}
             enrollmentId={selectedCourseForPayment.enrollment_id || 0}
-            cohortId={selectedCourseForPayment.cohort_id}
+            cohortId={selectedCourseForPayment.cohort_id ?? undefined}
             isPartialScholarship={
               selectedCourseForPayment.cohort_enrollment_type === 'scholarship' &&
               selectedCourseForPayment.cohort_scholarship_type === 'partial'

@@ -2988,7 +2988,7 @@ const LearningPage = () => {
               ? paymentInfo.cohort_payment_methods
               : (courseData?.course?.payment_methods && courseData.course.payment_methods.length > 0)
                 ? courseData.course.payment_methods
-                : ['kpay'];
+                : []; // No hardcoded default — show the modal's "not configured" state instead of an unenabled method
           
           return (
             <PaymentModal

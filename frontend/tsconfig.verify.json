@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["env.d.ts", "**/*.ts", "**/*.tsx", "next.config.mjs"],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "next-env.d.ts",
+    "src/components/instructor/EnhancedModificationDashboard.tsx",
+    "src/components/instructor/ai-agent/index-new.ts"
+  ]
+}

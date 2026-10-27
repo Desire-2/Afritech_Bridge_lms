@@ -112,7 +112,7 @@ export default function CourseApplicationForm({
   const [scores, setScores] = useState<any>(null);
   
   // Payment states
-  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'processing' | 'approved' | 'failed'>('pending');
+  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'processing' | 'approved' | 'failed' | 'pending_verification' | 'pending_screenshot'>('pending');
   const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
@@ -758,7 +758,7 @@ export default function CourseApplicationForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone_number: cleaned }),
       });
-      const data = await resp.json();
+      const data: any = await resp.json();
       if (!resp.ok) {
         setMomoValidation({ loading: false, valid: false, name: null, error: data.error || 'Validation failed' });
         return;
@@ -794,7 +794,7 @@ export default function CourseApplicationForm({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ payment_method: 'mobile_money', reference: paymentReference }),
           });
-          const data = await resp.json();
+          const data: any = await resp.json();
           if (data.status === 'completed' || data.status === 'successful') {
             setPaymentStatus('approved');
             if (momoPollingRef.current) clearInterval(momoPollingRef.current);
@@ -846,7 +846,7 @@ export default function CourseApplicationForm({
           const draftPayload = {
             ...formData,
             current_section: 7,
-            payment_method: method,
+            payment_method: method as ApplicationSubmitData['payment_method'],
             payment_phone_number: formData.payment_phone_number || formData.phone,
             payment_payer_name: formData.payment_payer_name || formData.full_name,
             course_id: courseId,
@@ -912,7 +912,7 @@ export default function CourseApplicationForm({
         body: JSON.stringify(basePayload),
       });
 
-      const data = await response.json();
+      const data: any = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Payment initiation failed');
@@ -959,12 +959,12 @@ export default function CourseApplicationForm({
           data.bank_details || courseData?.bank_transfer_details || null
         );
         setPaymentReference(data.reference);
-        setPaymentStatus('processing');
+        setPaymentStatus('pending_screenshot');
         setBankTransferInfo(null);
       } else if (method === 'momo_pay_code') {
         // MoMo Pay Code (USSD): directly return the USSD code for display
         setPaymentReference(data.reference || data.ussd_code);
-        setPaymentStatus('processing');  // Match bank_transfer behavior
+        setPaymentStatus('pending_screenshot');
       }
     } catch (err: any) {
       setError(err.message || 'Payment initiation failed');
@@ -1010,7 +1010,7 @@ export default function CourseApplicationForm({
         }),
       });
 
-      const data = await response.json();
+      const data: any = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Payment verification failed');
@@ -1055,11 +1055,12 @@ export default function CourseApplicationForm({
         { method: 'POST', body: fd }
       );
 
-      const data = await res.json();
+      const data: any = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
 
       setPaymentSlipUrl(data.slip_url);
       setPaymentSlipError(null);
+      setPaymentStatus('pending_verification');
     } catch (err: any) {
       setPaymentSlipError(err.message || 'Failed to upload payment slip');
       setPaymentSlipUrl(null);
@@ -1176,7 +1177,7 @@ export default function CourseApplicationForm({
         skill_profile_key: skillConfig.profile_key,
         has_used_tool: formData.has_used_tool !== undefined ? formData.has_used_tool : formData.has_used_excel,
         tool_skill_level: formData.tool_skill_level || formData.excel_skill_level,
-        tool_tasks_done: formData.tool_tasks_done.length > 0 ? formData.tool_tasks_done : formData.excel_tasks_done,
+        tool_tasks_done: formData.tool_tasks_done?.length ? formData.tool_tasks_done : formData.excel_tasks_done,
         skill_open_answer: formData.skill_open_answer || '',
         payment_method: effectiveNeedsPayment ? formData.payment_method : undefined,
         payment_phone_number: effectiveNeedsPayment && formData.payment_method === 'mobile_money'
@@ -1371,7 +1372,7 @@ export default function CourseApplicationForm({
                 <PaymentSlip data={{
                   studentName: formData.full_name,
                   courseTitle: courseTitle || 'Course',
-                  cohortLabel: selectedWindow?.label,
+                  cohortLabel: selectedWindow?.cohort_label ?? undefined,
                   amount: effectiveAmountDue,
                   currency: effectiveCurrency,
                   paymentMethod: formData.payment_method as string || 'unknown',
@@ -2960,7 +2961,7 @@ export default function CourseApplicationForm({
                         <ScreenshotUpload
                           applicationId={savedDraftId || applicationId || 0}
                           onSuccess={() => {
-                            setPaymentStatus('processing');
+                            setPaymentStatus('pending_verification');
                           }}
                           onError={(error) => {
                             console.error('Screenshot upload error:', error);
@@ -2973,7 +2974,7 @@ export default function CourseApplicationForm({
                       </div>
 
                       {/* Payment status info */}
-                      {paymentStatus === 'processing' && (
+                      {paymentStatus === 'pending_verification' && (
                         <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
                           <p className="text-sm text-gray-700">
                             <span className="font-semibold">✓ Receipt uploaded successfully!</span> Click the <strong>"I've Completed Payment"</strong> button below to confirm, then submit your application.
@@ -3359,7 +3360,7 @@ export default function CourseApplicationForm({
                 {/* Pay Now / Confirm buttons — only on final section for paid courses */}
                 {requiresPaymentStep && paymentStatus !== 'approved' && (
                   <>
-                    {paymentStatus === 'processing' ? (
+                    {paymentStatus === 'processing' || paymentStatus === 'pending_verification' ? (
                       <Button
                         type="button"
                         onClick={handleConfirmPayment}
@@ -3376,7 +3377,7 @@ export default function CourseApplicationForm({
                       <Button
                         type="button"
                         onClick={handlePayNow}
-                        disabled={paymentLoading || !!existingApplication}
+                        disabled={paymentLoading || !!existingApplication || !!(paymentReference && paymentStatus === 'pending_screenshot')}
                         className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
                       >
                         {paymentLoading ? (
@@ -3388,6 +3389,9 @@ export default function CourseApplicationForm({
                           <>
                             <Phone className="w-6 h-6 mr-3" />
                             {(() => {
+                              if (paymentReference && paymentStatus === 'pending_screenshot') {
+                                return 'Awaiting Your Screenshot — Upload to Continue';
+                              }
                               const isPartialHere = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100 || effectivePaymentMode === 'partial';
                               if (formData.payment_method === 'momo_pay_code') {
                                 return `Dial USSD • Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
@@ -3481,7 +3485,7 @@ export default function CourseApplicationForm({
       email={formData.email}
       fullName={formData.full_name || formData.payment_payer_name || ''}
       phone={formData.payment_phone_number || formData.phone || ''}
-      applicationWindowId={selectedWindow?.id}
+      applicationWindowId={typeof selectedWindow?.id === 'number' ? selectedWindow.id : undefined}
       paymentMode={effectivePaymentMode}
     />
     </div>

@@ -50,6 +50,10 @@ export interface EnrolledCourse {
   cohort_remaining_balance?: number;
   cohort_installment_enabled?: boolean;
   cohort_installment_count?: number | null;
+  // Effective payment methods (cohort override first, then course-level)
+  cohort_payment_methods?: string[];
+  payment_methods?: string[];
+  cohort_id?: number | null;
 }
 
 export interface CourseProgress {

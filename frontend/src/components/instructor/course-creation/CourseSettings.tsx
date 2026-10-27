@@ -892,8 +892,6 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                   moduleReleaseCount: null,
                   moduleReleaseInterval: null,
                   moduleReleaseIntervalDays: null,
-                  communityLink: '',
-                  communityLinkLabel: '',
                   expanded: true,
                   paymentExpanded: false,
                 }])}

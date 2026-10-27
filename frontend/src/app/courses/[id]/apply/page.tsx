@@ -39,7 +39,7 @@ function getWindowAmountDue(
   const paymentSummary = window.payment_summary ?? course.payment_summary;
   if (paymentSummary?.amount_due_now != null) return paymentSummary.amount_due_now;
   if (isFullScholarship) return 0;
-  return window.partial_payment_amount ?? course.partial_payment_amount ?? window.effective_price ?? window.price ?? course.price;
+  return window.partial_payment_amount ?? course.partial_payment_amount ?? window.effective_price ?? window.price ?? course.price ?? null;
 }
 
 export default function CourseApplicationPage() {

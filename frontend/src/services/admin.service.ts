@@ -34,6 +34,10 @@ export interface CourseFormData {
   bank_transfer_enabled?: boolean;
   kpay_enabled?: boolean;
   flutterwave_enabled?: boolean;
+  momo_pay_code_enabled?: boolean;
+  momo_ussd_code?: string | null;
+  momo_recipient_name?: string | null;
+  payment_methods?: string[];
   bank_transfer_details?: string | null;
   installment_enabled?: boolean;
   installment_count?: number | null;
@@ -363,10 +367,12 @@ export class AdminService {
     }
   }
 
-  /** Create a new course (admin) */
-  static async createCourse(data: CourseFormData): Promise<{ message: string; course: Course }> {
+  /** Create a new course (admin) — uses the general course endpoint so
+   * schedule/cohort/application-window fields get the same handling as
+   * instructor-created courses (the legacy /admin/courses POST dropped them). */
+  static async createCourse(data: CourseFormData): Promise<Course> {
     try {
-      const response = await apiClient.post(`${this.BASE_PATH}/courses`, data);
+      const response = await apiClient.post('/courses', data);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

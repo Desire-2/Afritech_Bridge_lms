@@ -224,7 +224,7 @@ export default function PaymentModal({
         }),
       });
 
-      const data = await response.json();
+      const data: any = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Payment initiation failed');
@@ -314,7 +314,7 @@ export default function PaymentModal({
         body: fd,
       });
 
-      const data = await response.json();
+      const data: any = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || data.message || 'Failed to upload file');

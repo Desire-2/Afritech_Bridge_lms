@@ -110,7 +110,7 @@ interface Course {
   application_timezone?: string;
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   currency?: string | null;
-  payment_mode?: 'full' | 'partial' | 'installment';
+  payment_mode?: 'full' | 'partial';
   partial_payment_amount?: number | null;
   partial_payment_percentage?: number | null;
   payment_methods?: string[];

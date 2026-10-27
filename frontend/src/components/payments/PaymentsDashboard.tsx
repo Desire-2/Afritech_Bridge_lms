@@ -931,8 +931,9 @@ export default function PaymentsDashboard({ role }: Props) {
     }
   };
 
-  const handleConfirmTransfer = async (id: number, notes: string) => {
-    const res = await fetch(`${API_BASE}/applications/${id}/confirm-bank-transfer`, {
+  const handleConfirmTransfer = async (id: number | string, notes: string) => {
+    const numericId = typeof id === 'string' ? id.replace(/^enr_/, '') : id;
+    const res = await fetch(`${API_BASE}/applications/${numericId}/confirm-bank-transfer`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ notes }),
     });
     const text = await res.text();
@@ -945,8 +946,9 @@ export default function PaymentsDashboard({ role }: Props) {
     fetchSummary();
   };
 
-  const handleStatusChange = async (id: number, newStatus: string, notes: string) => {
-    const res = await fetch(`${API_BASE}/applications/${id}/update-payment-status`, {
+  const handleStatusChange = async (id: number | string, newStatus: string, notes: string) => {
+    const numericId = typeof id === 'string' ? id.replace(/^enr_/, '') : id;
+    const res = await fetch(`${API_BASE}/applications/${numericId}/update-payment-status`, {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ payment_status: newStatus, notes }),
     });
