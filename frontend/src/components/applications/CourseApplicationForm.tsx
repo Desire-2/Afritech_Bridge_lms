@@ -2505,7 +2505,7 @@ export default function CourseApplicationForm({
             </div>
           </div>
 
-          <div className={`grid gap-3 mb-5 ${isPartial ? 'grid-cols-3' : 'grid-cols-1'}`}>
+          <div className={`grid gap-3 mb-5 ${isPartial ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1'}`}>
             <div className={`rounded-xl p-3 border ${isPartial ? 'bg-purple-50 border-purple-200' : 'bg-indigo-50 border-indigo-200'}`}>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
                 {isPartial ? 'Your Contribution' : 'Tuition Fee'}
@@ -3133,13 +3133,13 @@ export default function CourseApplicationForm({
           </div>
 
           {/* Modern Section Indicators */}
-          <div className={`grid gap-3 mb-8 ${totalSections === 7 ? 'grid-cols-7' : 'grid-cols-6'}`}>
+          <div className={`grid gap-1.5 sm:gap-3 mb-8 ${totalSections === 7 ? 'grid-cols-7' : 'grid-cols-6'}`}>
             {sectionTitles.map((section) => {
               const IconComponent = section.icon;
               return (
                 <div
                   key={section.num}
-                  className={`relative text-center p-4 rounded-2xl transition-all duration-300 transform hover:scale-105 cursor-pointer ${
+                  className={`relative text-center p-1.5 sm:p-4 rounded-xl sm:rounded-2xl transition-all duration-300 transform hover:scale-105 cursor-pointer ${
                     section.num === currentSection
                       ? 'bg-emerald-600 shadow-lg scale-105'
                       : section.num < currentSection
@@ -3148,12 +3148,12 @@ export default function CourseApplicationForm({
                   }`}
                 >
                   {section.num < currentSection && (
-                    <div className="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
-                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2 w-4 h-4 sm:w-6 sm:h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
+                      <CheckCircle2 className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
                     </div>
                   )}
                   <IconComponent 
-                    className={`w-8 h-8 mx-auto mb-2 ${
+                    className={`w-5 h-5 sm:w-8 sm:h-8 mx-auto mb-0 sm:mb-2 ${
                       section.num === currentSection 
                         ? 'text-emerald-800 dark:text-emerald-300' 
                         : section.num < currentSection 
@@ -3187,7 +3187,7 @@ export default function CourseApplicationForm({
                 );
               })()}
               <div>
-                <CardTitle className="text-3xl font-bold text-gray-900">
+                <CardTitle className="text-2xl sm:text-3xl font-bold text-gray-900">
                   {sectionTitles[currentSection - 1]?.title}
                 </CardTitle>
                 <p className="text-base text-gray-700 mt-1">
@@ -3207,7 +3207,7 @@ export default function CourseApplicationForm({
           </div>
         </CardHeader>
 
-<CardContent className="pt-8 pb-8 px-8">
+<CardContent className="pt-8 pb-8 px-4 sm:px-8">
           {/* Draft Restore Banner */}
           {showDraftBanner && (
             <DraftRestoreBanner
@@ -3322,7 +3322,7 @@ export default function CourseApplicationForm({
 
           {/* Navigation Buttons */}
           <div className="flex flex-col sm:flex-row justify-between gap-4 mt-12 pt-8 border-t-2 border-gray-200">
-            <AutoSaveIndicator status={autoSaveStatus} lastSaved={autoSaveLastSaved} className="hidden sm:flex self-center" />
+            <AutoSaveIndicator status={autoSaveStatus} lastSaved={autoSaveLastSaved} className="flex self-center" />
             <Button
               type="button"
               variant="outline"
