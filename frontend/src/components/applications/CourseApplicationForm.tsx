@@ -192,7 +192,7 @@ export default function CourseApplicationForm({
     committed_to_complete: false,
     agrees_to_assessments: false,
     referral_source: '',
-    payment_method: 'kpay',
+    payment_method: undefined,
     payment_phone_number: '',
     payment_payer_name: '',
     paypal_email: '',
@@ -349,8 +349,9 @@ export default function CourseApplicationForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Set default payment method to the first enabled method when course/cohort data loads.
-  // Runs whenever courseData or selectedWindow changes.
+  // Set default payment method to the first enabled method whenever the
+  // enabled list, payment requirement, or current selection changes (covers
+  // course/cohort loads and resumed drafts that carry a disabled method).
   useEffect(() => {
     if (!effectiveNeedsPayment) return;
 
@@ -362,7 +363,7 @@ export default function CourseApplicationForm({
       handleInputChange('payment_method', effectiveEnabledMethods[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseData, selectedWindow]);
+  }, [effectiveNeedsPayment, effectiveEnabledMethods, formData.payment_method]);
 
   // Auto-generate USSD code when user enters section 7 with momo_pay_code selected
   useEffect(() => {

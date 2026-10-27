@@ -67,7 +67,7 @@ export default function PaymentModal({
   cohortId,
   isPartialScholarship = false,
   scholarshipPercentage = 0,
-  paymentMethods = ['kpay', 'paypal', 'mobile_money'],
+  paymentMethods = [],
   onPaymentSuccess,
 }: PaymentModalProps) {
   const [selectedMethod, setSelectedMethod] = useState<string | null>(null);
