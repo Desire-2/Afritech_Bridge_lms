@@ -281,12 +281,17 @@ export default function CourseApplicationForm({
   // primary (top) method from the course settings, not whichever position it
   // happens to occupy in the stored JSON.
   const effectiveEnabledMethods: string[] = rawEnabledMethods
+    .filter((m, i, arr) => PAYMENT_METHOD_ORDER.includes(m) && arr.indexOf(m) === i)
     .slice()
     .sort((a, b) => {
       const ia = PAYMENT_METHOD_ORDER.indexOf(a);
       const ib = PAYMENT_METHOD_ORDER.indexOf(b);
       return (ia === -1 ? PAYMENT_METHOD_ORDER.length : ia) - (ib === -1 ? PAYMENT_METHOD_ORDER.length : ib);
     });
+  const activePaymentMethod: ApplicationSubmitData['payment_method'] =
+    formData.payment_method && effectiveEnabledMethods.includes(formData.payment_method)
+      ? formData.payment_method
+      : undefined;
   const effectiveRequireBeforeApp =
     wps?.require_payment_before_application ?? selectedWindow?.require_payment_before_application ?? courseData?.require_payment_before_application ?? false;
   const effectiveScholarshipPct =
@@ -367,12 +372,12 @@ export default function CourseApplicationForm({
 
   // Auto-generate USSD code when user enters section 7 with momo_pay_code selected
   useEffect(() => {
-    if (currentSection === 7 && formData.payment_method === 'momo_pay_code' && !paymentReference && !paymentLoading) {
+    if (currentSection === 7 && activePaymentMethod === 'momo_pay_code' && !paymentReference && !paymentLoading) {
       // Automatically trigger payment initiation for MoMo Pay Code
       handlePayNow();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSection, formData.payment_method]);
+  }, [currentSection, activePaymentMethod]);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -738,7 +743,7 @@ export default function CourseApplicationForm({
     if (section === 7) {
       // Payment section validation — only reached for paid/require_payment courses
       if (effectiveNeedsPayment) {
-        if (formData.payment_method === 'mobile_money' && !formData.payment_phone_number?.trim()) {
+        if (activePaymentMethod === 'mobile_money' && !formData.payment_phone_number?.trim()) {
           errors.payment_phone_number = 'Mobile money number is required for payment';
         }
       }
@@ -781,7 +786,7 @@ export default function CourseApplicationForm({
 
   // MTN MoMo: auto-poll payment status every 5 s while processing (up to 2 min / 24 polls)
   useEffect(() => {
-    if (paymentStatus === 'processing' && formData.payment_method === 'mobile_money' && paymentReference) {
+    if (paymentStatus === 'processing' && activePaymentMethod === 'mobile_money' && paymentReference) {
       momoPollingCountRef.current = 0;
       const poll = async () => {
         if (momoPollingCountRef.current >= 24) {
@@ -816,7 +821,7 @@ export default function CourseApplicationForm({
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentStatus, formData.payment_method, paymentReference]);
+  }, [paymentStatus, activePaymentMethod, paymentReference]);
 
   // Resolve skill assessment config — prefer the API-provided one, fall back to client-side matching
   const skillConfig: SkillAssessmentConfig = React.useMemo(() => {
@@ -826,6 +831,11 @@ export default function CourseApplicationForm({
 
   // Handle payment initiation
   const handlePayNow = async () => {
+    if (!formData.payment_method || !effectiveEnabledMethods.includes(formData.payment_method)) {
+      setError('Please select an enabled payment method.');
+      return;
+    }
+
     // Validate payment fields first (section 7 covers MoMo phone number etc.)
     if (!validateSection(7)) return;
 
@@ -1180,14 +1190,14 @@ export default function CourseApplicationForm({
         tool_skill_level: formData.tool_skill_level || formData.excel_skill_level,
         tool_tasks_done: formData.tool_tasks_done?.length ? formData.tool_tasks_done : formData.excel_tasks_done,
         skill_open_answer: formData.skill_open_answer || '',
-        payment_method: effectiveNeedsPayment ? formData.payment_method : undefined,
-        payment_phone_number: effectiveNeedsPayment && formData.payment_method === 'mobile_money'
+        payment_method: effectiveNeedsPayment ? activePaymentMethod : undefined,
+        payment_phone_number: effectiveNeedsPayment && activePaymentMethod === 'mobile_money'
           ? (formData.payment_phone_number || formData.phone)
           : undefined,
-        payment_payer_name: effectiveNeedsPayment && formData.payment_method === 'mobile_money'
+        payment_payer_name: effectiveNeedsPayment && activePaymentMethod === 'mobile_money'
           ? (formData.payment_payer_name || formData.full_name)
           : undefined,
-        paypal_email: effectiveNeedsPayment && formData.payment_method === 'paypal'
+        paypal_email: effectiveNeedsPayment && activePaymentMethod === 'paypal'
           ? formData.email
           : undefined,
       };
@@ -1199,7 +1209,7 @@ export default function CourseApplicationForm({
       }
       // Include payment method for bank transfer even when require_payment_before_application
       if (effectiveNeedsPayment) {
-        (payload as any).payment_method = formData.payment_method;
+        (payload as any).payment_method = activePaymentMethod;
       }
       // Include cohort/window ID
       if (selectedWindow?.id != null) {
@@ -1376,7 +1386,7 @@ export default function CourseApplicationForm({
                   cohortLabel: selectedWindow?.cohort_label ?? undefined,
                   amount: effectiveAmountDue,
                   currency: effectiveCurrency,
-                  paymentMethod: formData.payment_method as string || 'unknown',
+                  paymentMethod: (activePaymentMethod as string) || 'unknown',
                   reference: paymentReference || undefined,
                   paymentDate: new Date(),
                   status: 'submitted',
@@ -2545,7 +2555,7 @@ export default function CourseApplicationForm({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {enabledMethods.map((method) => {
                 const meta = methodLabels[method] || { label: method, sub: '', color: 'gray' };
-                const selected = formData.payment_method === method;
+                const selected = activePaymentMethod === method;
                 return (
                   <div
                     key={method}
@@ -2572,7 +2582,7 @@ export default function CourseApplicationForm({
           </div>
 
           {/* Mobile Money */}
-          {formData.payment_method === 'mobile_money' && (
+          {activePaymentMethod === 'mobile_money' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
               <div className="space-y-2">
                 <Label htmlFor="pp_payer_name" className="text-base font-bold text-gray-900">
@@ -2645,7 +2655,7 @@ export default function CourseApplicationForm({
           )}
 
           {/* K-Pay */}
-          {formData.payment_method === 'kpay' && (
+          {activePaymentMethod === 'kpay' && (
             <div className="space-y-4 animate-in fade-in duration-300">
               <div className="bg-violet-50 border border-violet-200 p-4 rounded-xl">
                 <div className="flex items-start gap-3">
@@ -2690,7 +2700,7 @@ export default function CourseApplicationForm({
           )}
 
           {/* PayPal */}
-          {formData.payment_method === 'paypal' && (            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl animate-in fade-in duration-300">
+          {activePaymentMethod === 'paypal' && (            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl animate-in fade-in duration-300">
               <div className="flex items-start gap-3">
                 <div className="p-2 bg-blue-600 rounded-lg"><CreditCard className="w-5 h-5 text-white" /></div>
                 <div>
@@ -2705,7 +2715,7 @@ export default function CourseApplicationForm({
           )}
 
           {/* Stripe */}
-          {formData.payment_method === 'stripe' && (
+          {activePaymentMethod === 'stripe' && (
             <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl animate-in fade-in duration-300">
               <div className="flex items-start gap-3">
                 <div className="p-2 bg-indigo-600 rounded-lg"><CreditCard className="w-5 h-5 text-white" /></div>
@@ -2720,7 +2730,7 @@ export default function CourseApplicationForm({
           )}
 
           {/* Flutterwave */}
-          {formData.payment_method === 'flutterwave' && (
+          {activePaymentMethod === 'flutterwave' && (
             <div className="space-y-4 animate-in fade-in duration-300">
               <div className="bg-orange-50 border border-orange-200 p-4 rounded-xl">
                 <div className="flex items-start gap-3">
@@ -2782,7 +2792,7 @@ export default function CourseApplicationForm({
           )}
 
           {/* Bank Transfer */}
-          {formData.payment_method === 'bank_transfer' && (() => {
+          {activePaymentMethod === 'bank_transfer' && (() => {
             const bankDetailsText = bankTransferDetails || courseData?.bank_transfer_details || null;
             const copyToClipboard = (text: string, field: string) => {
               navigator.clipboard.writeText(text).then(() => {
@@ -2931,7 +2941,7 @@ export default function CourseApplicationForm({
           })()}
 
           {/* MoMo Pay Code (USSD) Payment */}
-          {formData.payment_method === 'momo_pay_code' && (() => {
+          {activePaymentMethod === 'momo_pay_code' && (() => {
             return (
               <div className="border border-yellow-200 rounded-xl overflow-hidden animate-in fade-in duration-300">
                 <div className="bg-yellow-600 px-4 py-3 flex items-center gap-3">
@@ -3024,16 +3034,16 @@ export default function CourseApplicationForm({
                     <Loader2 className="w-6 h-6 text-amber-600 animate-spin flex-shrink-0" />
                     <div className="flex-1">
                       <p className="font-bold text-amber-700">
-                        {formData.payment_method === 'mobile_money' ? 'Waiting for your approval…' : 'Payment Processing'}
+                        {activePaymentMethod === 'mobile_money' ? 'Waiting for your approval…' : 'Payment Processing'}
                       </p>
                       <p className="text-sm text-amber-600 mt-0.5">
-                        {formData.payment_method === 'mobile_money'
+                        {activePaymentMethod === 'mobile_money'
                           ? 'A payment prompt has been sent to your phone. Open your MTN MoMo app or dial *182# and approve the request. This page will update automatically.'
-                          : formData.payment_method === 'bank_transfer'
+                          : activePaymentMethod === 'bank_transfer'
                           ? 'Please complete the bank transfer, then click "I\'ve Completed Payment" to proceed.'
                           : 'Waiting for payment confirmation…'}
                       </p>
-                      {formData.payment_method === 'mobile_money' && (
+                      {activePaymentMethod === 'mobile_money' && (
                         <div className="flex items-center gap-2 mt-2">
                           <div className="flex gap-0.5">
                             {[0, 1, 2].map((i) => (
@@ -3384,7 +3394,7 @@ export default function CourseApplicationForm({
                         {paymentLoading ? (
                           <>
                             <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                            {formData.payment_method === 'momo_pay_code' ? 'Getting USSD Code…' : 'Initiating Payment…'}
+                            {activePaymentMethod === 'momo_pay_code' ? 'Getting USSD Code…' : 'Initiating Payment…'}
                           </>
                         ) : (
                           <>
@@ -3394,7 +3404,7 @@ export default function CourseApplicationForm({
                                 return 'Awaiting Your Screenshot — Upload to Continue';
                               }
                               const isPartialHere = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100 || effectivePaymentMode === 'partial';
-                              if (formData.payment_method === 'momo_pay_code') {
+                              if (activePaymentMethod === 'momo_pay_code') {
                                 return `Dial USSD • Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
                               }
                               return `Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
