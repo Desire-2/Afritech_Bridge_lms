@@ -109,7 +109,7 @@ class CourseApplication(db.Model):
     commitment_score = db.Column(db.Integer, default=0)  # New: Commitment level
 
     # ========== Payment Tracking ==========
-    payment_method = db.Column(db.String(30), nullable=True)   # 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe'
+    payment_method = db.Column(db.String(30), nullable=True)   # 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe' | 'kpay' | 'flutterwave' | 'momo_pay_code'
     payment_status = db.Column(db.String(30), nullable=True)   # 'pending' | 'completed' | 'failed' | 'pending_bank_transfer' | 'confirmed'
     payment_reference = db.Column(db.String(150), nullable=True)  # Gateway order_id / transfer reference
     amount_paid = db.Column(db.Float, nullable=True)            # Actual amount charged (from course price/partial)

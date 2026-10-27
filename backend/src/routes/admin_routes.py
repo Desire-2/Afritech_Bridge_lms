@@ -1086,12 +1086,41 @@ def create_course_admin():
     if not instructor or instructor.role.name.lower() != AppRoles.INSTRUCTOR:
         return jsonify({"error": "Invalid instructor ID or user is not an instructor"}), 400
 
+    # category_id is not a Course column — passing it used to raise TypeError
+    # and 500 every admin course creation.
+    data.pop("category_id", None)
+
     new_course = Course(
         title=data["title"],
         description=data.get("description", ""),
         instructor_id=data["instructor_id"],
-        category_id=data.get("category_id"), # Assuming Category model and relationship
-        # ... other fields like price, level, etc.
+        learning_objectives=data.get("learning_objectives"),
+        target_audience=data.get("target_audience"),
+        estimated_duration=data.get("estimated_duration"),
+        difficulty_level=data.get("difficulty_level"),
+        thumbnail_url=data.get("thumbnail_url"),
+        is_published=data.get("is_published", False),
+        enrollment_type=data.get("enrollment_type", "free"),
+        price=data.get("price"),
+        currency=data.get("currency", "USD"),
+        payment_mode=data.get("payment_mode", "full"),
+        partial_payment_amount=data.get("partial_payment_amount"),
+        partial_payment_percentage=data.get("partial_payment_percentage"),
+        payment_methods=json.dumps(data["payment_methods"]) if data.get("payment_methods") else None,
+        payment_deadline_days=data.get("payment_deadline_days"),
+        require_payment_before_application=data.get("require_payment_before_application", False),
+        paypal_enabled=data.get("paypal_enabled", True),
+        mobile_money_enabled=data.get("mobile_money_enabled", True),
+        bank_transfer_enabled=data.get("bank_transfer_enabled", False),
+        kpay_enabled=data.get("kpay_enabled", True),
+        flutterwave_enabled=data.get("flutterwave_enabled", False),
+        momo_pay_code_enabled=data.get("momo_pay_code_enabled", False),
+        momo_ussd_code=data.get("momo_ussd_code"),
+        momo_recipient_name=data.get("momo_recipient_name"),
+        bank_transfer_details=data.get("bank_transfer_details"),
+        installment_enabled=data.get("installment_enabled", False),
+        installment_count=data.get("installment_count"),
+        installment_interval_days=data.get("installment_interval_days"),
     )
     db.session.add(new_course)
     db.session.commit()

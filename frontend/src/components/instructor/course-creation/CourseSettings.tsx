@@ -39,6 +39,16 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { Course } from '@/types/api';
 
+const PAYMENT_METHOD_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'mobile_money', label: 'MTN Mobile Money' },
+  { value: 'stripe', label: 'Card (Stripe)' },
+  { value: 'kpay', label: 'K-Pay' },
+  { value: 'flutterwave', label: 'Flutterwave' },
+  { value: 'momo_pay_code', label: 'MoMo Pay Code (USSD)' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+];
+
 interface ModuleReleaseStatus {
   id: number;
   title: string;
@@ -373,16 +383,21 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setPartialPaymentAmount(course.partial_payment_amount ?? 0);
     setPartialPaymentPercentage(course.partial_payment_percentage ?? 50);
     setPartialType(course.partial_payment_amount ? 'amount' : 'percentage');
-    setPaypalEnabled(course.paypal_enabled !== false);
-    setMobileMoneyEnabled(course.mobile_money_enabled !== false);
-    setBankTransferEnabled(course.bank_transfer_enabled === true);
+    // The payment_methods array is authoritative (mirrors the backend's
+    // _get_payment_methods priority). Only fall back to the individual
+    // boolean columns when the course has no saved JSON yet — otherwise a
+    // stale boolean (e.g. kpay_enabled=true after the JSON dropped 'kpay')
+    // would resurrect a method the settings page just removed on save.
+    const savedMethods: string[] = Array.isArray(course.payment_methods) ? course.payment_methods : [];
+    const useBooleans = savedMethods.length === 0;
+    setPaypalEnabled(useBooleans ? course.paypal_enabled !== false : savedMethods.includes('paypal'));
+    setMobileMoneyEnabled(useBooleans ? course.mobile_money_enabled !== false : savedMethods.includes('mobile_money'));
+    setBankTransferEnabled(useBooleans ? course.bank_transfer_enabled === true : savedMethods.includes('bank_transfer'));
+    setStripeEnabled(useBooleans ? false : savedMethods.includes('stripe'));
+    setKpayEnabled(useBooleans ? course.kpay_enabled !== false : savedMethods.includes('kpay'));
+    setFlutterwaveEnabled(useBooleans ? course.flutterwave_enabled === true : savedMethods.includes('flutterwave'));
+    setMomoPayCodeEnabled(useBooleans ? course.momo_pay_code_enabled === true : savedMethods.includes('momo_pay_code'));
     setBankTransferDetails(course.bank_transfer_details || '');
-    // Stripe and K-Pay are stored both via payment_methods array and dedicated boolean columns
-    setStripeEnabled(Array.isArray(course.payment_methods) && course.payment_methods.includes('stripe'));
-    // K-Pay: prefer kpay_enabled field; fall back to checking payment_methods or defaulting to true
-    setKpayEnabled(course.kpay_enabled !== false);
-    setFlutterwaveEnabled(course.flutterwave_enabled === true);
-    setMomoPayCodeEnabled(course.momo_pay_code_enabled === true);
     setMomoUssdCode(course.momo_ussd_code || '');
     setMomoRecipientName(course.momo_recipient_name || '');
     setInstallmentEnabled(course.installment_enabled === true);
@@ -472,7 +487,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           payment_mode: c.enrollmentType === 'paid' ? c.paymentMode : null,
           partial_payment_amount: c.enrollmentType === 'paid' && c.paymentMode === 'partial' && c.partialType === 'amount' ? c.partialPaymentAmount : null,
           partial_payment_percentage: c.enrollmentType === 'paid' && c.paymentMode === 'partial' && c.partialType === 'percentage' ? c.partialPaymentPercentage : null,
-          payment_methods: isInherit ? null : (c.paymentMethods.length > 0 ? c.paymentMethods : null),
+          payment_methods: c.paymentMethods.length > 0 ? c.paymentMethods : null,
           payment_deadline_days: c.paymentDeadlineDays > 0 ? c.paymentDeadlineDays : null,
           require_payment_before_application: isInherit ? null : c.requirePaymentBeforeApplication,
           installment_enabled: c.enrollmentType === 'paid' ? c.installmentEnabled : null,
@@ -636,7 +651,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       return;
     }
 
-    if (paymentEnabled && !paypalEnabled && !mobileMoneyEnabled && !bankTransferEnabled && !stripeEnabled && !kpayEnabled && !flutterwaveEnabled) {
+    if (paymentEnabled && !paypalEnabled && !mobileMoneyEnabled && !bankTransferEnabled && !stripeEnabled && !kpayEnabled && !flutterwaveEnabled && !momoPayCodeEnabled) {
       setError('Please enable at least one payment method');
       return;
     }
@@ -1116,6 +1131,73 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                                   ))}
                                 </div>
                               </div>
+
+                              {/* Accepted Payment Methods (per-cohort override) */}
+                              {(cohort.enrollmentType === 'paid' ||
+                                (cohort.enrollmentType === 'scholarship' && cohort.scholarshipType === 'partial') ||
+                                (cohort.enrollmentType === 'inherit' && course.enrollment_type === 'paid')) && (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <Label className="text-sm font-semibold">Accepted Payment Methods</Label>
+                                      <p className="text-xs text-slate-500">Override which payment methods this cohort accepts</p>
+                                    </div>
+                                    <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer whitespace-nowrap">
+                                      <input
+                                        type="checkbox"
+                                        checked={cohort.paymentMethods.length === 0}
+                                        onChange={(e) =>
+                                          updateCohort({
+                                            paymentMethods: e.target.checked
+                                              ? []
+                                              : (Array.isArray(course.payment_methods) && course.payment_methods.length > 0
+                                                  ? [...course.payment_methods]
+                                                  : ['kpay']),
+                                          })
+                                        }
+                                        className="accent-blue-600"
+                                      />
+                                      Inherit course methods
+                                    </label>
+                                  </div>
+                                  {cohort.paymentMethods.length === 0 ? (
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                      {Array.isArray(course.payment_methods) && course.payment_methods.length > 0
+                                        ? `Using course defaults: ${course.payment_methods
+                                            .map((m) => PAYMENT_METHOD_OPTIONS.find((o) => o.value === m)?.label ?? m)
+                                            .join(', ')}`
+                                        : 'Using course defaults — no payment methods are enabled on the course yet'}
+                                    </p>
+                                  ) : (
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                      {PAYMENT_METHOD_OPTIONS.map((opt) => (
+                                        <label
+                                          key={opt.value}
+                                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                                            cohort.paymentMethods.includes(opt.value)
+                                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                              : 'border-slate-200 dark:border-slate-600 hover:border-slate-300'
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={cohort.paymentMethods.includes(opt.value)}
+                                            onChange={() =>
+                                              updateCohort({
+                                                paymentMethods: cohort.paymentMethods.includes(opt.value)
+                                                  ? cohort.paymentMethods.filter((m) => m !== opt.value)
+                                                  : [...cohort.paymentMethods, opt.value],
+                                              })
+                                            }
+                                            className="accent-blue-600"
+                                          />
+                                          <span className="text-xs font-medium text-slate-700 dark:text-slate-200">{opt.label}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
 
                               {/* Scholarship Config */}
                               {cohort.enrollmentType === 'scholarship' && (

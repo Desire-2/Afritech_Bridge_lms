@@ -1119,6 +1119,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                             {effectivePaymentMethods.includes('bank_transfer') && (
                               <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">Bank Transfer</Badge>
                             )}
+                            {effectivePaymentMethods.includes('momo_pay_code') && (
+                              <Badge className="bg-amber-50 text-amber-700 border-amber-200 text-xs">MoMo Pay Code (USSD)</Badge>
+                            )}
                           </div>
                         </div>
                       )}

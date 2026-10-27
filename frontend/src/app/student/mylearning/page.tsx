@@ -481,7 +481,7 @@ const MyLearningPage = () => {
             ? selectedCourseForPayment.cohort_payment_methods
             : (selectedCourseForPayment.payment_methods && selectedCourseForPayment.payment_methods.length > 0)
               ? selectedCourseForPayment.payment_methods
-              : ['kpay', 'stripe'];
+              : ['kpay'];
         
         return (
           <PaymentModal

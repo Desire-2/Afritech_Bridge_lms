@@ -478,6 +478,8 @@ def create_course():
             learning_objectives=data.get("learning_objectives"),
             target_audience=data.get("target_audience"),
             estimated_duration=data.get("estimated_duration"),
+            difficulty_level=data.get("difficulty_level"),
+            thumbnail_url=data.get("thumbnail_url"),
             instructor_id=instructor_id_to_set,
             is_published=data.get("is_published", False),
             enrollment_type=enrollment_type,
@@ -673,6 +675,38 @@ def update_course(course_id):
 
         if "momo_pay_code_enabled" in data:
             course.momo_pay_code_enabled = bool(data.get("momo_pay_code_enabled"))
+
+        # Keep the authoritative payment_methods JSON in sync when a caller
+        # (e.g. the admin form) updates only the boolean toggles. Without
+        # this, the stale JSON stays authoritative in _get_payment_methods().
+        _bool_keys = (
+            "paypal_enabled", "mobile_money_enabled", "bank_transfer_enabled",
+            "kpay_enabled", "flutterwave_enabled", "momo_pay_code_enabled",
+        )
+        if "payment_methods" not in data and any(k in data for k in _bool_keys):
+            try:
+                _old_methods = json.loads(course.payment_methods) if course.payment_methods else []
+                if not isinstance(_old_methods, list):
+                    _old_methods = []
+            except (json.JSONDecodeError, TypeError):
+                _old_methods = []
+            _methods = []
+            if course.paypal_enabled:
+                _methods.append("paypal")
+            if course.mobile_money_enabled:
+                _methods.append("mobile_money")
+            if course.bank_transfer_enabled:
+                _methods.append("bank_transfer")
+            # Stripe has no boolean column — preserve any existing entry.
+            if "stripe" in _old_methods:
+                _methods.append("stripe")
+            if course.kpay_enabled:
+                _methods.append("kpay")
+            if course.flutterwave_enabled:
+                _methods.append("flutterwave")
+            if course.momo_pay_code_enabled:
+                _methods.append("momo_pay_code")
+            course.payment_methods = json.dumps(_methods) if _methods else None
 
         if "momo_ussd_code" in data:
             course.momo_ussd_code = data.get("momo_ussd_code")
@@ -2112,15 +2146,22 @@ def initiate_enrollment_payment(enrollment_id):
     if not amount or amount <= 0:
         return jsonify({"error": "Invalid payment amount"}), 400
     
-    # Validate payment method is enabled for this course
-    enabled_methods = course._get_payment_methods()
+    # Validate payment method is enabled — a cohort's overrides win over the
+    # course defaults (mirrors /applications/initiate-payment).
+    cohort_window = enrollment.application_window
+    if cohort_window is not None:
+        enabled_methods = cohort_window.get_effective_payment_methods()
+        effective_enrollment_type = cohort_window.get_effective_enrollment_type()
+    else:
+        enabled_methods = course._get_payment_methods()
+        effective_enrollment_type = course.enrollment_type
     ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave", "momo_pay_code"}
     
     if payment_method not in ALL_KNOWN_METHODS:
         logger.warning(f"initiate-enrollment-payment: REJECTED unknown method '{payment_method}'")
         return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
     
-    if course.enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
+    if effective_enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
         logger.warning(
             f"initiate-enrollment-payment: REJECTED method '{payment_method}' "
             f"not in enabled_methods={enabled_methods}"
@@ -2162,10 +2203,18 @@ def initiate_enrollment_payment(enrollment_id):
                 f"momo_ussd_code={getattr(course, 'momo_ussd_code', None)}"
             )
             
-            if not getattr(course, 'momo_pay_code_enabled', False) or not getattr(course, 'momo_ussd_code', None):
+            # Honour the authoritative enabled methods (the course JSON or a
+            # cohort's payment_methods override) instead of only the boolean
+            # column — a cohort can enable/disable momo_pay_code on its own.
+            effective_momo_methods = (
+                cohort_window.get_effective_payment_methods()
+                if cohort_window is not None
+                else course._get_payment_methods()
+            )
+            if payment_method not in effective_momo_methods or not getattr(course, 'momo_ussd_code', None):
                 logger.warning(
                     f"initiate-enrollment-payment momo_pay_code REJECTED: "
-                    f"enabled={getattr(course, 'momo_pay_code_enabled', False)}, "
+                    f"enabled_methods={effective_momo_methods}, "
                     f"ussd_code={getattr(course, 'momo_ussd_code', None)}"
                 )
                 return jsonify({

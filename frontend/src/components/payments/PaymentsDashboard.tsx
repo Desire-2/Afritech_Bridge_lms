@@ -118,6 +118,7 @@ const METHOD_LABELS: Record<string, string> = {
   stripe: 'Stripe',
   kpay: 'K-Pay',
   flutterwave: 'Flutterwave',
+  momo_pay_code: 'MoMo Pay Code',
 };
 
 const METHOD_BG: Record<string, string> = {
@@ -127,6 +128,7 @@ const METHOD_BG: Record<string, string> = {
   stripe: 'bg-violet-50 text-violet-700 border-violet-200',
   kpay: 'bg-orange-50 text-orange-700 border-orange-200',
   flutterwave: 'bg-amber-50 text-amber-700 border-amber-200',
+  momo_pay_code: 'bg-amber-50 text-amber-700 border-amber-200',
 };
 
 const METHOD_ICON_BG: Record<string, string> = {
@@ -136,6 +138,7 @@ const METHOD_ICON_BG: Record<string, string> = {
   stripe: 'bg-violet-600',
   kpay: 'bg-orange-600',
   flutterwave: 'bg-amber-500',
+  momo_pay_code: 'bg-amber-600',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -1216,6 +1219,7 @@ export default function PaymentsDashboard({ role }: Props) {
               <option value="mobile_money">Mobile Money</option>
               <option value="kpay">K-Pay</option>
               <option value="flutterwave">Flutterwave</option>
+              <option value="momo_pay_code">MoMo Pay Code</option>
             </select>
             <select value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-[#162844]">

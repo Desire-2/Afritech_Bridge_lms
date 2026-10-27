@@ -2988,7 +2988,7 @@ const LearningPage = () => {
               ? paymentInfo.cohort_payment_methods
               : (courseData?.course?.payment_methods && courseData.course.payment_methods.length > 0)
                 ? courseData.course.payment_methods
-                : ['kpay', 'bank_transfer', 'momo_pay_code'];
+                : ['kpay'];
           
           return (
             <PaymentModal

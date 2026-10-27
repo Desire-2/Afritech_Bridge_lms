@@ -114,7 +114,11 @@ class Course(db.Model):
         if getattr(self, 'momo_pay_code_enabled', False):
             methods.append('momo_pay_code')
 
-        return methods if methods else ['kpay']
+        # Do NOT resurrect a hardcoded ['kpay'] default here. If the instructor
+        # disabled every enabled method, an empty list is the honest answer —
+        # falling back to ['kpay'] made the application form display a default
+        # payment method that is NOT enabled for this course.
+        return methods
 
     def get_payment_summary(self):
         """Return a payment summary for the course (used in application forms)."""

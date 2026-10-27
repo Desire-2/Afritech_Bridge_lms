@@ -63,6 +63,16 @@ function formatSavedAt(iso?: string | null): string {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  kpay: 'K-Pay',
+  paypal: 'PayPal',
+  mobile_money: 'MTN Mobile Money',
+  stripe: 'Card (Stripe)',
+  flutterwave: 'Flutterwave',
+  bank_transfer: 'Bank Transfer',
+  momo_pay_code: 'MoMo Pay Code (USSD)',
+};
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -259,7 +269,7 @@ export default function CourseApplicationForm({
         ? courseData.payment_summary.enabled_methods
         : (courseData?.payment_methods && courseData.payment_methods.length > 0
             ? courseData.payment_methods
-            : ['kpay']);
+            : []); // No hardcoded default — never display a method the course did not enable
   const effectiveRequireBeforeApp =
     wps?.require_payment_before_application ?? selectedWindow?.require_payment_before_application ?? courseData?.require_payment_before_application ?? false;
   const effectiveScholarshipPct =
@@ -328,7 +338,10 @@ export default function CourseApplicationForm({
     if (!effectiveNeedsPayment) return;
 
     // Reset to first available method if the currently selected one is not enabled
-    if (!effectiveEnabledMethods.includes(formData.payment_method as string)) {
+    if (
+      effectiveEnabledMethods.length > 0 &&
+      !effectiveEnabledMethods.includes(formData.payment_method as string)
+    ) {
       handleInputChange('payment_method', effectiveEnabledMethods[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2347,7 +2360,7 @@ export default function CourseApplicationForm({
                 </div>
                 {effectiveEnabledMethods.length > 0 && (
                   <span className="text-xs text-gray-500">
-                    Accepted: {effectiveEnabledMethods.join(', ')}
+                    Accepted: {effectiveEnabledMethods.map((m) => PAYMENT_METHOD_LABELS[m] ?? m).join(', ')}
                   </span>
                 )}
               </div>
@@ -2505,6 +2518,11 @@ export default function CourseApplicationForm({
           {/* Payment method selection */}
           <div className="mb-6">
             <Label className="text-base font-bold text-gray-900 mb-3 block">Select Payment Method</Label>
+            {enabledMethods.length === 0 && (
+              <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-xl p-4 mb-3 text-sm">
+                No payment methods are currently enabled for this course. Please contact the course administrator.
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {enabledMethods.map((method) => {
                 const meta = methodLabels[method] || { label: method, sub: '', color: 'gray' };

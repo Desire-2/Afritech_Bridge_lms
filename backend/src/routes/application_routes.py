@@ -452,7 +452,7 @@ def submit_course_application(data):
     payment_approval_url = None
 
     # Capture payment info passed from the frontend (after initiate-payment was called)
-    submitted_payment_method = data.get("payment_method")      # 'bank_transfer' | 'mobile_money' | 'paypal' | 'stripe'
+    submitted_payment_method = data.get("payment_method")      # 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe' | 'kpay' | 'flutterwave' | 'momo_pay_code'
     submitted_payment_reference = data.get("payment_reference")  # reference stored by frontend
     submitted_payment_status = data.get("payment_status")        # 'processing' | 'approved' | 'pending'
 
@@ -4986,15 +4986,20 @@ def initiate_payment():
     # Validate that the requested method is enabled for this course/cohort
     # If an application_window_id is provided, use that cohort's effective methods
     application_window_id = data.get("application_window_id")
+    app_window = None
     if application_window_id:
         from ..models.course_models import ApplicationWindow
         app_window = ApplicationWindow.query.get(application_window_id)
         enabled_methods = app_window.get_effective_payment_methods() if app_window else course._get_payment_methods()
+        # A cohort can override enrollment type — use the cohort's effective
+        # type so per-cohort overrides are validated correctly.
+        context_enrollment_type = app_window.get_effective_enrollment_type() if app_window else course.enrollment_type
     else:
         enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
+        context_enrollment_type = course.enrollment_type
 
     logger.info(
-        f"initiate-payment: enrollment_type={course.enrollment_type} "
+        f"initiate-payment: enrollment_type={context_enrollment_type} "
         f"enabled_methods={enabled_methods} requested={payment_method}"
     )
 
@@ -5003,7 +5008,7 @@ def initiate_payment():
     if payment_method not in ALL_KNOWN_METHODS:
         logger.warning(f"initiate-payment: REJECTED unknown method '{payment_method}'")
         return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
-    if course.enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
+    if context_enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
         logger.warning(
             f"initiate-payment: REJECTED method '{payment_method}' not in enabled_methods={enabled_methods}"
         )
@@ -5284,10 +5289,14 @@ def initiate_payment():
                 f"momo_pay_code_enabled={getattr(course, 'momo_pay_code_enabled', False)} "
                 f"momo_ussd_code={getattr(course, 'momo_ussd_code', None)}"
             )
-            if not getattr(course, 'momo_pay_code_enabled', False) or not getattr(course, 'momo_ussd_code', None):
+            # Honour the authoritative enabled methods (the course JSON or a
+            # cohort's payment_methods override) instead of only the boolean
+            # column — a cohort can enable/disable momo_pay_code on its own.
+            effective_momo_methods = app_window.get_effective_payment_methods() if app_window else course._get_payment_methods()
+            if payment_method not in effective_momo_methods or not getattr(course, 'momo_ussd_code', None):
                 logger.warning(
                     f"initiate-payment momo_pay_code REJECTED: "
-                    f"enabled={getattr(course, 'momo_pay_code_enabled', False)}, "
+                    f"enabled_methods={effective_momo_methods}, "
                     f"ussd_code={getattr(course, 'momo_ussd_code', None)}"
                 )
                 return jsonify({
