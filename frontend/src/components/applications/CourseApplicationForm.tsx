@@ -1965,10 +1965,10 @@ export default function CourseApplicationForm({
             handleInputChange('excel_skill_level', legacyVal);
           }}
         >
-          <SelectTrigger id="tool_skill_level" className={`py-6 text-base border-2 rounded-xl focus:ring-2 !text-black dark:text-gray-100 ${
+          <SelectTrigger id="tool_skill_level" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
             validationErrors.tool_skill_level || validationErrors.excel_skill_level
               ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
-              : 'border-gray-300 bg-white dark:bg-gray-800 focus:border-indigo-600 focus:ring-indigo-200'
+              : 'border-gray-300 bg-white focus:border-indigo-600 focus:ring-indigo-200'
           }`}>
             <SelectValue placeholder={`Select your ${skillConfig.tool_name} skill level...`} />
           </SelectTrigger>
@@ -2002,14 +2002,14 @@ export default function CourseApplicationForm({
             {skillConfig.tasks_options.map((task: string) => (
               <label 
                 key={task} 
-                className="flex items-start space-x-3 p-4 bg-white dark:bg-gray-800 border-2 border-gray-200 dark:border-gray-700 rounded-xl hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-all duration-200 cursor-pointer group"
+                className="flex items-start space-x-3 p-4 bg-white border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 cursor-pointer group"
               >
                 <Checkbox
                   checked={(formData.tool_tasks_done || []).includes(task)}
                   onCheckedChange={() => handleMultiSelect('tool_tasks_done', task)}
                   className="mt-0.5 w-5 h-5"
                 />
-                <span className="text-sm font-medium !text-black dark:text-gray-200 group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">{task}</span>
+                <span className="text-sm font-medium text-gray-900 group-hover:text-blue-700 transition-colors">{task}</span>
               </label>
             ))}
           </div>
@@ -2029,7 +2029,7 @@ export default function CourseApplicationForm({
             onChange={(e) => handleInputChange('skill_open_answer', e.target.value)}
             placeholder={skillConfig.open_question_placeholder}
             rows={3}
-            className="w-full text-base !text-black dark:text-gray-100 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl px-4 py-3 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:focus:ring-amber-800 transition-all duration-300 resize-none placeholder:!text-black"
+            className="w-full text-base text-gray-900 bg-white border border-gray-300 rounded-xl px-4 py-3 placeholder:text-gray-500 focus:border-amber-500 focus:ring-2 focus:ring-amber-200 transition-all duration-300 resize-none"
           />
         </div>
       )}
