@@ -1559,6 +1559,38 @@ export default function CourseApplicationForm({
         </Alert>
       )}
 
+      {/* Email Input */}
+      <div className="relative group">
+        <Label htmlFor="email" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Mail className="w-5 h-5 text-emerald-600" />
+          Email Address <span className="text-red-600">*</span>
+        </Label>
+        <Input
+          id="email"
+          type="email"
+          value={formData.email}
+          onChange={(e) => handleInputChange('email', e.target.value)}
+          onBlur={handleEmailBlur}
+          placeholder="your.email@example.com"
+          disabled={checkingDuplicate}
+          className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
+            validationErrors.email 
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
+              : 'border-gray-300 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
+          } ${checkingDuplicate ? 'opacity-50 cursor-not-allowed' : ''}`}
+        />
+        <p className="text-sm text-gray-700 mt-2 ml-1 flex items-center gap-2">
+          <Sparkles className="w-4 h-4" />
+          We will use this for all official communication, check for duplicate applications, and let you resume a saved draft from any device.
+        </p>
+        {validationErrors.email && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.email}
+          </p>
+        )}
+      </div>
+
       {/* Full Name Input */}
       <div className="relative group">
         <Label htmlFor="full_name" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
@@ -1594,38 +1626,6 @@ export default function CourseApplicationForm({
           <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             {validationErrors.full_name}
-          </p>
-        )}
-      </div>
-
-      {/* Email Input */}
-      <div className="relative group">
-        <Label htmlFor="email" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
-          <Mail className="w-5 h-5 text-emerald-600" />
-          Email Address <span className="text-red-600">*</span>
-        </Label>
-        <Input
-          id="email"
-          type="email"
-          value={formData.email}
-          onChange={(e) => handleInputChange('email', e.target.value)}
-          onBlur={handleEmailBlur}
-          placeholder="your.email@example.com"
-          disabled={checkingDuplicate}
-          className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
-            validationErrors.email 
-              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
-              : 'border-gray-300 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
-          } ${checkingDuplicate ? 'opacity-50 cursor-not-allowed' : ''}`}
-        />
-        <p className="text-sm text-gray-700 mt-2 ml-1 flex items-center gap-2">
-          <Sparkles className="w-4 h-4" />
-          We will use this for all official communication, check for duplicate applications, and let you resume a saved draft from any device.
-        </p>
-        {validationErrors.email && (
-          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4" />
-            {validationErrors.email}
           </p>
         )}
       </div>
@@ -3260,8 +3260,8 @@ export default function CourseApplicationForm({
           {/* Section Validation Error Summary Banner */}
           {Object.keys(validationErrors).length > 0 && (() => {
             const fieldLabels: Record<string, string> = {
-              full_name: 'Full Name',
               email: 'Email Address',
+              full_name: 'Full Name',
               phone: 'Phone Number',
               gender: 'Gender',
               age_range: 'Age Range',
