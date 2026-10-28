@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -18,7 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# pip's HTTP cache lives in a BuildKit cache mount: it is not baked into the
+# image, but survives failed/retried builds, which matters on slow networks —
+# completed wheel downloads are not lost when a later download drops.
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY . .
 
