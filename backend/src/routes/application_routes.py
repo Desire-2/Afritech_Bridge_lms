@@ -299,8 +299,11 @@ def check_duplicate_application():
     """
     Check if a user has already applied for a specific course.
     Query params: course_id (required), email (required)
-    Returns only whether a submitted application exists.  This endpoint is
-    public so it must not disclose review status, timestamps, IDs, or scores.
+    Returns whether a submitted application exists plus the minimal payment
+    context (payment_status / payment_method / workflow status) so the form
+    can show a status-aware message and a "Pay Now" shortcut for applicants
+    whose payment is still incomplete.  Scores, names, phone numbers and
+    review notes are never disclosed.
     """
     course_id = request.args.get("course_id")
     email = request.args.get("email")
@@ -317,7 +320,13 @@ def check_duplicate_application():
         ).first()
         
         if existing:
-            return jsonify({"exists": True}), 200
+            return jsonify({
+                "exists": True,
+                "application_id": existing.id,
+                "status": existing.status,
+                "payment_status": existing.payment_status,
+                "payment_method": existing.payment_method,
+            }), 200
         else:
             return jsonify({"exists": False}), 200
             

@@ -15,6 +15,10 @@ class CourseApplicationService extends BaseApiService {
    */
   async checkDuplicate(courseId: number, email: string): Promise<{
     exists: boolean;
+    application_id?: number;
+    status?: string | null;
+    payment_status?: string | null;
+    payment_method?: string | null;
   }> {
     return this.get(`${this.BASE_PATH}/check-duplicate`, {
       params: { course_id: courseId, email: email.trim().toLowerCase() }

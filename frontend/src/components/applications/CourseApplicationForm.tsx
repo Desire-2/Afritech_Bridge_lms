@@ -84,6 +84,18 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+// Minimal payment context returned by the public check-duplicate endpoint.
+// Used to show a status-aware "already applied" message and a Pay Now
+// shortcut for applicants whose payment is still incomplete.  Scores and
+// personal details are never returned.
+interface ExistingApplicationInfo {
+  exists: boolean;
+  application_id?: number;
+  status?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+}
+
 export default function CourseApplicationForm({
   courseId,
   courseTitle,
@@ -227,7 +239,11 @@ export default function CourseApplicationForm({
 
   // Duplicate check states
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
-  const [existingApplication, setExistingApplication] = useState<any>(null);
+  const [existingApplication, setExistingApplication] = useState<ExistingApplicationInfo | null>(null);
+  // True once the applicant clicked "Pay Now" on the already-applied banner —
+  // unlocks the payment step so they can complete payment for the existing
+  // application instead of starting a new one.
+  const [payingForExistingApplication, setPayingForExistingApplication] = useState(false);
   const [emailChecked, setEmailChecked] = useState(false);
   const emailLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emailLookupVersionRef = useRef(0);
@@ -307,6 +323,13 @@ export default function CourseApplicationForm({
   const requiresPaymentStep = effectiveNeedsPayment;
   // Total form sections: 6 for free/scholarship, 7 for courses requiring payment
   const totalSections = requiresPaymentStep ? 7 : 6;
+  // Payment still incomplete for an already-submitted application — drives
+  // the "Pay Now" shortcut on the duplicate-application banner.
+  const existingAppPaymentIncomplete = Boolean(
+    existingApplication &&
+    requiresPaymentStep &&
+    !['completed', 'confirmed'].includes(existingApplication.payment_status || '')
+  );
 
   // If course/cohort payment data arrives after the email lookup, finish the
   // automatic resume transition once the payment requirement is known.
@@ -457,10 +480,12 @@ export default function CourseApplicationForm({
     try {
       const result = await applicationService.checkDuplicate(courseId, normalizedEmail);
       if (lookupVersion !== emailLookupVersionRef.current || latestEmailRef.current !== normalizedEmail) return;
-      // The public endpoint deliberately returns no application details.
-      // Keeping only a local marker prevents an applicant's status/scores from
-      // being exposed to anyone who knows their email address.
-      setExistingApplication(result.exists ? { exists: true } : null);
+      // The endpoint returns only minimal payment context (application id,
+      // workflow status, payment status/method) — never scores or personal
+      // details — so the form can show a status-aware message and a Pay Now
+      // shortcut when the payment is still incomplete.
+      setExistingApplication(result.exists ? result : null);
+      setPayingForExistingApplication(false);
       setEmailChecked(true);
     } catch (err: any) {
       console.error('Error checking duplicate:', err);
@@ -488,6 +513,7 @@ export default function CourseApplicationForm({
         setShowDraftBanner(false);
         setDraftRestored(false);
         setExistingApplication(null);
+        setPayingForExistingApplication(false);
         setEmailChecked(false);
         try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
       }
@@ -607,6 +633,16 @@ export default function CourseApplicationForm({
     lastLookupEmailRef.current = normalizedEmail;
     void checkDuplicateApplication(normalizedEmail, lookupVersion);
     void checkDraftByEmail(normalizedEmail, lookupVersion);
+  };
+
+  // "Pay Now" on the already-applied banner: unlock the payment step so the
+  // applicant can complete payment for their existing application (uploads
+  // and confirmations attach to it via its application id).
+  const handlePayForExistingApplication = () => {
+    if (!existingApplication?.application_id) return;
+    setPayingForExistingApplication(true);
+    setCurrentSection(7);
+    document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   // Automatically synchronize the entered email with this course's submitted
@@ -850,9 +886,11 @@ export default function CourseApplicationForm({
     const method = formData.payment_method as string;
 
     try {
-      // For manual payment methods (MoMo Pay Code, Bank Transfer), 
-      // save application as draft first so screenshot upload has an applicationId
-      if ((method === 'momo_pay_code' || method === 'bank_transfer') && !savedDraftId) {
+      // For manual payment methods (MoMo Pay Code, Bank Transfer),
+      // save application as draft first so screenshot upload has an applicationId.
+      // Skip when paying for an already-submitted application — uploads attach
+      // to that application directly (and save-draft would be rejected).
+      if ((method === 'momo_pay_code' || method === 'bank_transfer') && !savedDraftId && !existingApplication?.application_id) {
         try {
           const draftPayload = {
             ...formData,
@@ -994,14 +1032,15 @@ export default function CourseApplicationForm({
     // Manual payment methods (bank transfer, MoMo Pay Code) cannot be verified via API
     // – inform user and allow submission
     if (method === 'bank_transfer' || method === 'momo_pay_code') {
+      const closingNote = existingApplication
+        ? 'We will email you once your payment is confirmed — no further action is needed.'
+        : 'You can now submit your application — we will contact you once payment is confirmed.';
       setBankTransferInfo(
         method === 'momo_pay_code'
           ? `Your payment reference is: ${paymentReference}. ` +
-            'Our team will verify your MoMo Pay Code payment and confirm your enrollment. ' +
-            'You can now submit your application — we will contact you once payment is confirmed.'
+            'Our team will verify your MoMo Pay Code payment and confirm your enrollment. ' + closingNote
           : `Your payment reference is: ${paymentReference}. ` +
-            'Our team will verify your bank transfer and confirm your enrollment. ' +
-            'You can now submit your application — we will contact you once payment is confirmed.'
+            'Our team will verify your bank transfer and confirm your enrollment. ' + closingNote
       );
       setError(null);
       setPaymentStatus('approved');
@@ -1048,8 +1087,9 @@ export default function CourseApplicationForm({
     setPaymentSlipError(null);
     setPaymentSlipUploading(true);
 
-    // We need an application ID to attach the slip to
-    const appId = savedDraftId || applicationId;
+    // We need an application ID to attach the slip to — prefer the draft,
+    // then an already-submitted application being paid for, then a fresh submit
+    const appId = savedDraftId || existingApplication?.application_id || applicationId;
     if (!appId) {
       setPaymentSlipError('Please save your application first before uploading a payment slip.');
       setPaymentSlipUploading(false);
@@ -1072,6 +1112,8 @@ export default function CourseApplicationForm({
       setPaymentSlipUrl(data.slip_url);
       setPaymentSlipError(null);
       setPaymentStatus('pending_verification');
+      // Keep the already-applied banner in sync with the new payment state
+      setExistingApplication((prev) => prev ? { ...prev, payment_status: 'pending_verification' } : prev);
     } catch (err: any) {
       setPaymentSlipError(err.message || 'Failed to upload payment slip');
       setPaymentSlipUrl(null);
@@ -1110,8 +1152,9 @@ export default function CourseApplicationForm({
   };
 
   const handleNext = () => {
-    // Don't allow proceeding if email already exists
-    if (currentSection === 1 && existingApplication) {
+    // Don't allow proceeding if email already exists — unless the applicant
+    // is only moving through the form to complete payment for it.
+    if (currentSection === 1 && existingApplication && !payingForExistingApplication) {
       return;
     }
 
@@ -1484,23 +1527,133 @@ export default function CourseApplicationForm({
 
   const renderApplicantInfo = () => (
     <div className="space-y-6">
-      {/* Duplicate Application Warning */}
-      {existingApplication && (
-        <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-950 shadow-lg rounded-xl">
-          <AlertTriangle className="h-6 w-6 !text-amber-600" />
-          <AlertDescription className="ml-2">
-            <div className="space-y-3">
-              <p className="font-bold text-amber-950 text-lg">
-                You have already applied for this course!
-              </p>
-              <p className="text-sm text-amber-800 pt-2 bg-white/70 p-3 rounded-lg">
-                Please check your email ({formData.email}) for updates on your application status.
-                You cannot submit multiple applications for the same course.
-              </p>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
+      {/* Duplicate Application Warning — message adapts to payment status */}
+      {existingApplication && (() => {
+        // Free / no payment step: keep the simple already-applied notice.
+        if (!requiresPaymentStep) {
+          return (
+            <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-950 shadow-lg rounded-xl">
+              <AlertTriangle className="h-6 w-6 !text-amber-600" />
+              <AlertDescription className="ml-2">
+                <div className="space-y-3">
+                  <p className="font-bold text-amber-950 text-lg">
+                    You have already applied for this course!
+                  </p>
+                  <p className="text-sm text-amber-800 pt-2 bg-white/70 p-3 rounded-lg">
+                    Please check your email ({formData.email}) for updates on your application status.
+                    You cannot submit multiple applications for the same course.
+                  </p>
+                </div>
+              </AlertDescription>
+            </Alert>
+          );
+        }
+
+        const paymentStatus = existingApplication.payment_status || '';
+        const appStatus = existingApplication.status;
+        const paymentIncomplete = existingAppPaymentIncomplete;
+
+        const paymentMessages: Record<string, string> = {
+          pending_verification: 'Your payment proof was received and is being verified by our team. If you prefer, you can also complete an instant payment (card or mobile money) now.',
+          submitted_with_proof: 'Your payment proof was received and is being verified by our team. If you prefer, you can also complete an instant payment (card or mobile money) now.',
+          pending_bank_transfer: 'Your bank transfer is awaiting confirmation. If you prefer not to wait, you can pay instantly with card or mobile money.',
+          submitted: 'Your payment is being processed. You can also complete an instant payment (card or mobile money) now if you prefer.',
+          failed: 'Your previous payment could not be completed. Please try again with another payment method.',
+          refunded: 'Your previous payment was refunded. Please complete a new payment to activate your application.',
+        };
+        const incompleteMessage = paymentMessages[paymentStatus] ||
+          'Your payment has not been completed yet. Please complete your payment to activate your application.';
+
+        const payNowButton = existingApplication.application_id ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              onClick={handlePayForExistingApplication}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md px-6 py-3"
+            >
+              <CreditCard className="w-5 h-5 mr-2" />
+              Pay Now
+            </Button>
+            <span className="text-xs text-amber-800">
+              This completes payment for your existing application — no need to apply again.
+            </span>
+          </div>
+        ) : null;
+
+        // Application already approved and payment settled
+        if (appStatus === 'approved' && !paymentIncomplete) {
+          return (
+            <Alert className="border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 text-emerald-950 shadow-lg rounded-xl">
+              <CheckCircle2 className="h-6 w-6 !text-emerald-600" />
+              <AlertDescription className="ml-2">
+                <div className="space-y-2">
+                  <p className="font-bold text-emerald-950 text-lg">Your application has been approved!</p>
+                  <p className="text-sm text-emerald-800 pt-2 bg-white/70 p-3 rounded-lg">
+                    Check your email ({formData.email}) for your enrollment details and next steps.
+                  </p>
+                </div>
+              </AlertDescription>
+            </Alert>
+          );
+        }
+
+        // Approved but payment still owed (e.g. pay-after-approval cohorts)
+        if (appStatus === 'approved' && paymentIncomplete) {
+          return (
+            <Alert className="border-2 border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 text-indigo-950 shadow-lg rounded-xl">
+              <CheckCircle2 className="h-6 w-6 !text-indigo-600" />
+              <AlertDescription className="ml-2">
+                <div className="space-y-3">
+                  <p className="font-bold text-indigo-950 text-lg">Your application has been approved!</p>
+                  <p className="text-sm text-indigo-800 pt-2 bg-white/70 p-3 rounded-lg">
+                    Complete your payment to activate your enrollment. {incompleteMessage}
+                  </p>
+                  {payNowButton}
+                </div>
+              </AlertDescription>
+            </Alert>
+          );
+        }
+
+        // Submitted, payment still incomplete → amber notice + Pay Now
+        if (paymentIncomplete) {
+          return (
+            <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-950 shadow-lg rounded-xl">
+              <AlertTriangle className="h-6 w-6 !text-amber-600" />
+              <AlertDescription className="ml-2">
+                <div className="space-y-3">
+                  <p className="font-bold text-amber-950 text-lg">
+                    You have already applied — your payment is still pending
+                  </p>
+                  <p className="text-sm text-amber-800 pt-2 bg-white/70 p-3 rounded-lg">
+                    {incompleteMessage} Please check your email ({formData.email}) for updates.
+                    You cannot submit a second application for this course.
+                  </p>
+                  {payNowButton}
+                </div>
+              </AlertDescription>
+            </Alert>
+          );
+        }
+
+        // Submitted and payment received → under review, no action needed
+        return (
+          <Alert className="border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 text-emerald-950 shadow-lg rounded-xl">
+            <CheckCircle2 className="h-6 w-6 !text-emerald-600" />
+            <AlertDescription className="ml-2">
+              <div className="space-y-3">
+                <p className="font-bold text-emerald-950 text-lg">
+                  You have already applied for this course!
+                </p>
+                <p className="text-sm text-emerald-800 pt-2 bg-white/70 p-3 rounded-lg">
+                  Your payment has been received and your application is under review.
+                  No further action is needed — we will email you ({formData.email}) with updates.
+                </p>
+              </div>
+            </AlertDescription>
+          </Alert>
+        );
+      })()}
 
       {/* Email checking indicator */}
       {(checkingDuplicate || checkingDraft) && (
@@ -2484,6 +2637,39 @@ export default function CourseApplicationForm({
           </p>
         </div>
 
+        {/* Paying for an existing (already-submitted) application */}
+        {payingForExistingApplication && existingApplication && (
+          <Alert className="border-2 border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 shadow-lg rounded-xl">
+            <CreditCard className="h-6 w-6 !text-indigo-600" />
+            <AlertDescription className="ml-2">
+              <div className="space-y-2">
+                <p className="font-bold text-indigo-950 text-lg">
+                  Completing payment for your existing application
+                  {existingApplication.application_id ? ` (#${existingApplication.application_id})` : ''}
+                </p>
+                <p className="text-sm text-indigo-800 pt-2 bg-white/70 p-3 rounded-lg">
+                  {(() => {
+                    const ps = existingApplication.payment_status || '';
+                    if (ps === 'pending_verification' || ps === 'submitted_with_proof') {
+                      return 'Your payment proof is already being verified by our team. You can wait for that verification, or complete an instant payment below instead.';
+                    }
+                    if (ps === 'pending_bank_transfer') {
+                      return 'Your bank transfer is awaiting confirmation. You can wait for the confirmation, or pay instantly with card or mobile money below.';
+                    }
+                    if (ps === 'failed') {
+                      return 'Your previous payment could not be completed. Please try again with another payment method below.';
+                    }
+                    if (ps === 'refunded') {
+                      return 'Your previous payment was refunded. Please complete a new payment below to activate your application.';
+                    }
+                    return 'Once your payment is confirmed, your application will move to review — there is no need to submit a second application.';
+                  })()}
+                </p>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Amount breakdown */}
         <div className={`bg-indigo-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm`}>
           <div className="flex items-center gap-3 mb-5">
@@ -2970,9 +3156,10 @@ export default function CourseApplicationForm({
                       {/* Screenshot Upload */}
                       <div className="pt-4 border-t-2 border-yellow-200">
                         <ScreenshotUpload
-                          applicationId={savedDraftId || applicationId || 0}
+                          applicationId={savedDraftId || existingApplication?.application_id || applicationId || 0}
                           onSuccess={() => {
                             setPaymentStatus('pending_verification');
+                            setExistingApplication((prev) => prev ? { ...prev, payment_status: 'pending_verification' } : prev);
                           }}
                           onError={(error) => {
                             console.error('Screenshot upload error:', error);
@@ -2988,7 +3175,7 @@ export default function CourseApplicationForm({
                       {paymentStatus === 'pending_verification' && (
                         <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
                           <p className="text-sm text-gray-700">
-                            <span className="font-semibold">✓ Receipt uploaded successfully!</span> Click the <strong>"I've Completed Payment"</strong> button below to confirm, then submit your application.
+                            <span className="font-semibold">✓ Receipt uploaded successfully!</span> Click the <strong>"I've Completed Payment"</strong> button below to confirm{existingApplication ? ' — we will email you once your payment is verified.' : ', then submit your application.'}
                           </p>
                         </div>
                       )}
@@ -3025,7 +3212,11 @@ export default function CourseApplicationForm({
                     <CheckCircle2 className="w-6 h-6 text-emerald-600" />
                     <div>
                       <p className="font-bold text-emerald-700">Payment Approved!</p>
-                      <p className="text-sm text-emerald-600">You can now submit your application.</p>
+                      <p className="text-sm text-emerald-600">
+                        {existingApplication
+                          ? 'Your payment has been recorded for your existing application — we will email you once it is confirmed.'
+                          : 'You can now submit your application.'}
+                      </p>
                     </div>
                   </>
                 )}
@@ -3388,7 +3579,7 @@ export default function CourseApplicationForm({
                       <Button
                         type="button"
                         onClick={handlePayNow}
-                        disabled={paymentLoading || !!existingApplication || !!(paymentReference && paymentStatus === 'pending_screenshot')}
+                        disabled={paymentLoading || (!!existingApplication && !payingForExistingApplication) || !!(paymentReference && paymentStatus === 'pending_screenshot')}
                         className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
                       >
                         {paymentLoading ? (
