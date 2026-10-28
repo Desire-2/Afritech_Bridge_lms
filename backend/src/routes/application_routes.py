@@ -5491,6 +5491,32 @@ def upload_payment_screenshot(application_id):
             "message": f"File too large. Maximum size is 5MB, got {file_size / 1024 / 1024:.1f}MB"
         }), 400
 
+    # Verify the screenshot proves payment to AfriTech Bridge before storing it
+    from ..services.payment_slip_verifier import verify_payment_slip, receiver_names_for_course
+
+    screenshot_bytes = file.read()
+    verdict = verify_payment_slip(
+        screenshot_bytes,
+        filename=file.filename,
+        content_type=file_type,
+        expected_receiver_names=receiver_names_for_course(application.course),
+    )
+    if not verdict["verified"]:
+        logger.info(
+            f"Payment screenshot rejected: application_id={application_id} "
+            f"reason={verdict.get('reason')} user_email={user.email}"
+        )
+        return jsonify({
+            "success": False,
+            "message": verdict["message"],
+            "error": verdict["message"],
+            "verification": {
+                "verified": False,
+                "reason": verdict.get("reason"),
+                "engine": verdict.get("engine"),
+            },
+        }), 422
+
     try:
         # Create uploads directory if needed
         upload_dir = os.path.join(current_app.root_path, '..', 'uploads', 'payment_screenshots')
@@ -5502,7 +5528,8 @@ def upload_payment_screenshot(application_id):
         file_path = os.path.join(upload_dir, unique_filename)
 
         # Save file
-        file.save(file_path)
+        with open(file_path, "wb") as fh:
+            fh.write(screenshot_bytes)
 
         # Update application
         application.payment_slip_filename = unique_filename
@@ -5766,6 +5793,31 @@ def upload_payment_slip(application_id):
     mime_type = file.content_type or 'application/octet-stream'
     original_filename = file.filename
 
+    # Verify the slip proves payment to AfriTech Bridge before storing it
+    from ..services.payment_slip_verifier import verify_payment_slip, receiver_names_for_course
+
+    raw_bytes = file.read()
+    verdict = verify_payment_slip(
+        raw_bytes,
+        filename=original_filename,
+        content_type=mime_type,
+        expected_receiver_names=receiver_names_for_course(application.course),
+    )
+    if not verdict["verified"]:
+        logger.info(
+            f"Payment slip rejected: application_id={application_id} "
+            f"reason={verdict.get('reason')}"
+        )
+        return jsonify({
+            "error": verdict["message"],
+            "message": verdict["message"],
+            "verification": {
+                "verified": False,
+                "reason": verdict.get("reason"),
+                "engine": verdict.get("engine"),
+            },
+        }), 422
+
     try:
         # Try Google Drive upload
         from ..utils.google_drive_service import GoogleDriveService
@@ -5778,7 +5830,7 @@ def upload_payment_slip(application_id):
             from io import BytesIO
             import os as _os
 
-            file_bytes = file.read()
+            file_bytes = raw_bytes
             file_data = BytesIO(file_bytes)
 
             # Use a dedicated payment-slips folder
@@ -5834,7 +5886,7 @@ def upload_payment_slip(application_id):
         # Fallback: store as base64 data URL when Drive is unavailable or failed
         if slip_url is None:
             import base64
-            raw = file_bytes if file_bytes is not None else file.read()
+            raw = file_bytes if file_bytes is not None else raw_bytes
             data = base64.b64encode(raw).decode('utf-8')
             slip_url = f"data:{mime_type};base64,{data}"
 
