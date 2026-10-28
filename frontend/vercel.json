@@ -2,7 +2,7 @@
   "version": 2,
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
-  "installCommand": "npm install --no-audit --prefer-offline",
+  "installCommand": "NODE_ENV= pnpm install --frozen-lockfile --production=false --prefer-offline",
   "framework": "nextjs",
   "functions": {
     "src/app/api/**/*.ts": {
