@@ -18,6 +18,7 @@ from src.models.course_models import Course
 from src.models.user_models import User, Role, db
 from src.services.payment_slip_verifier import (
     NOT_COMPLETED_MESSAGE,
+    OCR_UNAVAILABLE_MESSAGE,
     REJECTION_MESSAGE,
     classify_payment_completion,
     extract_text,
@@ -127,6 +128,50 @@ def test_custom_receiver_name_matches_by_containment():
 def test_generic_custom_names_are_ignored():
     # "MTN MoMo" names the network, not the receiver — never accepted.
     assert find_receiver_in_text("Receiver: MTN MoMo", ["MTN MoMo"]) is None
+
+
+# ---------------------------------------------------------------------------
+# Receiver proof: "to" marker + company account numbers
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "Payment completed to AFRITECH BRIDGE",
+    "Transfer To:\nAFRITECH BRIDGE",
+    "You have paid 10,000 RWF to afri tech bridge",
+    "Credit to AFRITECH-BRIDGE",
+])
+def test_to_anchored_receiver_pattern(text):
+    assert find_receiver_in_text(text) == "AfriTech Bridge"
+
+
+@pytest.mark.parametrize("text", [
+    "Y'ello. Your payment of 10,000 RWF to 2138467 was completed at 2026-10-28",
+    "MoMo Pay Code 2138467 — payment completed",
+])
+def test_momo_pay_code_proves_receiver(text):
+    assert find_receiver_in_text(text) == "AfriTech Bridge"
+
+
+@pytest.mark.parametrize("text", [
+    "Beneficiary account: 1002669565578 — payment completed",
+    "Transfer to account 1002669565578 completed",
+])
+def test_bank_account_proves_receiver(text):
+    assert find_receiver_in_text(text) == "AfriTech Bridge"
+
+
+@pytest.mark.parametrize("text", [
+    "Available balance: 21384670 RWF",
+    "account 11002669565578",
+    "Transaction ID 1213846799",
+])
+def test_partial_digit_runs_never_prove_receiver(text):
+    assert find_receiver_in_text(text) is None
+
+
+def test_momo_codes_extensible_via_env(monkeypatch):
+    monkeypatch.setenv("PAYMENT_MOMO_CODES", "999888777")
+    assert find_receiver_in_text("payment of 5000 RWF to 999888777") == "AfriTech Bridge"
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +327,78 @@ def test_verification_rejects_receiver_without_completion_evidence():
     assert verdict["message"] == NOT_COMPLETED_MESSAGE
 
 
+def test_verification_accepts_momo_code_only_receipt():
+    proof = (
+        "Y'ello. Your payment of 10,000 RWF to 2138467 was completed "
+        "at 2026-10-28 12:07:57. Fee 0 RWF."
+    )
+    verdict = verify_payment_slip(proof.encode(), "sms.txt", "text/plain")
+    assert verdict["verified"] is True
+    assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_verification_accepts_bank_account_receipt():
+    proof = (
+        "Bank transfer receipt\nBeneficiary account: 1002669565578\n"
+        "Payment of 500,000 RWF was completed"
+    )
+    verdict = verify_payment_slip(proof.encode(), "slip.txt", "text/plain")
+    assert verdict["verified"] is True
+    assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_verification_rejects_pending_payment_with_momo_code():
+    proof = "Payment to 2138467 is pending confirmation"
+    verdict = verify_payment_slip(proof.encode(), "sms.txt", "text/plain")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "payment_not_completed"
+
+
+def test_verification_accepts_heic_receipt():
+    pytest.importorskip("pillow_heif")
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    img = Image.new("RGB", (900, 300), "white")
+    draw = ImageDraw.Draw(img)
+    draw.text(
+        (40, 40),
+        "Receipt\nYou have paid 50 USD to AFRITECH BRIDGE\nTransaction ID 123456",
+        fill="black",
+        font=_RECEIPT_FONT,
+    )
+    buf = io.BytesIO()
+    img.save(buf, format="HEIF")
+    verdict = verify_payment_slip(buf.getvalue(), "receipt.heic", "image/heic")
+    assert verdict["verified"] is True
+    assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_ocr_engine_unavailable_gets_honest_message(monkeypatch):
+    import src.services.payment_slip_verifier as verifier
+
+    monkeypatch.setattr(verifier.shutil, "which", lambda *a, **k: None)
+    png = make_receipt_png("Receipt\nYou have paid 50 USD to AFRITECH BRIDGE")
+    verdict = verify_payment_slip(png, "receipt.png", "image/png")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "ocr_engine_unavailable"
+    assert verdict["message"] == OCR_UNAVAILABLE_MESSAGE
+    assert "temporarily unavailable" in verdict["message"]
+    assert "contact the administrator" in verdict["message"]
+
+
+def test_text_and_pdf_layer_proofs_work_without_ocr_engine(monkeypatch):
+    import src.services.payment_slip_verifier as verifier
+
+    monkeypatch.setattr(verifier.shutil, "which", lambda *a, **k: None)
+    text_proof = "You have paid 50 USD to AFRITECH BRIDGE"
+    assert verify_payment_slip(
+        text_proof.encode(), "proof.txt", "text/plain"
+    )["verified"] is True
+    pdf = make_pdf_with_text("paid to AfriTech Bridge completed")
+    assert verify_payment_slip(pdf, "slip.pdf", "application/pdf")["verified"] is True
+
+
 def test_verification_disabled_escape_hatch(monkeypatch):
     monkeypatch.setenv("PAYMENT_SLIP_VERIFICATION", "false")
     verdict = verify_payment_slip(b"garbage", "slip.bin", "application/octet-stream")
@@ -294,6 +411,12 @@ def test_rejection_message_tells_user_to_contact_administrator():
     assert "AfriTech Bridge" in REJECTION_MESSAGE
     assert "contact the administrator" in NOT_COMPLETED_MESSAGE
     assert "AfriTech Bridge" in NOT_COMPLETED_MESSAGE
+    assert "contact the administrator" in OCR_UNAVAILABLE_MESSAGE
+    # The rejection message must state every accepted proof so applicants
+    # know what to look for on their receipt.
+    assert "2138467" in REJECTION_MESSAGE
+    assert "1002669565578" in REJECTION_MESSAGE
+    assert "AFRITECH BRIDGE" in REJECTION_MESSAGE
 
 
 # ---------------------------------------------------------------------------

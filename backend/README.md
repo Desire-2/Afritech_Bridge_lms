@@ -121,6 +121,34 @@ python main.py
 
 5. Click "Create Web Service"
 
+### Deploying with Docker (required for payment-proof verification)
+
+Payment screenshots and slips are verified with OCR, which needs the system
+`tesseract` binary (and `poppler-utils` for scanned PDFs). Render's Python
+native runtime cannot install system packages, so uploads there fail with
+`ocr_engine_unavailable`. The provided `backend/Dockerfile` installs both.
+
+1. In your Render dashboard, open the backend web service (or create a new one)
+2. Settings → **Runtime Environment** → select **Docker**
+3. Configure:
+   - **Root Directory**: `backend` (where `Dockerfile` and `.dockerignore` live)
+   - **Dockerfile Path**: `Dockerfile` (Render's default)
+   - No Build/Start commands needed — migrations + gunicorn run via the
+     image `CMD`
+4. Keep the same environment variables as the native setup (nothing changes:
+   `FLASK_ENV`, `SECRET_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL`,
+   `ALLOWED_ORIGINS`, …)
+5. Deploy — verify OCR by uploading a payment screenshot; the logs should show
+   `engine=ocr` instead of `ocr_engine_unavailable`
+
+Local container check:
+
+```bash
+cd backend
+docker build -t lms-backend .
+docker run --rm lms-backend python -m pytest tests/test_payment_slip_verification.py -q
+```
+
 ### Post-Deployment
 
 1. Verify that your service is running by visiting the Render URL

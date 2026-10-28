@@ -7,9 +7,10 @@ scanned PDFs), plain text for .txt/.csv — and verifies that the payment
 receiver is AfriTech Bridge *and* that the payment is shown as completed.
 Two independent gates must both pass:
 
-1. Receiver gate: the text must name AfriTech Bridge (or an admin-configured
-   receiver) as the money's destination, tolerating OCR noise, spacing and
-   dark-mode screenshots.
+1. Receiver gate: the text must prove AfriTech Bridge as the money's
+   destination — by company name (after the receiver marker "to", as a
+   standalone mention, or with OCR noise), by the MoMo pay code
+   2138467, or by the bank account number 1002669565578.
 2. Completion gate: the text must show the transfer as completed/paid/
    successful.  Receipts that only mention the receiver — pending, failed,
    declined or not-yet-confirmed "you are about to send ..." screens — are
@@ -21,6 +22,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -30,10 +32,19 @@ logger = logging.getLogger(__name__)
 CANONICAL_RECEIVER = "AfriTech Bridge"
 _CANONICAL_KEY = "afritechbridge"
 
+# Company account identifiers that prove the money is destined for AfriTech
+# Bridge on their own (MoMo pay code / bank account number).  Extendable
+# without a deploy via PAYMENT_MOMO_CODES / PAYMENT_BANK_RECEIVER_ACCOUNTS
+# (comma-separated digits).
+MOMO_RECEIVER_CODES = ("2138467",)
+BANK_RECEIVER_ACCOUNTS = ("1002669565578",)
+
 REJECTION_MESSAGE = (
     "We could not verify that this payment was made to AfriTech Bridge, so the "
     "payment proof was rejected and was not saved. Please upload a clear receipt "
-    "or screenshot that shows AfriTech Bridge as the payment receiver. "
+    "or screenshot showing AfriTech Bridge as the payment receiver — accepted "
+    "proofs show the name \"AFRITECH BRIDGE\" (for example after the word \"to\"), "
+    "the MoMo pay code 2138467, or the bank account number 1002669565578. "
     "If you believe this is a mistake, please contact the administrator."
 )
 
@@ -45,7 +56,13 @@ NOT_COMPLETED_MESSAGE = (
     "If you believe this is a mistake, please contact the administrator."
 )
 
-IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif"}
+OCR_UNAVAILABLE_MESSAGE = (
+    "Automatic verification of payment proofs is temporarily unavailable, so "
+    "your receipt was not saved. Please try again later. "
+    "If this is urgent, please contact the administrator."
+)
+
+IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif", "heic", "heif"}
 PDF_EXTENSIONS = {"pdf"}
 TEXT_EXTENSIONS = {"txt", "csv"}
 
@@ -123,21 +140,55 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _configured_account_numbers(defaults, env_var: str) -> tuple:
+    """Company account numbers: baked-in defaults plus env-var extras."""
+    extras = [
+        item.strip()
+        for item in os.getenv(env_var, "").split(",")
+        if item.strip().isdigit()
+    ]
+    return tuple(dict.fromkeys(tuple(defaults) + tuple(extras)))
+
+
+def _digits_prove_receiver(normalized: str, raw_text: str, numbers: tuple) -> bool:
+    """
+    True when one of `numbers` appears as a standalone number in the text.
+
+    Guards against partial hits: 21384670 or 11002669565578 must never match
+    2138467 / 1002669565578.  Checks both the normalized text (spaces kept)
+    and whole digit groups of the raw text (tolerates "10 026 695 65578"
+    style grouping only when groups are exactly the number).
+    """
+    raw_groups = re.findall(r"\d+", raw_text or "")
+    for number in numbers:
+        if re.search(rf"(?<!\d){re.escape(number)}(?!\d)", normalized):
+            return True
+        if number in raw_groups:
+            return True
+    return False
+
+
 def find_receiver_in_text(text: str, expected_receiver_names=None):
     """
     Return the receiver name proven by `text`, or None.
 
-    The canonical match looks for "AfriTech Bridge" as adjacent words
-    (tolerating spacing/punctuation variants such as "AFRITECH-BRIDGE" or
-    "afri tech bridge ltd"), in either order, and tolerates OCR character
-    noise ("AFRITECH BR1DGE").  Additional admin-configured receiver names
-    are accepted by normalized containment.
+    Proof of receiver, strongest first:
+      1. "to <AfriTech Bridge>" — the receipt marker for the money's
+         destination ("paid to AFRITECH BRIDGE", "To: AFRITECH-BRIDGE").
+      2. "AfriTech Bridge" as adjacent words in any order, tolerating
+         spacing/punctuation variants and OCR character noise.
+      3. The MoMo pay code or bank account number (standalone digit run).
+      4. Admin-configured receiver names by normalized containment.
     """
     normalized = _normalize(text)
     if not normalized:
         return None
     compact = normalized.replace(" ", "")
     tokens = normalized.split()
+
+    # Receipts denote the receiver with "to <name>" — anchor on it first.
+    if re.search(r"\bto\s+afri\s*tech\s*bridge\b", normalized):
+        return CANONICAL_RECEIVER
 
     for i in range(len(tokens)):
         for width in (1, 2, 3, 4):
@@ -152,6 +203,11 @@ def find_receiver_in_text(text: str, expected_receiver_names=None):
                 >= _FUZZY_RECEIVER_MIN_RATIO
             ):
                 return CANONICAL_RECEIVER
+
+    momo_codes = _configured_account_numbers(MOMO_RECEIVER_CODES, "PAYMENT_MOMO_CODES")
+    bank_accounts = _configured_account_numbers(BANK_RECEIVER_ACCOUNTS, "PAYMENT_BANK_RECEIVER_ACCOUNTS")
+    if _digits_prove_receiver(normalized, text, momo_codes + bank_accounts):
+        return CANONICAL_RECEIVER
 
     for name in expected_receiver_names or []:
         if not name:
@@ -235,15 +291,40 @@ def _ocr_best(image) -> str:
     return text if len(text.strip()) >= len(alternate.strip()) else alternate
 
 
+_OCR_MISSING_ERROR = "ocr_engine_unavailable"
+
+
+def _missing_ocr_engine_error():
+    """
+    Return an extraction error when OCR cannot run in this environment.
+
+    Image receipts and scanned PDFs need the system tesseract binary; it is
+    present on machines with apt (local dev, Docker) but not on Render's
+    native runtime, which cannot install system packages.  Returning a
+    sentinel lets verify_payment_slip explain the outage honestly instead of
+    blaming the receipt.
+    """
+    if shutil.which("tesseract"):
+        return None
+    return _OCR_MISSING_ERROR
+
+
 def _extract_image_text(file_bytes: bytes) -> str:
     from PIL import Image
+
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    except ImportError:
+        pass
 
     with Image.open(io.BytesIO(file_bytes)) as img:
         return _ocr_best(img)
 
 
-def _extract_pdf_text(file_bytes: bytes) -> str:
-    # Prefer the embedded text layer (digital receipts / gateway PDFs).
+def _extract_pdf_text_layer(file_bytes: bytes) -> str:
+    """Embedded text of a digital PDF; "" when absent/unreadable."""
     try:
         import PyPDF2
 
@@ -251,13 +332,14 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
         parts = []
         for page in reader.pages[:_OCR_MAX_PDF_PAGES]:
             parts.append(page.extract_text() or "")
-        joined = "\n".join(parts).strip()
-        if joined:
-            return joined
+        return "\n".join(parts).strip()
     except Exception as exc:
         logger.warning(f"PDF text-layer extraction failed, falling back to OCR: {exc}")
+        return ""
 
-    # Scanned PDF: render the first pages and OCR them.
+
+def _ocr_pdf_pages(file_bytes: bytes) -> str:
+    """Render the first pages of a scanned PDF (needs poppler) and OCR them."""
     from pdf2image import convert_from_bytes
 
     pages = convert_from_bytes(
@@ -293,14 +375,19 @@ def extract_text(file_bytes: bytes, filename: str = "", content_type: str = "") 
             return {"ok": True, "text": text, "engine": f"text:{encoding}", "error": None}
 
         if ext in IMAGE_EXTENSIONS or content_type.startswith("image/"):
+            engine_error = _missing_ocr_engine_error()
+            if engine_error:
+                return {"ok": False, "text": "", "engine": "ocr", "error": engine_error}
             return {"ok": True, "text": _extract_image_text(file_bytes), "engine": "ocr", "error": None}
 
         if ext in PDF_EXTENSIONS or content_type == "application/pdf":
-            engine = "pdf-text-layer"
-            text = _extract_pdf_text(file_bytes)
-            if not text.strip():
-                engine = "pdf-scanned-ocr"
-            return {"ok": True, "text": text, "engine": engine, "error": None}
+            text = _extract_pdf_text_layer(file_bytes)
+            if text:
+                return {"ok": True, "text": text, "engine": "pdf-text-layer", "error": None}
+            engine_error = _missing_ocr_engine_error()
+            if engine_error:
+                return {"ok": False, "text": "", "engine": "pdf-scanned-ocr", "error": engine_error}
+            return {"ok": True, "text": _ocr_pdf_pages(file_bytes), "engine": "pdf-scanned-ocr", "error": None}
 
         return {
             "ok": False,
@@ -325,7 +412,9 @@ def verify_payment_slip(file_bytes: bytes, filename: str = "", content_type: str
     "contact the administrator" guidance directly to the applicant:
     REJECTION_MESSAGE when the receiver (or the text itself) is not proven,
     NOT_COMPLETED_MESSAGE when the receipt shows a pending/failed/unconfirmed
-    transaction or no completion evidence at all.
+    transaction or no completion evidence at all,
+    OCR_UNAVAILABLE_MESSAGE (reason ocr_engine_unavailable) when the server
+    is missing its OCR engine — an outage, not a bad receipt.
     Disabled with PAYMENT_SLIP_VERIFICATION=false (ops escape hatch).
     """
     if os.getenv("PAYMENT_SLIP_VERIFICATION", "true").strip().lower() in ("0", "false", "off", "no", "disabled"):
@@ -339,8 +428,20 @@ def verify_payment_slip(file_bytes: bytes, filename: str = "", content_type: str
 
     extraction = extract_text(file_bytes, filename=filename, content_type=content_type)
     if not extraction["ok"]:
+        error = (extraction.get("error") or "")
+        if error == _OCR_MISSING_ERROR or "poppler" in error.lower():
+            logger.warning(
+                f"Payment proof OCR engine unavailable (file={filename}, error={error})"
+            )
+            return {
+                "verified": False,
+                "reason": "ocr_engine_unavailable",
+                "engine": extraction.get("engine"),
+                "matched_receiver": None,
+                "message": OCR_UNAVAILABLE_MESSAGE,
+            }
         logger.warning(
-            f"Payment proof could not be read (file={filename}, error={extraction.get('error')})"
+            f"Payment proof could not be read (file={filename}, error={error})"
         )
         return {
             "verified": False,
