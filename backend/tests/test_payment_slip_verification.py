@@ -1,8 +1,9 @@
-"""Tests for payment slip/screenshot verification (OCR + receiver check).
+"""Tests for payment slip/screenshot verification (OCR + receiver + completion).
 
 Uploads whose extracted text does not prove AfriTech Bridge as the payment
-receiver must be rejected with the contact-the-administrator message and
-must not touch the application record.
+receiver, or that do not show the transaction as completed, must be rejected
+with a contact-the-administrator message and must not touch the application
+record.
 """
 
 import io
@@ -16,7 +17,9 @@ from src.models.course_application import CourseApplication
 from src.models.course_models import Course
 from src.models.user_models import User, Role, db
 from src.services.payment_slip_verifier import (
+    NOT_COMPLETED_MESSAGE,
     REJECTION_MESSAGE,
+    classify_payment_completion,
     extract_text,
     find_receiver_in_text,
     verify_payment_slip,
@@ -32,13 +35,32 @@ _RECEIPT_FONT = ImageFont.truetype(
 )
 
 
-def make_receipt_png(text: str) -> bytes:
-    img = Image.new("RGB", (900, 420), "white")
+def _render_receipt_png(text: str, background, foreground) -> bytes:
+    import textwrap
+
+    lines = []
+    for paragraph in text.split("\n"):
+        lines.extend(textwrap.wrap(paragraph, width=40) or [""])
+    width = 900
+    height = 60 + len(lines) * 50 + 30
+    img = Image.new("RGB", (width, height), background)
     draw = ImageDraw.Draw(img)
-    draw.text((40, 40), text, fill="black", font=_RECEIPT_FONT)
+    y = 40
+    for line in lines:
+        draw.text((40, y), line, fill=foreground, font=_RECEIPT_FONT)
+        y += 50
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def make_receipt_png(text: str) -> bytes:
+    return _render_receipt_png(text, "white", "black")
+
+
+def make_dark_receipt_png(text: str) -> bytes:
+    """Dark-mode screenshot: white text on near-black background."""
+    return _render_receipt_png(text, (18, 24, 38), (240, 244, 248))
 
 
 def make_pdf_with_text(text: str) -> bytes:
@@ -78,6 +100,8 @@ def make_pdf_with_text(text: str) -> bytes:
     "beneficiary: afri tech bridge",
     "Bridge AfriTech received 50 USD",
     "TRANSACTION TO AFRITECH BRIDGE COMPLETED",
+    "Your payment of 10,000 RWF to AFRITECH BR1DGE 2138467 was completed",
+    "AFRITECH BRIDGE 2138467",
 ])
 def test_canonical_receiver_variants_match(text):
     assert find_receiver_in_text(text) == "AfriTech Bridge"
@@ -136,6 +160,50 @@ def test_unsupported_format_fails_extraction():
     assert result["ok"] is False
 
 
+# ---------------------------------------------------------------------------
+# Completion classification (unit)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    # Real MTN MoMo SMS as seen in production screenshots.
+    "Y'ello. You have paid 10,000 RWF to AFRITECH BRIDGE, 2138467. "
+    "Fee 0 RWF. Transaction ID 28678300433.",
+    # Real payment-completed SMS.
+    "Your payment of 10.000 RWF to AFRITECH BRIDGE 2138467 was completed at "
+    "2026-08-03 12:07:57. Balance: 13,225 RWF. Fee 0 RWF.",
+    "Payment successful",
+    "Transfer confirmed",
+    "Amount credited to beneficiary",
+])
+def test_completion_classified_as_completed(text):
+    assert classify_payment_completion(text) == "completed"
+
+
+@pytest.mark.parametrize("text", [
+    "Payment of 50 USD to AFRITECH BRIDGE is pending confirmation",
+    "Your payment to AFRITECH BRIDGE failed. Please try again.",
+    "Transaction declined",
+    "You are about to send 10,000 RWF to AFRITECH BRIDGE.",
+    "Enter your PIN to confirm sending 10,000 RWF to AFRITECH BRIDGE",
+    "Payment was reversed",
+])
+def test_completion_classified_as_not_completed(text):
+    assert classify_payment_completion(text) == "not_completed"
+
+
+@pytest.mark.parametrize("text", [
+    "AFRITECH BRIDGE 2138467\nAvailable balance: 5,000 RWF",
+    "Receipt\nReceiver: AFRITECH BRIDGE",
+    "",
+])
+def test_completion_classified_as_unknown(text):
+    assert classify_payment_completion(text) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Full verification (unit)
+# ---------------------------------------------------------------------------
+
 def test_verification_rejects_wrong_receiver_image():
     png = make_receipt_png("Receipt\nReceiver: JOHN DOE STORE")
     verdict = verify_payment_slip(png, "receipt.png", "image/png")
@@ -145,10 +213,73 @@ def test_verification_rejects_wrong_receiver_image():
 
 
 def test_verification_accepts_afritech_receiver_image():
-    png = make_receipt_png("Receipt\nReceiver: AFRITECH BRIDGE")
+    png = make_receipt_png(
+        "Receipt\nYou have paid 50 USD to AFRITECH BRIDGE\nTransaction ID 123456"
+    )
+    verdict = verify_payment_slip(png, "receipt.png", "image/png")
+    assert verdict["verified"] is True
+    assert verdict["reason"] == "payment_verified"
+    assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_verification_accepts_completed_momo_sms():
+    png = make_receipt_png(
+        "Your payment of 10,000 RWF to AFRITECH BRIDGE 2138467 was completed "
+        "at 2026-08-03 12:07:57. Fee 0 RWF."
+    )
     verdict = verify_payment_slip(png, "receipt.png", "image/png")
     assert verdict["verified"] is True
     assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_verification_accepts_dark_mode_screenshot():
+    png = make_dark_receipt_png(
+        "Y'ello. You have paid 10,000 RWF to AFRITECH BRIDGE, 2138467. "
+        "Fee 0 RWF. Transaction ID 28678300433."
+    )
+    verdict = verify_payment_slip(png, "screenshot.png", "image/png")
+    assert verdict["verified"] is True
+    assert verdict["matched_receiver"] == "AfriTech Bridge"
+
+
+def test_verification_rejects_pending_payment():
+    png = make_receipt_png(
+        "Payment of 10,000 RWF to AFRITECH BRIDGE is pending confirmation"
+    )
+    verdict = verify_payment_slip(png, "receipt.png", "image/png")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "payment_not_completed"
+    assert "contact the administrator" in verdict["message"]
+
+
+def test_verification_rejects_failed_payment():
+    png = make_receipt_png(
+        "Your payment to AFRITECH BRIDGE failed. Please try again."
+    )
+    verdict = verify_payment_slip(png, "receipt.png", "image/png")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "payment_not_completed"
+    assert verdict["message"] == NOT_COMPLETED_MESSAGE
+
+
+def test_verification_rejects_not_yet_confirmed_transfer_screen():
+    png = make_receipt_png(
+        "You are about to send 10,000 RWF to AFRITECH BRIDGE. "
+        "Enter your PIN to confirm."
+    )
+    verdict = verify_payment_slip(png, "screenshot.png", "image/png")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "payment_not_completed"
+
+
+def test_verification_rejects_receiver_without_completion_evidence():
+    png = make_receipt_png(
+        "AFRITECH BRIDGE 2138467\nAvailable balance: 5,000 RWF"
+    )
+    verdict = verify_payment_slip(png, "screenshot.png", "image/png")
+    assert verdict["verified"] is False
+    assert verdict["reason"] == "completion_not_proven"
+    assert verdict["message"] == NOT_COMPLETED_MESSAGE
 
 
 def test_verification_disabled_escape_hatch(monkeypatch):
@@ -161,6 +292,8 @@ def test_verification_disabled_escape_hatch(monkeypatch):
 def test_rejection_message_tells_user_to_contact_administrator():
     assert "contact the administrator" in REJECTION_MESSAGE
     assert "AfriTech Bridge" in REJECTION_MESSAGE
+    assert "contact the administrator" in NOT_COMPLETED_MESSAGE
+    assert "AfriTech Bridge" in NOT_COMPLETED_MESSAGE
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +394,9 @@ def test_slip_upload_rejects_wrong_receiver(client, env):
 
 
 def test_slip_upload_accepts_afritech_receiver(client, env):
-    png = make_receipt_png("Receipt\nReceiver: AFRITECH BRIDGE")
+    png = make_receipt_png(
+        "Receipt\nYou have paid 50 USD to AFRITECH BRIDGE\nTransaction ID 123456"
+    )
     resp = _slip_post(client, env["application_id"], png, email=env["email"])
 
     assert resp.status_code == 200
@@ -287,7 +422,9 @@ def test_screenshot_upload_rejects_wrong_receiver(client, env):
 
 def test_screenshot_upload_accepts_afritech_receiver(client, env):
     token = create_access_token(identity=str(env["user_id"]))
-    png = make_receipt_png("Receipt\nReceiver: AFRITECH BRIDGE")
+    png = make_receipt_png(
+        "Receipt\nYou have paid 50 USD to AFRITECH BRIDGE\nTransaction ID 123456"
+    )
     resp = _screenshot_post(client, env["application_id"], token, png)
 
     assert resp.status_code == 200
