@@ -15,6 +15,7 @@ from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from datetime import timedelta
 import logging
 import time
+from contextlib import contextmanager
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from src.models.user_models import db, User, Role
@@ -569,6 +570,58 @@ def _with_db_retry(operation, description,
             time.sleep(delay)
 
 
+_ADVISORY_LOCK_ID = 7412345
+_ADVISORY_LOCK_WAIT_SECONDS = 60
+
+
+@contextmanager
+def _schema_advisory_lock(conn):
+    """
+    Serialize cross-process schema DDL behind a PostgreSQL session advisory
+    lock, without ever blocking a statement.
+
+    The previous `SELECT pg_advisory_lock(...)` *waits* for a free lock, and
+    every engine connection carries `-c statement_timeout=30000` — so a
+    contended boot was cancelled after 30s with "QueryCanceled: canceling
+    statement due to statement timeout [SELECT pg_advisory_lock(7412345)]".
+    Probing with pg_try_advisory_lock() in a short loop makes each statement
+    return immediately: the boot *waits* (up to _ADVISORY_LOCK_WAIT_SECONDS,
+    rolling back between probes so the session never idles in transaction)
+    and only then reports the lock as busy — a TimeoutError, which
+    _with_db_retry/_bootstrap_schema already treat as non-fatal.  PostgreSQL
+    releases the lock on its own if the holding session dies.
+    """
+    from sqlalchemy import text as _text
+
+    deadline = time.monotonic() + _ADVISORY_LOCK_WAIT_SECONDS
+    while True:
+        acquired = conn.execute(
+            _text("SELECT pg_try_advisory_lock(:lock_id)"),
+            {"lock_id": _ADVISORY_LOCK_ID},
+        ).scalar()
+        if acquired:
+            break
+        conn.rollback()
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"schema advisory lock {_ADVISORY_LOCK_ID} still held after "
+                f"{_ADVISORY_LOCK_WAIT_SECONDS}s"
+            )
+        time.sleep(1)
+    try:
+        yield
+    finally:
+        try:
+            conn.execute(
+                _text("SELECT pg_advisory_unlock(:lock_id)"),
+                {"lock_id": _ADVISORY_LOCK_ID},
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Schema advisory unlock failed (the session closes anyway): {exc}"
+            )
+
+
 def _bootstrap_schema():
     """
     Create any missing tables (checkfirst — never alters existing tables).
@@ -579,8 +632,11 @@ def _bootstrap_schema():
         same time, or a deploy overlapping a running instance) cannot race
         CREATE TABLE and die with "relation ... already exists". The DDL is
         executed on the locked connection so the lock and the writes share
-        one session. If the lock is ever contended past the 30s statement
-        timeout, that is treated as "another worker is already doing it".
+        one session. The lock is acquired by polling pg_try_advisory_lock
+        (_schema_advisory_lock) because a blocking pg_advisory_lock wait is
+        cancelled by the engine-wide 30s statement timeout; a lock still
+        busy after _ADVISORY_LOCK_WAIT_SECONDS is treated as "another
+        worker is already doing it".
       * DDL races / transient schema errors are logged and swallowed — a
         missing table is Alembic's job (`flask db upgrade`), never a reason
         to refuse to boot. Transient connect failures are retried first (see
@@ -590,18 +646,14 @@ def _bootstrap_schema():
     """
     def _run():
         if is_postgresql:
-            from sqlalchemy import text as _text
             with db.engine.connect() as conn:
-                conn.execute(_text("SELECT pg_advisory_lock(7412345)"))
-                try:
+                with _schema_advisory_lock(conn):
                     db.metadata.create_all(bind=conn, checkfirst=True)
                     # PostgreSQL DDL is transactional: without an explicit
                     # commit the created tables are rolled back when the
                     # connection returns to the pool, so every boot on a
                     # database missing a new table silently created nothing.
                     conn.commit()
-                finally:
-                    conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
         else:
             db.create_all()
 
@@ -637,13 +689,9 @@ with app.app_context():
         # guarded the same way, so the two paths cannot collide.
         if is_postgresql:
             try:
-                from sqlalchemy import text as _text
                 with db.engine.connect() as lock_conn:
-                    lock_conn.execute(_text("SELECT pg_advisory_lock(7412345)"))
-                    try:
+                    with _schema_advisory_lock(lock_conn):
                         _auto_migrate_missing_columns()
-                    finally:
-                        lock_conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
             except Exception as e:
                 logger.warning(f"⚠️ Column auto-migration skipped (non-fatal): {e}")
         else:

@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -116,9 +117,18 @@ _INCOMPLETE_PATTERNS = (
 _FUZZY_RECEIVER_MIN_RATIO = 0.85
 _FUZZY_RECEIVER_MAX_LENGTH_DIFF = 3
 
-_OCR_DPI = 200
+# Rendering/OCR budget.  Payment slips arrive as full-resolution phone
+# photos (12-48 MP); decoding and OCR-ing them raw is what OOM-killed
+# gunicorn workers in production ("Worker was sent SIGKILL").  Every raster
+# handed to tesseract is therefore capped at _OCR_MAX_EDGE per side in 8-bit
+# grayscale, PDFs render at _OCR_DPI, and only one tesseract process runs
+# per worker process at a time (_OCR_LOCK bounds peak memory under threaded
+# gunicorn).
+_OCR_DPI = 150
 _OCR_TIMEOUT_SECONDS = 30
 _OCR_MAX_PDF_PAGES = 3
+_OCR_MAX_EDGE = 2200
+_OCR_LOCK = threading.Lock()
 _MAX_IMAGE_PIXELS = 40_000_000
 _MIN_OCR_DIMENSION = 500
 
@@ -241,24 +251,55 @@ def classify_payment_completion(text: str) -> str:
     return "unknown"
 
 
-def _ocr_image(image) -> str:
-    import pytesseract
-    from PIL import ImageOps
+def _prepare_ocr_image(image):
+    """
+    Bound the memory a receipt may use before OCR sees it.
+
+    JPEG drafts decode at a reduced DCT scale (up to 8x fewer pixels — the
+    difference between a 100 MB spike and a few MB for phone photos), the
+    raster is capped at _OCR_MAX_EDGE per side, everything runs as 8-bit
+    grayscale (1/3 the tesseract working set of RGB), and tiny crops are
+    only upscaled by a small, bounded factor.
+    """
+    from PIL import Image, ImageOps
+
+    try:
+        image.draft("RGB", (_OCR_MAX_EDGE, _OCR_MAX_EDGE))
+    except Exception:
+        pass
 
     if image.mode not in ("L", "RGB"):
         image = image.convert("RGB")
     image = ImageOps.exif_transpose(image)
+    if max(image.size) > _OCR_MAX_EDGE or image.width * image.height > _MAX_IMAGE_PIXELS:
+        image.thumbnail((_OCR_MAX_EDGE, _OCR_MAX_EDGE), Image.Resampling.LANCZOS)
 
-    width, height = image.size
-    if width * height > _MAX_IMAGE_PIXELS:
-        image.thumbnail((4000, 4000))
-    if min(image.size) < _MIN_OCR_DIMENSION:
-        scale = max(2, int(_MIN_OCR_DIMENSION / max(1, min(image.size))) + 1)
-        image = image.resize((image.width * scale, image.height * scale))
+    gray = ImageOps.grayscale(image)
+    width, height = gray.size
+    if min(width, height) < _MIN_OCR_DIMENSION and width * height < 1_200_000:
+        scale = min(3, max(2, int(_MIN_OCR_DIMENSION / max(1, min(width, height))) + 1))
+        resized = (width * scale, height * scale)
+        if max(resized) <= 3600 and resized[0] * resized[1] <= 8_000_000:
+            gray = gray.resize(resized, Image.Resampling.LANCZOS)
+    return gray
 
-    return pytesseract.image_to_string(
-        image, lang="eng", config="--psm 6", timeout=_OCR_TIMEOUT_SECONDS
-    )
+
+def _tesseract_read(image) -> str:
+    """Run tesseract once, serialized process-wide to bound peak memory."""
+    import pytesseract
+
+    with _OCR_LOCK:
+        return pytesseract.image_to_string(
+            image, lang="eng", config="--psm 6", timeout=_OCR_TIMEOUT_SECONDS
+        )
+
+
+def _ocr_image(image) -> str:
+    prepared = _prepare_ocr_image(image)
+    try:
+        return _tesseract_read(prepared)
+    finally:
+        prepared.close()
 
 
 def _ocr_best(image) -> str:
@@ -269,26 +310,34 @@ def _ocr_best(image) -> str:
     OCR the polarity detected from the mean brightness first; if the receiver
     is not proven from that pass, retry with the opposite polarity and keep
     whichever pass proves the receiver (or, failing that, the longer text).
+    Both passes share one bounded grayscale base image.
     """
     from PIL import ImageOps, ImageStat
 
-    if image.mode not in ("L", "RGB"):
-        image = image.convert("RGB")
-    image = ImageOps.exif_transpose(image)
+    base = _prepare_ocr_image(image)
+    inverted = None
+    try:
+        if ImageStat.Stat(base).mean[0] < 128:
+            inverted = ImageOps.invert(base)
+            primary, secondary = inverted, base
+        else:
+            primary, secondary = base, None
 
-    mean_brightness = ImageStat.Stat(ImageOps.grayscale(image)).mean[0]
-    if mean_brightness < 128:
-        primary, secondary = ImageOps.invert(image), image
-    else:
-        primary, secondary = image, ImageOps.invert(image)
+        text = _tesseract_read(primary)
+        if find_receiver_in_text(text):
+            return text
 
-    text = _ocr_image(primary)
-    if find_receiver_in_text(text):
-        return text
-    alternate = _ocr_image(secondary)
-    if find_receiver_in_text(alternate):
-        return alternate
-    return text if len(text.strip()) >= len(alternate.strip()) else alternate
+        if secondary is None:
+            inverted = ImageOps.invert(base)
+            secondary = inverted
+        alternate = _tesseract_read(secondary)
+        if find_receiver_in_text(alternate):
+            return alternate
+        return text if len(text.strip()) >= len(alternate.strip()) else alternate
+    finally:
+        base.close()
+        if inverted is not None and inverted is not base:
+            inverted.close()
 
 
 _OCR_MISSING_ERROR = "ocr_engine_unavailable"
@@ -311,6 +360,11 @@ def _missing_ocr_engine_error():
 
 def _extract_image_text(file_bytes: bytes) -> str:
     from PIL import Image
+
+    # Pillow then refuses decompression bombs (raising, not eating the whole
+    # container RAM) beyond twice this budget; the error surfaces as a normal
+    # extraction failure instead of an OOM-killed worker.
+    Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
     try:
         from pillow_heif import register_heif_opener
@@ -347,9 +401,20 @@ def _ocr_pdf_pages(file_bytes: bytes) -> str:
         dpi=_OCR_DPI,
         first_page=1,
         last_page=_OCR_MAX_PDF_PAGES,
+        fmt="jpeg",
         timeout=_OCR_TIMEOUT_SECONDS,
     )
-    return "\n".join(_ocr_best(page) for page in pages)
+    texts = []
+    try:
+        for page in pages:
+            texts.append(_ocr_best(page))
+    finally:
+        for page in pages:
+            try:
+                page.close()
+            except Exception:
+                pass
+    return "\n".join(texts)
 
 
 def extract_text(file_bytes: bytes, filename: str = "", content_type: str = "") -> dict:

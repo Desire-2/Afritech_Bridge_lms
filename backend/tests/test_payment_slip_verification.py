@@ -399,6 +399,65 @@ def test_text_and_pdf_layer_proofs_work_without_ocr_engine(monkeypatch):
     assert verify_payment_slip(pdf, "slip.pdf", "application/pdf")["verified"] is True
 
 
+# ---------------------------------------------------------------------------
+# Memory-bounded OCR (production "Worker was sent SIGKILL" regression guards)
+# ---------------------------------------------------------------------------
+
+def test_prepare_ocr_image_caps_raster_and_uses_grayscale():
+    from src.services.payment_slip_verifier import _OCR_MAX_EDGE, _prepare_ocr_image
+
+    big = Image.new("RGB", (3600, 4800), color=(240, 240, 240))
+    prepared = _prepare_ocr_image(big)
+    try:
+        assert prepared.mode == "L"
+        assert max(prepared.size) <= _OCR_MAX_EDGE
+    finally:
+        prepared.close()
+        big.close()
+
+
+def test_ocr_best_hands_bounded_grayscale_to_tesseract(monkeypatch):
+    import pytesseract
+    from src.services.payment_slip_verifier import _OCR_MAX_EDGE, _ocr_best
+
+    seen = []
+
+    def fake_image_to_string(image, **kwargs):
+        seen.append((image.mode, max(image.size)))
+        return "Receipt paid to AFRITECH BRIDGE"
+
+    monkeypatch.setattr(pytesseract, "image_to_string", fake_image_to_string)
+    huge = Image.new("RGB", (3000, 4000), color=(255, 255, 255))
+    try:
+        assert _ocr_best(huge) == "Receipt paid to AFRITECH BRIDGE"
+    finally:
+        huge.close()
+    assert seen, "tesseract was never invoked"
+    mode, longest_edge = seen[0]
+    assert mode == "L"
+    assert longest_edge <= _OCR_MAX_EDGE
+
+
+def test_ocr_best_retries_flipped_polarity_for_dark_screenshots(monkeypatch):
+    import pytesseract
+    from src.services.payment_slip_verifier import _ocr_best
+
+    calls = []
+
+    def fake_image_to_string(image, **kwargs):
+        calls.append(image)
+        return "AFRITECH BRIDGE paid" if len(calls) == 2 else "balance 5000 RWF"
+
+    monkeypatch.setattr(pytesseract, "image_to_string", fake_image_to_string)
+    dark = Image.new("RGB", (200, 400), color=(10, 10, 10))
+    try:
+        text = _ocr_best(dark)
+    finally:
+        dark.close()
+    assert text == "AFRITECH BRIDGE paid"
+    assert len(calls) == 2
+
+
 def test_verification_disabled_escape_hatch(monkeypatch):
     monkeypatch.setenv("PAYMENT_SLIP_VERIFICATION", "false")
     verdict = verify_payment_slip(b"garbage", "slip.bin", "application/octet-stream")
