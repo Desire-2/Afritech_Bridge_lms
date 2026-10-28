@@ -880,12 +880,46 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
                     </div>
                 </div>
                 
+                <!-- How to pay: step by step -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; border: 2px solid #f59e0b;">
+                    <h3 style="margin: 0 0 8px 0; color: #ffffff; font-size: 20px; font-weight: 700;">
+                        <span style="margin-right: 8px;">🧭</span> How to Complete Your Payment
+                    </h3>
+                    <p style="color: #bdc3c7; font-size: 14px; margin: 0 0 18px 0; line-height: 1.6;">
+                        Your application is already saved — no need to fill the form again. Just four quick steps:
+                    </p>
+
+                    <div style="margin: 12px 0; padding: 14px 16px; background-color: #1a252f; border-left: 3px solid #f59e0b; border-radius: 8px;">
+                        <span style="color: #ffffff; font-size: 15px; line-height: 1.6;">
+                            <strong style="color: #f59e0b;">1.</strong> Open the application page with the <strong style="color: #f59e0b;">Pay Now</strong> button below.
+                        </span>
+                    </div>
+                    <div style="margin: 12px 0; padding: 14px 16px; background-color: #1a252f; border-left: 3px solid #f59e0b; border-radius: 8px;">
+                        <span style="color: #ffffff; font-size: 15px; line-height: 1.6;">
+                            <strong style="color: #f59e0b;">2.</strong> When the form asks for an email, enter the address you applied with — <strong style="color: #f59e0b;">{application.email}</strong>. The form detects your existing application automatically.
+                        </span>
+                    </div>
+                    <div style="margin: 12px 0; padding: 14px 16px; background-color: #1a252f; border-left: 3px solid #f59e0b; border-radius: 8px;">
+                        <span style="color: #ffffff; font-size: 15px; line-height: 1.6;">
+                            <strong style="color: #f59e0b;">3.</strong> Click <strong style="color: #f59e0b;">Pay Now</strong> on your application and choose how to pay — MTN Mobile Money, Airtel Money, SPENN, card, or bank transfer.
+                        </span>
+                    </div>
+                    <div style="margin: 12px 0; padding: 14px 16px; background-color: #1a252f; border-left: 3px solid #f59e0b; border-radius: 8px;">
+                        <span style="color: #ffffff; font-size: 15px; line-height: 1.6;">
+                            <strong style="color: #f59e0b;">4.</strong> Follow the payment prompts to finish. Your enrollment unlocks as soon as your payment is confirmed.
+                        </span>
+                    </div>
+                </div>
+
                 <!-- Action Button -->
                 <div style="text-align: center; margin: 40px 0;">
                     <a href="{_frontend_url(f'courses/{application.course_id}/apply')}" 
-                       style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);">
-                        💳 Complete Payment Now
+                       style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 20px 55px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px; box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4); transition: transform 0.2s ease;">
+                        💳 Pay Now
                     </a>
+                    <p style="color: #bdc3c7; font-size: 13px; margin: 14px 0 0 0; line-height: 1.6;">
+                        Opens the application form — enter <strong style="color: #f59e0b;">{application.email}</strong> when asked, then click <strong style="color: #f59e0b;">Pay Now</strong> to continue your payment.
+                    </p>
                 </div>
                 
                 <!-- Support Section -->

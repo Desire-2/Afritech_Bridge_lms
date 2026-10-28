@@ -1569,13 +1569,14 @@ export default function CourseApplicationForm({
             <Button
               type="button"
               onClick={handlePayForExistingApplication}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md px-6 py-3"
+              className="group bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 px-7 py-3.5 rounded-xl ring-1 ring-inset ring-indigo-400/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             >
               <CreditCard className="w-5 h-5 mr-2" />
               Pay Now
+              <ChevronRight className="w-4 h-4 ml-1.5 transition-transform duration-200 group-hover:translate-x-1" />
             </Button>
-            <span className="text-xs text-amber-800">
-              This completes payment for your existing application — no need to apply again.
+            <span className="text-xs text-amber-800 max-w-xs">
+              Goes straight to the payment step for your existing application — no need to apply again.
             </span>
           </div>
         ) : null;
@@ -3580,7 +3581,7 @@ export default function CourseApplicationForm({
                         type="button"
                         onClick={handlePayNow}
                         disabled={paymentLoading || (!!existingApplication && !payingForExistingApplication) || !!(paymentReference && paymentStatus === 'pending_screenshot')}
-                        className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
+                        className="group px-10 py-7 text-lg font-bold shadow-lg hover:shadow-xl rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600 hover:from-indigo-500 hover:via-indigo-500 hover:to-violet-500 text-white transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ring-1 ring-inset ring-indigo-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-lg"
                       >
                         {paymentLoading ? (
                           <>
@@ -3589,7 +3590,11 @@ export default function CourseApplicationForm({
                           </>
                         ) : (
                           <>
-                            <Phone className="w-6 h-6 mr-3" />
+                            {activePaymentMethod === 'momo_pay_code' ? (
+                              <Phone className="w-6 h-6 mr-3 transition-transform duration-200 group-hover:scale-110" />
+                            ) : (
+                              <CreditCard className="w-6 h-6 mr-3 transition-transform duration-200 group-hover:scale-110" />
+                            )}
                             {(() => {
                               if (paymentReference && paymentStatus === 'pending_screenshot') {
                                 return 'Awaiting Your Screenshot — Upload to Continue';

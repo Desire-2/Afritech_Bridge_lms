@@ -411,3 +411,40 @@ def test_send_actionable_endpoint_runs_all_pages(app, db_session, world, monkeyp
     db_session.refresh(application)
     assert application.payment_reminder_count == 1
     assert enrollment.id is not None
+
+
+def test_reminder_email_guides_entering_email_and_clicking_pay_now():
+    """The reminder must teach the how-to-pay flow, not just nag.
+
+    Applicants find their existing application by entering their email on
+    the application form, then continue with Pay Now — the email spells
+    that out (with the exact address to use) and its CTA matches.
+    """
+    from types import SimpleNamespace
+
+    from src.utils.payment_email_templates import payment_reminder_email
+
+    application = SimpleNamespace(
+        id=42,
+        full_name="Ada Obi",
+        email="ada@example.com",
+        course_id=7,
+        application_window_id=None,
+    )
+    html = payment_reminder_email(
+        application, "Python Masterclass", {"amount": 50, "currency": "USD"}
+    )
+
+    # Step-by-step how-to-pay guidance.
+    assert "How to Complete Your Payment" in html
+    assert "no need to fill the form again" in html
+    assert "enter the address you applied with" in html
+    # The exact email the applicant must type into the form.
+    assert "ada@example.com" in html
+    # The Pay Now step and chosen payment methods.
+    assert "Pay Now" in html
+    assert "MTN Mobile Money" in html
+    # CTA matches the in-form button name and points at the application page.
+    assert "💳 Pay Now" in html
+    assert "courses/7/apply" in html
+    assert "then click" in html
