@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Upload, Image as ImageIcon, CheckCircle2, Loader2, X } from 'lucide-react';
+import { Upload, Image as ImageIcon, CheckCircle2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PaymentProofErrorAlert from '@/components/payments/PaymentProofErrorAlert';
+import PaymentVerifyingSpinner from '@/components/payments/PaymentVerifyingSpinner';
 
 interface ScreenshotUploadProps {
   applicationId: number;
@@ -230,33 +231,20 @@ export default function ScreenshotUpload({
           className="hidden"
         />
 
-        {/* Upload Button - only show for manual upload */}
-        {selectedFile && !autoUpload && (
-          <Button
-            onClick={() => handleUploadInternal(selectedFile)}
-            disabled={loading}
-            className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              <>
-                <Upload className="w-5 h-5" />
-                Submit Screenshot
-              </>
-            )}
-          </Button>
-        )}
-
-        {/* Auto-upload status for manual payment methods */}
-        {selectedFile && autoUpload && (
-          <div className="flex items-center justify-center gap-2 p-3 bg-blue-50 border-2 border-blue-300 rounded-lg">
-            <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
-            <p className="text-sm font-semibold text-blue-700">Uploading...</p>
-          </div>
+        {/* Upload / verification in progress (server verifies the proof before responding) */}
+        {loading || (selectedFile && autoUpload) ? (
+          <PaymentVerifyingSpinner tone="blue" />
+        ) : (
+          selectedFile &&
+          !autoUpload && (
+            <Button
+              onClick={() => handleUploadInternal(selectedFile)}
+              className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
+            >
+              <Upload className="w-5 h-5" />
+              Submit Screenshot
+            </Button>
+          )
         )}
 
         {/* Info */}
