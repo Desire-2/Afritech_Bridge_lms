@@ -657,6 +657,7 @@ class CourseApplicationService extends BaseApiService {
     order?: 'asc' | 'desc';
     payment_status?: string;
     submission_status?: 'draft' | 'processing' | 'all';
+    instructor_id?: number;
     page?: number;
     per_page?: number;
   } = {}): Promise<{
@@ -678,6 +679,9 @@ class CourseApplicationService extends BaseApiService {
    */
   async getDraftStatistics(params?: {
     course_id?: number;
+    application_window_id?: number | string;
+    payment_status?: string;
+    submission_status?: 'draft' | 'processing' | 'all';
     instructor_id?: number;
   }): Promise<{
     total_drafts: number;
@@ -686,6 +690,7 @@ class CourseApplicationService extends BaseApiService {
       last_24h: number;
       last_7d: number;
       last_30d: number;
+      stale_3d_plus?: number;
       stale_30d_plus: number;
     };
     course_breakdown: Array<{
@@ -727,11 +732,17 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
-   * Send payment reminders to all stale draft applicants at once (Admin/Instructor only).
+   * Send payment reminders to draft applicants matching the given scope
+   * (course, cohort, payment/submission status) at once (Admin/Instructor only).
+   * `stale_days: 0` targets every matching draft regardless of age.
    */
   async bulkRemindDrafts(data?: {
     stale_days?: number;
     course_id?: number;
+    application_window_id?: number | string;
+    payment_status?: string;
+    submission_status?: 'draft' | 'processing' | 'all';
+    search?: string;
     instructor_id?: number;
     max_recipients?: number;
   }): Promise<{
@@ -739,6 +750,10 @@ class CourseApplicationService extends BaseApiService {
     sent: number;
     failed: number;
     total_stale: number;
+    /** Present on newer backends: rows in scope before the safety cap. */
+    matched?: number;
+    /** Present on newer backends: True when the cap trimmed the run. */
+    capped?: boolean;
     stale_days: number;
   }> {
     return this.post(`${this.BASE_PATH}/drafts/bulk-remind`, data || {});

@@ -38,12 +38,23 @@ interface DraftStatistics {
     last_24h: number;
     last_7d: number;
     last_30d: number;
+    stale_3d_plus?: number;
     stale_30d_plus: number;
   };
   course_breakdown: Array<{
     course_id: number;
     course_title: string;
     draft_count: number;
+  }>;
+}
+
+/** Course + application windows (cohorts) for the filter dropdowns */
+interface CourseWithWindows {
+  id: number;
+  title: string;
+  application_windows?: Array<{
+    id: number;
+    cohort_label?: string;
   }>;
 }
 
@@ -68,11 +79,17 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
   // Filters
   const [searchInput, setSearchInput] = useState('');
   const [courseFilter, setCourseFilter] = useState<string>('all');
+  const [cohortFilter, setCohortFilter] = useState<string>('all');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('all');
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
   const perPage = 20;
+
+  // Filter dropdown sources
+  const [courseOptions, setCourseOptions] = useState<DraftStatistics['course_breakdown']>([]);
+  const [coursesWithWindows, setCoursesWithWindows] = useState<CourseWithWindows[]>([]);
 
   // Detail modal
   const [selectedDraft, setSelectedDraft] = useState<CourseApplication | null>(null);
@@ -94,7 +111,8 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
   // Bulk remind
   const [bulkRemindLoading, setBulkRemindLoading] = useState(false);
   const [bulkRemindConfirmOpen, setBulkRemindConfirmOpen] = useState(false);
-  const [bulkRemindResult, setBulkRemindResult] = useState<{ sent: number; failed: number; total_stale: number; stale_days: number } | null>(null);
+  const [bulkScope, setBulkScope] = useState<'all' | 'stale'>('all');
+  const [bulkRemindResult, setBulkRemindResult] = useState<{ sent: number; failed: number; total_stale: number; matched?: number; capped?: boolean; stale_days: number } | null>(null);
   const [bulkRemindResultOpen, setBulkRemindResultOpen] = useState(false);
 
   // Single remind result
@@ -106,6 +124,18 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
   const [contactResultOpen, setContactResultOpen] = useState(false);
 
   // ─── Load data ─────────────────────────────────────────────────────
+  /** Current filter selections — shared by the list, statistics and bulk remind. */
+  const buildScopeParams = useCallback(() => {
+    const params: any = {};
+    if (searchInput) params.search = searchInput;
+    if (courseFilter !== 'all') params.course_id = parseInt(courseFilter);
+    if (cohortFilter !== 'all') params.application_window_id = cohortFilter;
+    if (paymentStatusFilter !== 'all') params.payment_status = paymentStatusFilter;
+    if (submissionStatusFilter !== 'all') params.submission_status = submissionStatusFilter;
+    if (instructorId) params.instructor_id = instructorId;
+    return params;
+  }, [searchInput, courseFilter, cohortFilter, paymentStatusFilter, submissionStatusFilter, instructorId]);
+
   const loadDrafts = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -113,33 +143,50 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
       const params: any = {
         page: currentPage,
         per_page: perPage,
+        ...buildScopeParams(),
       };
-      if (searchInput) params.search = searchInput;
-      if (courseFilter !== 'all') params.course_id = parseInt(courseFilter);
-      if (paymentStatusFilter !== 'all') params.payment_status = paymentStatusFilter;
-      if (submissionStatusFilter !== 'all') params.submission_status = submissionStatusFilter;
-      if (instructorId) params.instructor_id = instructorId;
 
       const response = await applicationService.listDrafts(params);
       setDrafts((response.applications || []) as DraftRecord[]);
       setTotalPages(response.pages || 1);
+      setTotalResults(response.total || 0);
     } catch (err: any) {
       setError(err.message || 'Failed to load saved applications');
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchInput, courseFilter, paymentStatusFilter, instructorId]);
+  }, [currentPage, buildScopeParams]);
 
   const loadStatistics = useCallback(async () => {
     try {
-      const params: any = {};
-      if (instructorId) params.instructor_id = instructorId;
-      const stats = await applicationService.getDraftStatistics(params);
+      const stats = await applicationService.getDraftStatistics(buildScopeParams());
       setStatistics(stats);
     } catch (err) {
       console.error('Failed to load draft statistics:', err);
     }
+  }, [buildScopeParams]);
+
+  /** Course dropdown options — unfiltered stats so courses don't vanish when filters change. */
+  const loadCourseOptions = useCallback(async () => {
+    try {
+      const params: any = {};
+      if (instructorId) params.instructor_id = instructorId;
+      const stats = await applicationService.getDraftStatistics(params);
+      setCourseOptions(stats.course_breakdown || []);
+    } catch (err) {
+      console.error('Failed to load course options:', err);
+    }
   }, [instructorId]);
+
+  /** Courses + application windows (cohorts) for the cohort dropdown. */
+  const loadCoursesWithWindows = useCallback(async () => {
+    try {
+      const response = await applicationService.getCoursesForFiltering();
+      setCoursesWithWindows(response.courses || []);
+    } catch (err) {
+      console.error('Failed to load courses with windows:', err);
+    }
+  }, []);
 
   useEffect(() => {
     loadDrafts();
@@ -149,14 +196,23 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
     loadStatistics();
   }, [loadStatistics]);
 
+  useEffect(() => {
+    loadCourseOptions();
+    loadCoursesWithWindows();
+  }, [loadCourseOptions, loadCoursesWithWindows]);
+
   // ─── Actions ───────────────────────────────────────────────────────
   const handleBulkRemind = async () => {
     setBulkRemindConfirmOpen(false);
     setBulkRemindLoading(true);
     setActionError(null);
     try {
-      const params: any = { stale_days: 3 };
-      if (instructorId) params.instructor_id = instructorId;
+      const params: any = {
+        // 'all' -> stale_days 0 = every draft matching the filters;
+        // 'stale' -> only drafts inactive for 3+ days.
+        stale_days: bulkScope === 'stale' ? 3 : 0,
+        ...buildScopeParams(),
+      };
       const result = await applicationService.bulkRemindDrafts(params);
       setBulkRemindResult(result);
       setBulkRemindResultOpen(true);
@@ -221,6 +277,50 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
   };
 
   // ─── Helpers ───────────────────────────────────────────────────────
+  /** Cohort dropdown options — windows of the selected course (or all courses with drafts). */
+  const cohortOptions = React.useMemo(() => {
+    const scopedCourseIds = new Set(
+      (courseFilter !== 'all'
+        ? courseOptions.filter((c) => String(c.course_id) === courseFilter)
+        : courseOptions
+      ).map((c) => c.course_id)
+    );
+    // Before stats arrive (or if they fail), fall back to every loaded course.
+    const source = courseOptions.length > 0
+      ? coursesWithWindows.filter((c) => scopedCourseIds.has(c.id))
+      : coursesWithWindows;
+    const options: Array<{ value: string; label: string }> = [];
+    for (const course of source) {
+      for (const win of course.application_windows || []) {
+        options.push({
+          value: String(win.id),
+          label: courseFilter !== 'all'
+            ? (win.cohort_label || `Cohort ${win.id}`)
+            : `${win.cohort_label || `Cohort ${win.id}`} — ${course.title}`,
+        });
+      }
+    }
+    return options;
+  }, [courseFilter, courseOptions, coursesWithWindows]);
+
+  /** Human-readable chips for the active filters (shown in the bulk confirm dialog). */
+  const activeScopeChips: string[] = [];
+  if (courseFilter !== 'all') {
+    const course = courseOptions.find((c) => String(c.course_id) === courseFilter);
+    activeScopeChips.push(`Course: ${course?.course_title || courseFilter}`);
+  }
+  if (cohortFilter !== 'all') {
+    const label = cohortFilter === 'none'
+      ? 'No cohort'
+      : cohortOptions.find((o) => o.value === cohortFilter)?.label || `Cohort ${cohortFilter}`;
+    activeScopeChips.push(`Cohort: ${label}`);
+  }
+  if (paymentStatusFilter !== 'all') activeScopeChips.push(`Payment: ${paymentStatusFilter}`);
+  if (submissionStatusFilter !== 'all') {
+    activeScopeChips.push(`Stage: ${submissionStatusFilter === 'draft' ? 'Not submitted' : 'In progress'}`);
+  }
+  if (searchInput) activeScopeChips.push(`Search: "${searchInput}"`);
+
   const formatShortDate = (value?: string | null) => {
     if (!value) return '—';
     const d = new Date(value);
@@ -323,11 +423,11 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                 Applications saved by students but not yet submitted — typically awaiting payment completion.
               </CardDescription>
             </div>
-            {statistics && statistics.age_breakdown.stale_30d_plus > 0 && (
+            {totalResults > 0 && (
               <Button
                 variant="outline"
                 className="bg-brand/5 hover:bg-brand/10 border-brand/20 text-brand-accent"
-                onClick={() => setBulkRemindConfirmOpen(true)}
+                onClick={() => { setBulkScope('all'); setBulkRemindConfirmOpen(true); }}
                 disabled={bulkRemindLoading}
               >
                 {bulkRemindLoading ? (
@@ -335,7 +435,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                 ) : (
                   <Send className="w-4 h-4 mr-2" />
                 )}
-                Remind All Stale ({statistics.age_breakdown.stale_30d_plus})
+                Bulk Payment Reminders ({totalResults})
               </Button>
             )}
           </div>
@@ -357,6 +457,41 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                 />
               </div>
             </div>
+
+            <Select
+              value={courseFilter}
+              onValueChange={(v) => { setCourseFilter(v); setCohortFilter('all'); setCurrentPage(1); }}
+            >
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Course" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Courses</SelectItem>
+                {courseOptions.map((c) => (
+                  <SelectItem key={c.course_id} value={String(c.course_id)}>
+                    {c.course_title} ({c.draft_count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={cohortFilter}
+              onValueChange={(v) => { setCohortFilter(v); setCurrentPage(1); }}
+            >
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Cohort" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Cohorts</SelectItem>
+                <SelectItem value="none">No Cohort</SelectItem>
+                {cohortOptions.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Select
               value={submissionStatusFilter}
@@ -406,10 +541,36 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
           ) : drafts.length === 0 ? (
             <div className="text-center py-12">
               <FileText className="w-12 h-12 mx-auto text-gray-300" />
-              <p className="text-gray-500 mt-2 font-medium">No saved applications found</p>
-              <p className="text-gray-400 text-sm mt-1">
-                When students save an application draft (before completing payment), it will appear here.
-              </p>
+              {activeScopeChips.length > 0 ? (
+                <>
+                  <p className="text-gray-500 mt-2 font-medium">No saved applications match the current filters</p>
+                  <p className="text-gray-400 text-sm mt-1">
+                    Try a different course or cohort, or clear the filters to see everything.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => {
+                      setSearchInput('');
+                      setCourseFilter('all');
+                      setCohortFilter('all');
+                      setPaymentStatusFilter('all');
+                      setSubmissionStatusFilter('all');
+                      setCurrentPage(1);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-500 mt-2 font-medium">No saved applications found</p>
+                  <p className="text-gray-400 text-sm mt-1">
+                    When students save an application draft (before completing payment), it will appear here.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
@@ -726,25 +887,75 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
       </Dialog>
       {/* ── Bulk Remind Confirmation Modal ── */}
       <Dialog open={bulkRemindConfirmOpen} onOpenChange={setBulkRemindConfirmOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-red-500" />
               Send Bulk Payment Reminders
             </DialogTitle>
             <DialogDescription>
-              This will send payment reminder emails to all stale draft applicants.
+              Emails go only to drafts matching the current filters below — nothing outside this scope.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
-            <Alert className="bg-brand/5 border-brand/20">
-              <AlertCircle className="h-4 w-4 text-brand-accent" />
-              <AlertDescription className="text-brand">
-                <strong>{statistics?.age_breakdown.stale_30d_plus || 0}</strong> draft applicant(s) haven&apos;t updated their application in 3+ days.
-                Each will receive a payment reminder email.
-              </AlertDescription>
-            </Alert>
+            {/* Active scope */}
+            <div className="flex flex-wrap gap-2">
+              {activeScopeChips.length === 0 ? (
+                <Badge variant="outline" className="bg-gray-50 text-gray-600">
+                  All saved applications
+                </Badge>
+              ) : (
+                activeScopeChips.map((chip) => (
+                  <Badge key={chip} variant="outline" className="bg-brand/10 text-brand border-brand/20">
+                    {chip}
+                  </Badge>
+                ))
+              )}
+            </div>
+
+            {/* Scope choice */}
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setBulkScope('all')}
+                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  bulkScope === 'all'
+                    ? 'border-brand bg-brand/10'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                }`}
+              >
+                <p className="text-sm font-medium">All matching filters ({totalResults})</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Every draft in this scope, regardless of when it was last updated.
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkScope('stale')}
+                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  bulkScope === 'stale'
+                    ? 'border-brand bg-brand/10'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                }`}
+              >
+                <p className="text-sm font-medium">
+                  Only inactive for 3+ days ({statistics?.age_breakdown.stale_3d_plus ?? '—'})
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Targets drafts nobody has touched in 3 days or more.
+                </p>
+              </button>
+            </div>
+
+            {totalResults > 100 && (
+              <Alert className="bg-yellow-50 border-yellow-200">
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                <AlertDescription className="text-yellow-800">
+                  Safety cap: up to 100 emails are sent per run. If more match, run the reminder again to continue.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {actionError && (
               <Alert variant="destructive">
@@ -757,7 +968,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
               <Button variant="outline" onClick={() => setBulkRemindConfirmOpen(false)} disabled={bulkRemindLoading}>
                 Cancel
               </Button>
-              <Button onClick={handleBulkRemind} disabled={bulkRemindLoading} className="bg-red-500 hover:bg-red-600 text-white">
+              <Button onClick={handleBulkRemind} disabled={bulkRemindLoading || totalResults === 0} className="bg-red-500 hover:bg-red-600 text-white">
                 {bulkRemindLoading ? 'Sending...' : 'Send Reminders'}
               </Button>
             </div>
@@ -791,12 +1002,25 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                   <p className="text-xs text-red-700">Failed</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-2xl font-bold text-gray-600">{bulkRemindResult.total_stale}</p>
-                  <p className="text-xs text-gray-700">Total Stale</p>
+                  <p className="text-2xl font-bold text-gray-600">
+                    {bulkRemindResult.matched ?? bulkRemindResult.total_stale}
+                  </p>
+                  <p className="text-xs text-gray-700">Matched</p>
                 </div>
               </div>
+              {bulkRemindResult.capped && (
+                <Alert className="bg-yellow-50 border-yellow-200">
+                  <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                  <AlertDescription className="text-yellow-800">
+                    The 100-recipient safety cap was applied ({bulkRemindResult.total_stale} of {bulkRemindResult.matched ?? bulkRemindResult.total_stale} emailed).
+                    Run the reminder again to continue with the rest.
+                  </AlertDescription>
+                </Alert>
+              )}
               <p className="text-sm text-gray-500 text-center">
-                Drafts older than {bulkRemindResult.stale_days} days were targeted.
+                {bulkRemindResult.stale_days > 0
+                  ? `Only drafts inactive for ${bulkRemindResult.stale_days}+ days were targeted.`
+                  : 'Every draft matching the filters was targeted.'}
               </p>
               <div className="flex justify-end pt-4 border-t">
                 <Button onClick={() => setBulkRemindResultOpen(false)}>Done</Button>

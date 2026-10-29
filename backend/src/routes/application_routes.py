@@ -1238,6 +1238,12 @@ def get_draft_statistics():
     Return statistics about draft (saved-but-not-submitted) applications.
     Useful for admins to see how many incomplete applications exist,
     broken down by course, payment status, and age.
+
+    Accepts the same scope filters as GET /drafts (course_id, instructor_id,
+    application_window_id, payment_status, submission_status) so the cards
+    reflect exactly the filtered list. age_breakdown also reports
+    stale_3d_plus — the number of drafts inactive for 3+ days — which is
+    what a bulk "inactive only" reminder sweep targets.
     """
     current_user_id = get_jwt_identity()
     current_user = User.query.get(current_user_id)
@@ -1246,50 +1252,76 @@ def get_draft_statistics():
 
     course_id = request.args.get("course_id", type=int)
     instructor_id = request.args.get("instructor_id", type=int)
+    application_window_id_raw = request.args.get("application_window_id")
+    payment_status_filter = request.args.get("payment_status")
+    submission_status = request.args.get("submission_status")
 
-    base_query = CourseApplication.query.filter(
-        CourseApplication.is_draft == True,
-        ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
-    )
-
-    if course_id:
-        base_query = base_query.filter_by(course_id=course_id)
+    instructor_course_ids = None
     if instructor_id:
         from ..models.course_models import Course as CourseModel
         instructor_course_ids = [
             c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
-        ]
-        if instructor_course_ids:
-            base_query = base_query.filter(CourseApplication.course_id.in_(instructor_course_ids))
-        else:
-            base_query = base_query.filter(CourseApplication.id == -1)
+        ] or [-1]
 
-    total_drafts = base_query.count()
-
-    # Payment status breakdown
-    payment_breakdown = (
-        db.session.query(
-            CourseApplication.payment_status,
-            func.count(CourseApplication.id)
-        )
-        .filter(
+    def _apply_scope(query, include_payment=True):
+        """Shared filters — mirrors GET /drafts so cards match the list."""
+        query = query.filter(
             CourseApplication.is_draft == True,
             ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
         )
-    )
-    if course_id:
-        payment_breakdown = payment_breakdown.filter_by(course_id=course_id)
-    if instructor_id:
-        from ..models.course_models import Course as CourseModel
-        instructor_course_ids = [
-            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
-        ]
-        if instructor_course_ids:
-            payment_breakdown = payment_breakdown.filter(CourseApplication.course_id.in_(instructor_course_ids))
-    payment_counts = dict(payment_breakdown.group_by(CourseApplication.payment_status).all())
+        if course_id:
+            query = query.filter_by(course_id=course_id)
+        if instructor_course_ids is not None:
+            query = query.filter(CourseApplication.course_id.in_(instructor_course_ids))
+        window_raw = (application_window_id_raw or '').strip()
+        if window_raw.lower() == 'none':
+            query = query.filter(CourseApplication.application_window_id.is_(None))
+        elif window_raw:
+            try:
+                query = query.filter_by(application_window_id=int(window_raw))
+            except (ValueError, TypeError):
+                pass
+        if submission_status in ('draft', 'not_submitted'):
+            query = query.filter(CourseApplication.payment_status.is_(None))
+        elif submission_status == 'processing':
+            query = query.filter(
+                CourseApplication.payment_status.isnot(None),
+                ~CourseApplication.payment_status.in_(['completed', 'confirmed']),
+            )
+        if include_payment:
+            # Same default as the list: hide drafts that already settled.
+            if payment_status_filter:
+                query = query.filter_by(payment_status=payment_status_filter)
+            else:
+                query = query.filter(
+                    or_(
+                        CourseApplication.payment_status.is_(None),
+                        ~CourseApplication.payment_status.in_(['completed', 'confirmed'])
+                    )
+                )
+        elif payment_status_filter:
+            query = query.filter_by(payment_status=payment_status_filter)
+        return query
 
-    # Age breakdown (how long ago the draft was saved)
-    now = datetime.utcnow()
+    base_query = _apply_scope(CourseApplication.query)
+    total_drafts = base_query.count()
+
+    # Payment status breakdown (within scope; keeps the full status split
+    # visible unless an explicit payment_status filter was passed)
+    payment_breakdown = _apply_scope(
+        db.session.query(
+            CourseApplication.payment_status,
+            func.count(CourseApplication.id)
+        ),
+        include_payment=False,
+    ).group_by(CourseApplication.payment_status).all()
+    # NULL payment_status (free courses / drafts saved before choosing a
+    # method) must not become a None dict key — jsonify sorts keys and
+    # blows up comparing None with str.
+    payment_counts = {(status or 'none'): count for status, count in payment_breakdown}
+
+    # Age breakdown (updated_at is stored in local time — use now_local)
+    now = now_local()
     age_1d = base_query.filter(CourseApplication.updated_at >= now - timedelta(days=1)).count()
     age_7d = base_query.filter(
         CourseApplication.updated_at >= now - timedelta(days=7),
@@ -1302,25 +1334,20 @@ def get_draft_statistics():
     age_stale = base_query.filter(
         CourseApplication.updated_at < now - timedelta(days=30),
     ).count()
+    # Drafts inactive for 3+ days — the population a "stale only" bulk
+    # reminder sweep (stale_days=3) would email within this scope.
+    age_stale_3d = base_query.filter(
+        CourseApplication.updated_at < now - timedelta(days=3),
+    ).count()
 
-    # Per-course breakdown
-    course_breakdown_q = (
+    # Per-course breakdown (course dropdown options) — same default scope as
+    # the list, so the counts match what selecting a course will show.
+    course_breakdown_q = _apply_scope(
         db.session.query(
             CourseApplication.course_id,
             func.count(CourseApplication.id)
-        )
-        .filter(
-            CourseApplication.is_draft == True,
-            ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
-        )
+        ),
     )
-    if instructor_id:
-        from ..models.course_models import Course as CourseModel
-        instructor_course_ids = [
-            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
-        ]
-        if instructor_course_ids:
-            course_breakdown_q = course_breakdown_q.filter(CourseApplication.course_id.in_(instructor_course_ids))
     course_rows = course_breakdown_q.group_by(CourseApplication.course_id).all()
     course_breakdown = []
     for cid, count in course_rows:
@@ -1338,6 +1365,7 @@ def get_draft_statistics():
             'last_24h': age_1d,
             'last_7d': age_7d,
             'last_30d': age_30d,
+            'stale_3d_plus': age_stale_3d,
             'stale_30d_plus': age_stale,
         },
         'course_breakdown': course_breakdown,
@@ -1431,14 +1459,29 @@ def remind_draft_applicant(app_id):
 @jwt_required()
 def bulk_remind_draft_applicants():
     """
-    Send payment reminder emails to all stale draft applicants at once.
-    "Stale" means the draft hasn't been updated in more than `stale_days` (default 3).
+    Send payment reminder emails to draft applicants matching the given scope.
+
+    The scope mirrors the GET /drafts list filters so an admin can remind
+    exactly the rows currently shown (course, cohort, payment/submission
+    status) instead of a global "stale" sweep.
 
     Request body:
-      stale_days: int (default 3) – drafts older than this are considered stale
+      stale_days: int (default 3) – drafts not updated within this many days;
+                    0 targets every matching draft regardless of age
       course_id: int (optional) – restrict to a specific course
+      application_window_id: int | 'none' (optional) – restrict to one cohort
+                    ('none' = drafts with no cohort assigned)
+      payment_status: str (optional) – exact payment status; when omitted,
+                    already-settled drafts (completed/confirmed) are skipped
+                    just like the list endpoint
+      submission_status: 'draft' | 'processing' (optional) – same semantics
+                    as the list endpoint
+      search: str (optional) – name/email/phone match, as in the list endpoint
       instructor_id: int (optional) – restrict to instructor's courses
       max_recipients: int (optional, default 100) – safety cap
+
+    Response adds `matched` (rows in scope before the cap) and `capped`
+    (True when the cap trimmed the recipient list).
     """
     current_user_id = get_jwt_identity()
     current_user = User.query.get(current_user_id)
@@ -1458,8 +1501,13 @@ def bulk_remind_draft_applicants():
 
     course_id = data.get('course_id')
     instructor_id = data.get('instructor_id')
+    application_window_id = data.get('application_window_id')
+    payment_status_filter = data.get('payment_status')
+    submission_status = data.get('submission_status')
+    search_term = str(data.get('search') or '').strip()
 
-    # CourseApplication.updated_at is stored in local time
+    # CourseApplication.updated_at is stored in local time.
+    # stale_days=0 -> cutoff is "now", so every matching draft qualifies.
     cutoff = now_local() - timedelta(days=stale_days)
 
     query = CourseApplication.query.filter(
@@ -1480,6 +1528,48 @@ def bulk_remind_draft_applicants():
         else:
             query = query.filter(CourseApplication.id == -1)
 
+    # Cohort filter — same semantics as GET /drafts
+    window_raw = str(application_window_id).strip() if application_window_id is not None else ''
+    if window_raw.lower() == 'none':
+        query = query.filter(CourseApplication.application_window_id.is_(None))
+    elif window_raw:
+        try:
+            query = query.filter_by(application_window_id=int(window_raw))
+        except (ValueError, TypeError):
+            pass
+
+    # Payment status — when not explicitly set, never email drafts that have
+    # already settled (completed/confirmed), matching the list endpoint.
+    if payment_status_filter:
+        query = query.filter_by(payment_status=payment_status_filter)
+    else:
+        query = query.filter(
+            or_(
+                CourseApplication.payment_status.is_(None),
+                ~CourseApplication.payment_status.in_(['completed', 'confirmed'])
+            )
+        )
+
+    # Submission status — same semantics as GET /drafts
+    if submission_status in ('draft', 'not_submitted'):
+        query = query.filter(CourseApplication.payment_status.is_(None))
+    elif submission_status == 'processing':
+        query = query.filter(
+            CourseApplication.payment_status.isnot(None),
+            ~CourseApplication.payment_status.in_(['completed', 'confirmed']),
+        )
+
+    # Text search — same fields as GET /drafts, so the bulk run emails
+    # exactly the rows the admin sees on screen.
+    if search_term:
+        text = f"%{search_term}%"
+        query = query.filter(or_(
+            CourseApplication.full_name.ilike(text),
+            CourseApplication.email.ilike(text),
+            CourseApplication.phone.ilike(text),
+        ))
+
+    matched_count = query.count()
     stale_drafts = query.all()
 
     # Cap to avoid accidental mass-emailing
@@ -1522,13 +1612,15 @@ def bulk_remind_draft_applicants():
         db.session.rollback()
         logger.error(f'Bulk remind: commit failed: {e}')
 
-    logger.info(f'Bulk remind complete: {sent_count} sent, {failed_count} failed out of {len(stale_drafts)} stale drafts')
+    logger.info(f'Bulk remind complete: {sent_count} sent, {failed_count} failed out of {len(stale_drafts)} of {matched_count} matched drafts')
 
     return jsonify({
         'message': f'Reminders sent to {sent_count} applicant(s)',
         'sent': sent_count,
         'failed': failed_count,
         'total_stale': len(stale_drafts),
+        'matched': matched_count,
+        'capped': matched_count > len(stale_drafts),
         'stale_days': stale_days,
     }), 200
 
