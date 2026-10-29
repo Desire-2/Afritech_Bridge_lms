@@ -154,10 +154,11 @@ export default function ScreenshotUpload({
         <div className="flex items-start gap-4">
           <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0 mt-1" />
           <div>
-            <h4 className="font-bold text-emerald-900 mb-1">Screenshot Submitted!</h4>
+            <h4 className="font-bold text-emerald-900 mb-1">Payment Proof Verified!</h4>
             <p className="text-sm text-emerald-800">
-              Your payment proof has been uploaded successfully. An administrator will verify it shortly.
-              You will receive an email notification once your payment is confirmed.
+              Your payment proof passed automatic verification and was uploaded successfully.
+              An administrator will do a final confirmation — you will receive an email
+              notification once your payment is confirmed.
             </p>
           </div>
         </div>
@@ -191,7 +192,9 @@ export default function ScreenshotUpload({
               <img
                 src={preview}
                 alt="Screenshot preview"
-                className="w-full h-auto rounded-lg max-h-64 object-contain"
+                className={`w-full h-auto rounded-lg max-h-64 object-contain transition-opacity duration-300 ${
+                  loading ? 'opacity-60' : ''
+                }`}
               />
             </div>
             <div className="mt-2 flex gap-2">
@@ -231,18 +234,19 @@ export default function ScreenshotUpload({
           className="hidden"
         />
 
-        {/* Upload / verification in progress (server verifies the proof before responding) */}
-        {loading || (selectedFile && autoUpload) ? (
+        {/* Verification in progress — the preview above stays visible while the server runs OCR.
+            Only shown while the request is actually in flight so the spinner always stops. */}
+        {loading ? (
           <PaymentVerifyingSpinner tone="blue" />
         ) : (
           selectedFile &&
-          !autoUpload && (
+          (!autoUpload || error) && (
             <Button
               onClick={() => handleUploadInternal(selectedFile)}
               className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
             >
               <Upload className="w-5 h-5" />
-              Submit Screenshot
+              {autoUpload ? 'Try again' : 'Submit Screenshot'}
             </Button>
           )
         )}

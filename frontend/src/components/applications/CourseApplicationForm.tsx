@@ -3070,8 +3070,9 @@ export default function CourseApplicationForm({
                                 <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                               </svg>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-emerald-800">Slip uploaded successfully!</p>
+                                <p className="text-sm font-semibold text-emerald-800">Payment slip verified &amp; uploaded!</p>
                                 <p className="text-xs text-emerald-600 truncate">{paymentSlipFile?.name}</p>
+                                <p className="text-xs text-emerald-600">Passed automatic verification — pending admin confirmation</p>
                               </div>
                               <button type="button" onClick={() => { setPaymentSlipUrl(null); setPaymentSlipFile(null); }}
                                 className="text-xs text-emerald-600 hover:text-emerald-800 underline shrink-0">Replace</button>
@@ -3107,8 +3108,10 @@ export default function CourseApplicationForm({
                                   </>
                                 )}
                               </label>
-                              {paymentSlipFile && !paymentSlipUrl && !paymentSlipUploading && (
-                                <p className="text-xs text-gray-500 mt-1 text-center">Selected: {paymentSlipFile.name}</p>
+                              {paymentSlipFile && !paymentSlipUrl && (
+                                <p className={`text-xs mt-1 text-center ${paymentSlipUploading ? 'text-emerald-600 font-medium' : 'text-gray-500'}`}>
+                                  {paymentSlipUploading ? `Verifying: ${paymentSlipFile.name}` : `Selected: ${paymentSlipFile.name}`}
+                                </p>
                               )}
                             </>
                           )}
