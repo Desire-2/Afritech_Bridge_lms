@@ -195,7 +195,7 @@ export default function ScreenshotUpload({
   }
 
   return (
-    <div className="bg-gray-50 rounded-2xl p-6 border-2 border-dashed border-gray-300">
+    <div className="bg-gray-50 rounded-2xl p-4 sm:p-6 border-2 border-dashed border-gray-300">
       <div className="space-y-4">
         {/* Title */}
         <div>

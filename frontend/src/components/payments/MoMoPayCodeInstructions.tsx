@@ -31,14 +31,14 @@ export default function MoMoPayCodeInstructions({
   };
 
   return (
-    <div className="space-y-6 w-full max-w-2xl mx-auto">
+    <div className="space-y-4 sm:space-y-6 w-full max-w-2xl mx-auto">
       {/* Header */}
       <div className="text-center">
         <div className="inline-flex items-center gap-2 bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full mb-3">
           <Phone className="w-4 h-4" />
           <span className="font-semibold text-sm">Pay via MoMo USSD Code</span>
         </div>
-        <h3 className="text-2xl font-bold text-gray-900 mb-2">
+        <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 break-words">
           {amount.toLocaleString()} {currency}
         </h3>
         <p className="text-gray-600 text-sm">
@@ -47,14 +47,14 @@ export default function MoMoPayCodeInstructions({
       </div>
 
       {/* USSD Code Display */}
-      <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-6">
+      <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-4 sm:p-6">
         <p className="text-sm font-semibold text-yellow-900 mb-3 uppercase tracking-wide">
           📱 Step 1: Dial This Code
         </p>
         
         {/* Monospace USSD Code */}
         <div className="bg-white border-2 border-yellow-300 rounded-xl p-4 mb-4">
-          <code className="text-2xl font-mono font-bold text-yellow-700 break-all">
+          <code className="text-xl sm:text-2xl font-mono font-bold text-yellow-700 break-all">
             {ussdCode}
           </code>
         </div>
@@ -91,7 +91,7 @@ export default function MoMoPayCodeInstructions({
       </Alert>
 
       {/* Steps */}
-      <div className="bg-gray-50 rounded-2xl p-6 space-y-4">
+      <div className="bg-gray-50 rounded-2xl p-4 sm:p-6 space-y-4">
         <p className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-4">Step-by-step Instructions:</p>
         
         <div className="space-y-3">
