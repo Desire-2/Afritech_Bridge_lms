@@ -21,6 +21,7 @@ import FlutterwaveCheckoutModal from '@/components/payments/FlutterwaveCheckoutM
 import MoMoPayCodeInstructions from '@/components/payments/MoMoPayCodeInstructions';
 import ScreenshotUpload from '@/components/payments/ScreenshotUpload';
 import PaymentSlip from '@/components/payments/PaymentSlip';
+import PaymentProofErrorAlert from '@/components/payments/PaymentProofErrorAlert';
 import type { AutoSaveStatus } from '@/hooks/useAutoSave';
 import type { SkillAssessmentConfig } from '@/types/api';
 
@@ -138,6 +139,7 @@ export default function CourseApplicationForm({
   const [paymentSlipUploading, setPaymentSlipUploading] = useState(false);
   const [paymentSlipUrl, setPaymentSlipUrl] = useState<string | null>(null);
   const [paymentSlipError, setPaymentSlipError] = useState<string | null>(null);
+  const [paymentSlipVerificationReason, setPaymentSlipVerificationReason] = useState<string | null>(null);
 
   // Flutterwave inline checkout modal
   const [showFwModal, setShowFwModal] = useState(false);
@@ -1085,10 +1087,11 @@ export default function CourseApplicationForm({
   const handlePaymentSlipUpload = async (file: File) => {
     setPaymentSlipFile(file);
     setPaymentSlipError(null);
+    setPaymentSlipVerificationReason(null);
     setPaymentSlipUploading(true);
 
     // We need an application ID to attach the slip to — prefer the draft,
-    // then an already-submitted application being paid for, then a fresh submit
+    // an already-submitted application being paid for, then a fresh submit
     const appId = savedDraftId || existingApplication?.application_id || applicationId;
     if (!appId) {
       setPaymentSlipError('Please save your application first before uploading a payment slip.');
@@ -1107,10 +1110,15 @@ export default function CourseApplicationForm({
       );
 
       const data: any = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      if (!res.ok) {
+        // 422 from the automated verifier → structured rejection card.
+        setPaymentSlipVerificationReason(data?.verification?.reason ?? null);
+        throw new Error(data.error || 'Upload failed');
+      }
 
       setPaymentSlipUrl(data.slip_url);
       setPaymentSlipError(null);
+      setPaymentSlipVerificationReason(null);
       setPaymentStatus('pending_verification');
       // Keep the already-applied banner in sync with the new payment state
       setExistingApplication((prev) => prev ? { ...prev, payment_status: 'pending_verification' } : prev);
@@ -3106,7 +3114,11 @@ export default function CourseApplicationForm({
                             </>
                           )}
                           {paymentSlipError && (
-                            <p className="text-xs text-red-600 mt-2 bg-red-50 p-2 rounded border border-red-200">{paymentSlipError}</p>
+                            <PaymentProofErrorAlert
+                              message={paymentSlipError}
+                              verificationReason={paymentSlipVerificationReason}
+                              className="mt-2"
+                            />
                           )}
                         </div>
                       )}

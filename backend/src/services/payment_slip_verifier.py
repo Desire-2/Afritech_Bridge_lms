@@ -41,11 +41,9 @@ MOMO_RECEIVER_CODES = ("2138467",)
 BANK_RECEIVER_ACCOUNTS = ("1002669565578",)
 
 REJECTION_MESSAGE = (
-    "We could not verify that this payment was made to AfriTech Bridge, so the "
-    "payment proof was rejected and was not saved. Please upload a clear receipt "
-    "or screenshot showing AfriTech Bridge as the payment receiver — accepted "
-    "proofs show the name \"AFRITECH BRIDGE\" (for example after the word \"to\"), "
-    "the MoMo pay code 2138467, or the bank account number 1002669565578. "
+    "We could not verify this payment proof, so it was not saved. "
+    "Please upload a clear receipt or screenshot of the completed payment — "
+    "it must show AfriTech Bridge as the payment receiver. "
     "If you believe this is a mistake, please contact the administrator."
 )
 

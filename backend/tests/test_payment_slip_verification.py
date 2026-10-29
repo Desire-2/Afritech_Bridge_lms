@@ -471,11 +471,12 @@ def test_rejection_message_tells_user_to_contact_administrator():
     assert "contact the administrator" in NOT_COMPLETED_MESSAGE
     assert "AfriTech Bridge" in NOT_COMPLETED_MESSAGE
     assert "contact the administrator" in OCR_UNAVAILABLE_MESSAGE
-    # The rejection message must state every accepted proof so applicants
-    # know what to look for on their receipt.
-    assert "2138467" in REJECTION_MESSAGE
-    assert "1002669565578" in REJECTION_MESSAGE
-    assert "AFRITECH BRIDGE" in REJECTION_MESSAGE
+    # The message stays deliberately general: concrete receiver identifiers
+    # (MoMo pay code, bank account) live in the payment instructions, and the
+    # upload UI renders the acceptance checklist — error strings stay short.
+    assert "2138467" not in REJECTION_MESSAGE
+    assert "1002669565578" not in REJECTION_MESSAGE
+    assert "was not saved" in REJECTION_MESSAGE
 
 
 # ---------------------------------------------------------------------------

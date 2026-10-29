@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Upload, Image as ImageIcon, CheckCircle2, Loader2, X, AlertCircle } from 'lucide-react';
+import { Upload, Image as ImageIcon, CheckCircle2, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import PaymentProofErrorAlert from '@/components/payments/PaymentProofErrorAlert';
 
 interface ScreenshotUploadProps {
   applicationId: number;
@@ -32,6 +32,7 @@ export default function ScreenshotUpload({
   const [loading, setLoading] = useState(false);
   const [uploaded, setUploaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verificationReason, setVerificationReason] = useState<string | null>(null);
 
   // Use the same endpoint as Bank Transfer for MoMo Pay Code (no auth required)
   const usePaymentSlipEndpoint = paymentMethod === 'momo_pay_code' || paymentMethod === 'bank_transfer';
@@ -65,6 +66,7 @@ export default function ScreenshotUpload({
 
     setSelectedFile(file);
     setError(null);
+    setVerificationReason(null);
 
     // Auto-upload for manual payment methods
     if (autoUpload) {
@@ -75,6 +77,10 @@ export default function ScreenshotUpload({
   const handleUploadInternal = async (fileToUpload: File) => {
     setLoading(true);
     setError(null);
+    setVerificationReason(null);
+    // Captured from the 422 payload so the alert can render the structured
+    // verification card once we land in the catch block.
+    let reason: string | null = null;
 
     try {
       const formData = new FormData();
@@ -113,6 +119,7 @@ export default function ScreenshotUpload({
       const data: any = await response.json();
 
       if (!response.ok) {
+        reason = data?.verification?.reason ?? null;
         throw new Error(data.error || data.message || 'Failed to upload file');
       }
 
@@ -123,6 +130,7 @@ export default function ScreenshotUpload({
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Upload failed';
       setError(errorMsg);
+      setVerificationReason(reason);
       onError?.(errorMsg);
     } finally {
       setLoading(false);
@@ -133,6 +141,7 @@ export default function ScreenshotUpload({
     setSelectedFile(null);
     setPreview(null);
     setError(null);
+    setVerificationReason(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -171,12 +180,7 @@ export default function ScreenshotUpload({
 
         {/* Error Alert */}
         {error && (
-          <Alert className="border-2 border-red-200 bg-red-50">
-            <AlertCircle className="h-4 w-4 text-red-600" />
-            <AlertDescription className="text-red-800 text-sm ml-3">
-              {error}
-            </AlertDescription>
-          </Alert>
+          <PaymentProofErrorAlert message={error} verificationReason={verificationReason} />
         )}
 
         {/* Preview */}
