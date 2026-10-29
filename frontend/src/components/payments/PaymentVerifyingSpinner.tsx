@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Receipt } from 'lucide-react';
 
-type Tone = 'blue' | 'emerald';
+type Tone = 'blue' | 'emerald' | 'yellow';
 
 interface PaymentVerifyingSpinnerProps {
   tone?: Tone;
@@ -34,6 +34,19 @@ const TONES: Record<
     sweep: string;
   }
 > = {
+  yellow: {
+    card: 'bg-yellow-50 border-yellow-300',
+    ring1: 'border-yellow-500',
+    ring2: 'border-yellow-400',
+    disc: 'bg-white shadow-sm',
+    icon: 'text-yellow-600',
+    heading: 'text-yellow-900',
+    stage: 'text-amber-800',
+    dotActive: 'bg-yellow-600',
+    dotDone: 'bg-yellow-400',
+    dotIdle: 'bg-yellow-100',
+    sweep: 'rgba(234, 179, 8, 0.45)',
+  },
   blue: {
     card: 'bg-blue-50 border-blue-300',
     ring1: 'border-blue-400',

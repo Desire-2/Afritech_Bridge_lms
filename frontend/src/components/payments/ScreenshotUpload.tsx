@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Upload, Image as ImageIcon, CheckCircle2, X } from 'lucide-react';
+import { Upload, Image as ImageIcon, FileText, CheckCircle2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import PaymentProofErrorAlert from '@/components/payments/PaymentProofErrorAlert';
 import PaymentVerifyingSpinner from '@/components/payments/PaymentVerifyingSpinner';
@@ -38,32 +38,44 @@ export default function ScreenshotUpload({
   // Use the same endpoint as Bank Transfer for MoMo Pay Code (no auth required)
   const usePaymentSlipEndpoint = paymentMethod === 'momo_pay_code' || paymentMethod === 'bank_transfer';
 
+  // Spinner tone matches the surrounding payment panel (MoMo = yellow, bank = emerald)
+  const spinnerTone =
+    paymentMethod === 'bank_transfer'
+      ? 'emerald'
+      : paymentMethod === 'momo_pay_code'
+        ? 'yellow'
+        : 'blue';
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    // Validate file type (same as Bank Transfer slip upload)
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
     if (!allowedTypes.includes(file.type)) {
-      setError('Invalid file type. Only JPEG, PNG, and WebP images are allowed.');
+      setError('Invalid file type. Only JPEG, PNG, WebP, or PDF files are allowed.');
       onError?.('Invalid file type');
       return;
     }
 
-    // Validate file size (5MB max)
-    const maxSize = 5 * 1024 * 1024;
+    // Validate file size (10MB max, same as Bank Transfer slip upload)
+    const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
-      setError(`File too large. Maximum size is 5MB, got ${(file.size / 1024 / 1024).toFixed(1)}MB`);
+      setError(`File too large. Maximum size is 10MB, got ${(file.size / 1024 / 1024).toFixed(1)}MB`);
       onError?.('File too large');
       return;
     }
 
-    // Create preview
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setPreview(e.target?.result as string);
-    };
-    reader.readAsDataURL(file);
+    // Create preview (images only — PDFs render as a file row instead)
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setPreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setPreview(null);
+    }
 
     setSelectedFile(file);
     setError(null);
@@ -124,9 +136,8 @@ export default function ScreenshotUpload({
         throw new Error(data.error || data.message || 'Failed to upload file');
       }
 
+      // Keep selectedFile so the success card can show which proof was verified
       setUploaded(true);
-      setSelectedFile(null);
-      setPreview(null);
       onSuccess?.();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Upload failed';
@@ -148,18 +159,35 @@ export default function ScreenshotUpload({
     }
   };
 
+  // Bank Transfer parity: after a verified upload the zone stays in place and
+  // the user can swap the proof without reloading the page.
+  const handleReplace = () => {
+    setUploaded(false);
+    handleClear();
+  };
+
   if (uploaded) {
     return (
       <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6">
         <div className="flex items-start gap-4">
           <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0 mt-1" />
-          <div>
+          <div className="min-w-0">
             <h4 className="font-bold text-emerald-900 mb-1">Payment Proof Verified!</h4>
             <p className="text-sm text-emerald-800">
               Your payment proof passed automatic verification and was uploaded successfully.
               An administrator will do a final confirmation — you will receive an email
               notification once your payment is confirmed.
             </p>
+            {selectedFile && (
+              <p className="text-xs text-emerald-600 mt-1.5 truncate">{selectedFile.name}</p>
+            )}
+            <button
+              type="button"
+              onClick={handleReplace}
+              className="mt-3 text-xs font-semibold text-emerald-700 hover:text-emerald-900 border border-emerald-300 hover:bg-emerald-100 px-3 py-1.5 rounded-md transition-colors"
+            >
+              Upload a different proof
+            </button>
           </div>
         </div>
       </div>
@@ -176,40 +204,52 @@ export default function ScreenshotUpload({
             Upload Payment Proof
           </h4>
           <p className="text-sm text-gray-600">
-            Take a screenshot of the payment confirmation screen and upload it below
+            Take a screenshot or receipt of your payment confirmation and upload it below
           </p>
         </div>
 
-        {/* Error Alert */}
-        {error && (
-          <PaymentProofErrorAlert message={error} verificationReason={verificationReason} />
-        )}
-
-        {/* Preview */}
-        {preview ? (
-          <div className="relative inline-block w-full">
-            <div className="bg-white rounded-xl p-2 border-2 border-gray-200">
-              <img
-                src={preview}
-                alt="Screenshot preview"
-                className={`w-full h-auto rounded-lg max-h-64 object-contain transition-opacity duration-300 ${
-                  loading ? 'opacity-60' : ''
-                }`}
-              />
+        {/* Preview / selected file / drop zone */}
+        {selectedFile ? (
+          preview ? (
+            <div className="relative inline-block w-full">
+              <div className="bg-white rounded-xl p-2 border-2 border-gray-200">
+                <img
+                  src={preview}
+                  alt="Screenshot preview"
+                  className={`w-full h-auto rounded-lg max-h-64 object-contain transition-opacity duration-300 ${
+                    loading ? 'opacity-60' : ''
+                  }`}
+                />
+              </div>
+              <div className="mt-2 flex gap-2">
+                <p className="text-sm text-gray-600 flex-1">
+                  {selectedFile.name} ({((selectedFile.size || 0) / 1024).toFixed(1)} KB)
+                </p>
+                <button
+                  onClick={handleClear}
+                  className="text-gray-500 hover:text-red-600 transition-colors disabled:opacity-50"
+                  disabled={loading}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <div className="mt-2 flex gap-2">
-              <p className="text-sm text-gray-600 flex-1">
-                {selectedFile?.name} ({(selectedFile?.size || 0 / 1024).toFixed(1)} KB)
-              </p>
+          ) : (
+            <div className="flex items-center gap-3 bg-white rounded-xl p-4 border-2 border-gray-200">
+              <FileText className="w-7 h-7 text-gray-400 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-700 truncate">{selectedFile.name}</p>
+                <p className="text-xs text-gray-500">{(selectedFile.size / 1024).toFixed(1)} KB</p>
+              </div>
               <button
                 onClick={handleClear}
-                className="text-gray-500 hover:text-red-600 transition-colors"
+                className="p-1 text-gray-500 hover:text-red-600 transition-colors disabled:opacity-50"
                 disabled={loading}
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-          </div>
+          )
         ) : (
           <div
             onClick={() => fileInputRef.current?.click()}
@@ -220,7 +260,7 @@ export default function ScreenshotUpload({
               Click to select or drag & drop
             </p>
             <p className="text-sm text-gray-500">
-              JPEG, PNG, or WebP • Max 5MB
+              JPEG, PNG, WebP, or PDF • Max 10MB
             </p>
           </div>
         )}
@@ -229,15 +269,20 @@ export default function ScreenshotUpload({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,application/pdf"
           onChange={handleFileChange}
           className="hidden"
         />
 
-        {/* Verification in progress — the preview above stays visible while the server runs OCR.
+        {/* Error Alert — sits below the upload area, matching the Bank Transfer slip zone */}
+        {error && (
+          <PaymentProofErrorAlert message={error} verificationReason={verificationReason} />
+        )}
+
+        {/* Verification in progress — the file above stays visible while the server runs OCR.
             Only shown while the request is actually in flight so the spinner always stops. */}
         {loading ? (
-          <PaymentVerifyingSpinner tone="blue" />
+          <PaymentVerifyingSpinner tone={spinnerTone} />
         ) : (
           selectedFile &&
           (!autoUpload || error) && (

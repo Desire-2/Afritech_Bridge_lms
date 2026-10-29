@@ -3190,7 +3190,7 @@ export default function CourseApplicationForm({
                       {paymentStatus === 'pending_verification' && (
                         <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
                           <p className="text-sm text-gray-700">
-                            <span className="font-semibold">✓ Receipt uploaded successfully!</span> Click the <strong>"I've Completed Payment"</strong> button below to confirm{existingApplication ? ' — we will email you once your payment is verified.' : ', then submit your application.'}
+                            <span className="font-semibold">✓ Receipt verified &amp; uploaded!</span> Passed automatic verification — click the <strong>"I've Completed Payment"</strong> button below to confirm{existingApplication ? ' — we will email you once your payment is confirmed.' : ', then submit your application.'}
                           </p>
                         </div>
                       )}
