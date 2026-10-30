@@ -116,7 +116,7 @@ export default function MoMoPayCodeInstructions({
             <div>
               <p className="font-semibold text-gray-900">Type Exactly</p>
               <p className="text-sm text-gray-600">
-                Copy or type the code above: <code className="bg-gray-200 px-2 py-0.5 rounded font-mono text-xs">{ussdCode}</code>
+                Copy or type the code above: <code className="bg-gray-200 px-2 py-0.5 rounded font-mono text-xs break-all">{ussdCode}</code>
               </p>
             </div>
           </div>

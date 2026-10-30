@@ -36,7 +36,7 @@ export default function PaymentProofErrorAlert({
             Payment proof couldn&apos;t be verified
           </p>
         )}
-        <p className="leading-relaxed">{message}</p>
+        <p className="leading-relaxed break-words">{message}</p>
         {showChecklist && (
           <div className="mt-2.5 rounded-lg border border-red-200 bg-white/70 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-red-900 mb-1.5">

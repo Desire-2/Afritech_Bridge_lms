@@ -2801,8 +2801,12 @@ export default function CourseApplicationForm({
               })}
             </div>
           </div>
+        </div>
 
-          {/* Mobile Money */}
+        {/* Method panels and status bar sit outside the amount card so each
+            card spans the full content width on small screens instead of
+            being double-nested inside the indigo breakdown card. */}
+        {/* Mobile Money */}
           {activePaymentMethod === 'mobile_money' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
               <div className="space-y-2">
@@ -2886,7 +2890,7 @@ export default function CourseApplicationForm({
                     <p className="text-sm text-gray-700 mt-1">
                       Click <strong>Pay Now</strong> to be redirected to the secure K-Pay checkout. Supports MTN Mobile Money, Airtel Money, Visa, Mastercard, and SPENN wallet.
                     </p>
-                    <p className="text-sm text-gray-600 mt-2">Confirmation will be sent to: <span className="font-semibold">{formData.email}</span></p>
+                    <p className="text-sm text-gray-600 mt-2">Confirmation will be sent to: <span className="font-semibold break-all">{formData.email}</span></p>
                   </div>
                 </div>
               </div>
@@ -2929,7 +2933,7 @@ export default function CourseApplicationForm({
                   <p className="text-sm text-gray-700 mt-1">
                     Click <strong>Pay Now</strong> to be redirected to PayPal. After completing payment, you will be returned here automatically.
                   </p>
-                  <p className="text-sm text-gray-600 mt-2">Confirmation email will be sent to: <span className="font-semibold">{formData.email}</span></p>
+                  <p className="text-sm text-gray-600 mt-2">Confirmation email will be sent to: <span className="font-semibold break-all">{formData.email}</span></p>
                 </div>
               </div>
             </div>
@@ -2977,7 +2981,7 @@ export default function CourseApplicationForm({
                       ))}
                     </div>
                     <p className="text-sm text-gray-600 mt-2">
-                      Confirmation will be sent to: <span className="font-semibold">{formData.email}</span>
+                      Confirmation will be sent to: <span className="font-semibold break-all">{formData.email}</span>
                     </p>
                   </div>
                 </div>
@@ -3041,10 +3045,10 @@ export default function CourseApplicationForm({
                             const value = line.slice(colonIdx + 1).trim();
                             const isAccountNum = /account\s*number/i.test(key);
                             return (
-                              <div key={i} className={`flex items-center justify-between px-3 py-2.5 ${isAccountNum ? 'bg-emerald-50' : ''}`}>
-                                <div>
+                              <div key={i} className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 ${isAccountNum ? 'bg-emerald-50' : ''}`}>
+                                <div className="min-w-0">
                                   <p className="text-xs text-gray-400 uppercase tracking-wide">{key}</p>
-                                  <p className={`${isAccountNum ? 'font-mono text-base font-bold text-emerald-700 tracking-wider' : 'text-sm font-semibold text-gray-900'}`}>{value}</p>
+                                  <p className={`break-all ${isAccountNum ? 'font-mono text-base font-bold text-emerald-700 tracking-wider' : 'text-sm font-semibold text-gray-900'}`}>{value}</p>
                                 </div>
                                 {isAccountNum && (
                                 <button type="button" onClick={() => copyToClipboard(value, 'account')}
@@ -3318,7 +3322,6 @@ export default function CourseApplicationForm({
               </div>
             </div>
           )}
-        </div>
       </div>
     );
   };
@@ -3339,7 +3342,7 @@ export default function CourseApplicationForm({
   const progressPercentage = (currentSection / totalSections) * 100;
   
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4" id="application-form-top">
+    <div className="max-w-5xl mx-auto py-8 px-3 sm:px-4" id="application-form-top">
       <Card className="shadow-xl border border-gray-200 bg-white overflow-hidden">
         <CardHeader className="border-b border-gray-200 bg-gray-50 pb-8">
           {/* Progress Bar with Animation */}
@@ -3438,7 +3441,7 @@ export default function CourseApplicationForm({
           </div>
         </CardHeader>
 
-<CardContent className="pt-8 pb-8 px-4 sm:px-8">
+          <CardContent className="pt-8 pb-8 px-3 sm:px-8">
           {/* Draft Restore Banner */}
           {showDraftBanner && (
             <DraftRestoreBanner
