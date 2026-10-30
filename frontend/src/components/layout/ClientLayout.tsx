@@ -8,9 +8,11 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import { Toaster } from 'sonner'
 
 export default function ClientLayout({
-  children
+  children,
+  maintenanceOn = false
 }: {
   children: React.ReactNode
+  maintenanceOn?: boolean
 }) {
   // ── Global chunk-loading error recovery ──
   useEffect(() => {
@@ -37,7 +39,7 @@ export default function ClientLayout({
         {/* Honour the OS "reduce motion" setting for every framer-motion
             animation in the app instead of animating regardless. */}
         <MotionConfig reducedMotion="user">
-          <MaintenanceModeWrapper>
+          <MaintenanceModeWrapper initialChecking={maintenanceOn}>
             {children}
           </MaintenanceModeWrapper>
         </MotionConfig>

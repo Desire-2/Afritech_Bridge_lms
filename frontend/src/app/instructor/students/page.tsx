@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, Suspense } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSearchParams, useRouter } from 'next/navigation';
 import InstructorService from '@/services/instructor.service';
@@ -54,7 +54,7 @@ type WizardStep = 'courses' | 'cohorts' | 'students';
 // Main Component
 // ═══════════════════════════════════════
 
-const StudentsPage = () => {
+const StudentsPageInner = () => {
   const { token } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -767,5 +767,19 @@ const StudentsPage = () => {
     </div>
   );
 };
+
+// useSearchParams() bails out of static prerendering — it must sit
+// under a Suspense boundary for the build to succeed
+const StudentsPage = () => (
+  <Suspense
+    fallback={
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="animate-pulse text-sm text-slate-400">Loading…</div>
+      </div>
+    }
+  >
+    <StudentsPageInner />
+  </Suspense>
+);
 
 export default StudentsPage;

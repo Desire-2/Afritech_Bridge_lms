@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import {
   StudentSubmissionService,
   AssignmentWithStatus,
@@ -82,7 +82,23 @@ function getLetterGradeColor(pct: number) {
 
 // ─── Main page component ────────────────────────────────────────
 
+// useSearchParams() bails out of static prerendering — it must sit
+// under a Suspense boundary for the build to succeed
 export default function StudentAssessmentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[60vh] flex items-center justify-center">
+          <div className="animate-pulse text-sm text-slate-400">Loading…</div>
+        </div>
+      }
+    >
+      <StudentAssessmentsContent />
+    </Suspense>
+  );
+}
+
+function StudentAssessmentsContent() {
   const searchParams = useSearchParams();
   const [assignments, setAssignments] = useState<AssignmentWithStatus[]>([]);
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);

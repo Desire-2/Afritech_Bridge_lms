@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useContext, useEffect, useState, useCallback } from 'react';
+import React, { useContext, useEffect, useState, useCallback, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AuthContext } from '@/contexts/AuthContext';
 
@@ -91,7 +91,7 @@ const placeholderQuizSession: QuizSessionData = {
   ],
 };
 
-const QuizTakingPage = () => {
+const QuizTakingPageInner = () => {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -401,6 +401,20 @@ const QuizTakingPage = () => {
     </div>
   );
 };
+
+// useSearchParams() bails out of static prerendering — it must sit
+// under a Suspense boundary for the build to succeed
+const QuizTakingPage = () => (
+  <Suspense
+    fallback={
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="animate-pulse text-sm text-slate-400">Loading…</div>
+      </div>
+    }
+  >
+    <QuizTakingPageInner />
+  </Suspense>
+);
 
 export default QuizTakingPage;
 

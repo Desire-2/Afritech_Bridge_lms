@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -91,7 +91,7 @@ function SummaryCard({ label, count, icon, color, subtitle, onClick }: {
 // ═══════════════════════════════════════
 // Main Page Component
 // ═══════════════════════════════════════
-const GradingPage = () => {
+const GradingPageInner = () => {
   const { token, user } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -1242,5 +1242,19 @@ const GradingPage = () => {
     </div>
   );
 };
+
+// useSearchParams() bails out of static prerendering — it must sit
+// under a Suspense boundary for the build to succeed
+const GradingPage = () => (
+  <Suspense
+    fallback={
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="animate-pulse text-sm text-slate-400">Loading…</div>
+      </div>
+    }
+  >
+    <GradingPageInner />
+  </Suspense>
+);
 
 export default GradingPage;

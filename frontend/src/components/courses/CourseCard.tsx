@@ -71,7 +71,14 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course }) => {
 
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0d131e] shadow-[0_18px_50px_rgba(0,0,0,0.18)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-cyan-200/30 hover:shadow-[0_22px_65px_rgba(0,0,0,0.35),0_0_35px_rgba(34,211,238,0.07)] motion-reduce:transform-none motion-reduce:transition-none">
-      <div className="relative aspect-[16/10] overflow-hidden border-b border-white/[0.08]">
+      {/* Decorative duplicate of the title link so the whole cover is
+          clickable — kept out of the tab order */}
+      <Link
+        href={`/courses/${course.id}`}
+        className="relative block aspect-[16/10] overflow-hidden border-b border-white/[0.08]"
+        tabIndex={-1}
+        aria-hidden="true"
+      >
         {course.thumbnail_url ? (
           <Image
             src={course.thumbnail_url}
@@ -117,7 +124,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course }) => {
             {statusLabel}
           </span>
         )}
-      </div>
+      </Link>
 
       <div className="flex flex-1 flex-col p-5 sm:p-6">
         <div className="flex items-center justify-between gap-3">
@@ -128,7 +135,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course }) => {
         </div>
 
         <h3 className="mt-3 min-h-[3.7rem] text-xl font-semibold leading-[1.12] tracking-[-0.04em] text-white transition-colors group-hover:text-cyan-100">
-          {course.title}
+          <Link href={`/courses/${course.id}`}>{course.title}</Link>
         </h3>
 
         <p className="mt-3 min-h-[4.5rem] line-clamp-3 text-sm leading-6 text-slate-400">

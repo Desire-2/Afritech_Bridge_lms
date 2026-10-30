@@ -6,6 +6,14 @@ import { maintenanceService } from '@/services/maintenance.service';
 
 interface MaintenanceModeWrapperProps {
   children: React.ReactNode;
+  /**
+   * Server-rendered maintenance flag. When false (the normal case) the
+   * wrapper renders children straight away so crawlers and first paint
+   * get real page content instead of the "Checking system status…"
+   * shell. The client-side check below stays the authority for live
+   * transitions.
+   */
+  initialChecking?: boolean;
 }
 
 /**
@@ -14,11 +22,11 @@ interface MaintenanceModeWrapperProps {
  * Checks maintenance mode status and redirects users accordingly.
  * Admins bypass maintenance mode automatically.
  */
-export function MaintenanceModeWrapper({ children }: MaintenanceModeWrapperProps) {
+export function MaintenanceModeWrapper({ children, initialChecking = false }: MaintenanceModeWrapperProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [isChecking, setIsChecking] = useState(true);
-  const [hasChecked, setHasChecked] = useState(false);
+  const [isChecking, setIsChecking] = useState(initialChecking);
+  const [hasChecked, setHasChecked] = useState(!initialChecking);
 
   useEffect(() => {
     const checkStatus = async () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
@@ -26,6 +26,22 @@ const CATEGORY_LABELS: Record<string, { label: string; icon: string; desc: strin
 };
 
 export default function UnsubscribePage() {
+  // useSearchParams() bails out of prerendering — it must sit under a
+  // Suspense boundary for the static build to succeed
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+          <div className="animate-pulse text-gray-400 text-lg">Loading preferences...</div>
+        </div>
+      }
+    >
+      <UnsubscribeContent />
+    </Suspense>
+  );
+}
+
+function UnsubscribeContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
   const category = searchParams.get('category') || '';
