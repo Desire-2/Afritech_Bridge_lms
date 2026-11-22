@@ -18,6 +18,8 @@ import {
   BarChart3, Layers
 } from 'lucide-react';
 import { QuickGradingModal } from '@/components/grading/QuickGradingModal';
+import GradingSubNavigation from '@/components/instructor/GradingSubNavigation';
+import { GRADING_PAGE_SIZE, paginateItems } from '@/lib/grading-navigation';
 
 // API Base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
@@ -130,7 +132,6 @@ const GradingPageInner = () => {
   const [gradingLoading, setGradingLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
   const [statusCounts, setStatusCounts] = useState({
@@ -149,9 +150,19 @@ const GradingPageInner = () => {
   const [selectedSubmissions, setSelectedSubmissions] = useState<Set<number>>(new Set());
   const [exporting, setExporting] = useState(false);
 
+  // Pagination is over the real submissions already returned by the grading
+  // API; no extra page is fetched just to move the controls.
+  const gradingPage = paginateItems(gradingItems, currentPage);
+  const visibleGradingItems = gradingPage.items;
+
   // ══════════════════════════════════════
   // EFFECTS
   // ══════════════════════════════════════
+
+  // Keep the control in sync if the filtered list shrinks while on a later page.
+  useEffect(() => {
+    if (currentPage !== gradingPage.page) setCurrentPage(gradingPage.page);
+  }, [currentPage, gradingPage.page]);
 
   // Step 1: fetch courses on mount
   useEffect(() => {
@@ -201,7 +212,7 @@ const GradingPageInner = () => {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCourseId, selectedCohortId, selectedCohortLabel, step, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
+  }, [selectedCourseId, selectedCohortId, selectedCohortLabel, step, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent]);
 
   // Fetch lessons when module changes
   useEffect(() => {
@@ -250,7 +261,7 @@ const GradingPageInner = () => {
       document.removeEventListener('visibilitychange', handleVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, selectedCourseId, selectedCohortId, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
+  }, [step, selectedCourseId, selectedCohortId, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent]);
 
   // ══════════════════════════════════════
   // DATA FETCHING
@@ -968,11 +979,11 @@ const GradingPageInner = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-        <SummaryCard label="Resubmissions" count={statusCounts.resubmitted} icon={<Repeat className="w-5 h-5" />} color="blue" subtitle="Need review" onClick={() => setSelectedStatus('resubmitted')} />
-        <SummaryCard label="Modifications" count={statusCounts.modification_requested} icon={<FileEdit className="w-5 h-5" />} color="purple" subtitle="Awaiting student" onClick={() => setSelectedStatus('modification_requested')} />
-        <SummaryCard label="Pending" count={statusCounts.pending} icon={<Clock className="w-5 h-5" />} color="orange" subtitle="Initial submissions" onClick={() => setSelectedStatus('pending')} />
+        <SummaryCard label="Resubmissions" count={statusCounts.resubmitted} icon={<Repeat className="w-5 h-5" />} color="blue" subtitle="Need review" onClick={() => { setSelectedStatus('resubmitted'); setCurrentPage(1); }} />
+        <SummaryCard label="Modifications" count={statusCounts.modification_requested} icon={<FileEdit className="w-5 h-5" />} color="purple" subtitle="Awaiting student" onClick={() => { setSelectedStatus('modification_requested'); setCurrentPage(1); }} />
+        <SummaryCard label="Pending" count={statusCounts.pending} icon={<Clock className="w-5 h-5" />} color="orange" subtitle="Initial submissions" onClick={() => { setSelectedStatus('pending'); setCurrentPage(1); }} />
         <SummaryCard label="Overdue" count={statusCounts.overdue} icon={<AlertTriangle className="w-5 h-5" />} color="red" subtitle="Past due date" />
-        <SummaryCard label="Graded" count={statusCounts.graded} icon={<CheckCircle className="w-5 h-5" />} color="green" subtitle="Complete" onClick={() => setSelectedStatus('graded')} />
+        <SummaryCard label="Graded" count={statusCounts.graded} icon={<CheckCircle className="w-5 h-5" />} color="green" subtitle="Complete" onClick={() => { setSelectedStatus('graded'); setCurrentPage(1); }} />
       </div>
 
       {/* Filters */}
@@ -988,6 +999,7 @@ const GradingPageInner = () => {
                 setSelectedLesson('all');
                 setSelectedStudent('all');
                 setSearchQuery('');
+                setCurrentPage(1);
               }}
               className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
             >
@@ -1004,7 +1016,7 @@ const GradingPageInner = () => {
               type="text"
               placeholder="Search submissions, students, assignments..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
               onKeyDown={(e) => { if (e.key === 'Enter') { setCurrentPage(1); fetchGradingData(); } }}
               className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500"
             />
@@ -1066,8 +1078,14 @@ const GradingPageInner = () => {
         <div className="p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-              Submissions ({gradingItems.length})
+              Submissions ({gradingPage.totalItems})
             </h2>
+            {gradingPage.totalItems > visibleGradingItems.length && (
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Showing {(gradingPage.page - 1) * GRADING_PAGE_SIZE + 1}–
+                {(gradingPage.page - 1) * GRADING_PAGE_SIZE + visibleGradingItems.length} of {gradingPage.totalItems}
+              </p>
+            )}
             {selectedStatus !== 'all' && (
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Showing {selectedStatus.replace('_', ' ')} submissions
@@ -1107,7 +1125,7 @@ const GradingPageInner = () => {
         ) : (
           <>
             <div className="divide-y divide-slate-100 dark:divide-slate-700">
-              {gradingItems.map((item) => (
+              {visibleGradingItems.map((item) => (
                 <div key={`${item.type}-${item.id}`} className="p-5 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start space-x-3 flex-1 min-w-0">
@@ -1190,19 +1208,19 @@ const GradingPageInner = () => {
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
+            {gradingPage.totalPages > 1 && (
               <div className="p-5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
+                  disabled={gradingPage.page === 1}
                   className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
                 >
                   Previous
                 </button>
-                <span className="text-sm text-slate-500">Page {currentPage} of {totalPages}</span>
+                <span className="text-sm text-slate-500">Page {gradingPage.page} of {gradingPage.totalPages}</span>
                 <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(gradingPage.totalPages, p + 1))}
+                  disabled={gradingPage.page === gradingPage.totalPages}
                   className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50"
                 >
                   Next
@@ -1234,7 +1252,8 @@ const GradingPageInner = () => {
   // ══════════════════════════════════════
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-5">
+      <GradingSubNavigation />
       {renderBreadcrumb()}
       {step === 'courses' && renderCourseSelection()}
       {step === 'cohorts' && renderCohortSelection()}

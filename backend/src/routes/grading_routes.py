@@ -44,6 +44,25 @@ def instructor_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+
+def _attach_rubric_dict(target):
+    """Attach the linked rubric definition to a serialized assessment dict.
+
+    ``include_rubric=true`` on submission-detail endpoints is optional. A
+    missing or deleted rubric must not turn the whole grading screen into a
+    ``500``, so the helper is intentionally a no-op in that case.
+    """
+    rubric_id = target.get('rubric_id')
+    if not rubric_id:
+        return
+
+    from ..models.grading_models import Rubric
+
+    rubric = Rubric.query.get(rubric_id)
+    if rubric is not None:
+        target['rubric'] = rubric.to_dict()
+
+
 grading_bp = Blueprint("grading_bp", __name__, url_prefix="/api/v1/grading")
 
 # =====================

@@ -20,6 +20,7 @@ from ..models.student_models import (
     Certificate, SkillBadge, StudentSkillBadge
 )
 from ..models.achievement_models import UserAchievement, Achievement
+from ..services.aage.submission_dispatch import enqueue_for_submission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -1583,6 +1584,14 @@ def submit_assignment(assignment_id):
         db.session.add(submission)
         db.session.commit()
 
+        # Every assignment submission is graded by AAGE; spreadsheet files use
+        # the native spreadsheet specialist.
+        aage_job = enqueue_for_submission(
+            submission_type='assignment',
+            submission_id=submission.id,
+            student_id=current_user_id,
+        )
+
         # Email the instructor that a new submission arrived (non-blocking)
         try:
             from ..utils.email_notifications import notify_instructor_of_submission
@@ -1594,7 +1603,9 @@ def submit_assignment(assignment_id):
         except Exception as notif_err:
             logger.warning(f"Instructor submission notification failed (non-blocking): {notif_err}")
 
-        return jsonify(submission.to_dict()), 201
+        payload = submission.to_dict()
+        payload['aage_job_id'] = aage_job.id if aage_job else None
+        return jsonify(payload), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Error submitting assignment", "error": str(e)}), 500
@@ -3429,9 +3440,17 @@ def submit_project(project_id):
             existing_submission.file_path = data.get('file_url')
             existing_submission.submitted_at = now_local()
             db.session.commit()
+            aage_job = enqueue_for_submission(
+                submission_type='project',
+                submission_id=existing_submission.id,
+                student_id=current_user_id,
+                force=True,
+            )
+            payload = existing_submission.to_dict()
+            payload['aage_job_id'] = aage_job.id if aage_job else None
             return jsonify({
                 "message": "Project submitted successfully",
-                "submission": existing_submission.to_dict()
+                "submission": payload
             }), 200
         
         # Create submission. submitted_at is set explicitly (not left to the
@@ -3451,6 +3470,14 @@ def submit_project(project_id):
         db.session.add(submission)
         db.session.commit()
 
+        # Mirror the file-upload route: AAGE owns every project grade and
+        # selects the spreadsheet specialist when a workbook was submitted.
+        aage_job = enqueue_for_submission(
+            submission_type='project',
+            submission_id=submission.id,
+            student_id=current_user_id,
+        )
+
         # Email the instructor that a new project submission arrived (non-blocking)
         try:
             from ..utils.email_notifications import notify_instructor_of_submission
@@ -3463,9 +3490,11 @@ def submit_project(project_id):
         except Exception as notif_err:
             logger.warning(f"Instructor project submission notification failed (non-blocking): {notif_err}")
 
+        payload = submission.to_dict()
+        payload['aage_job_id'] = aage_job.id if aage_job else None
         return jsonify({
             "message": "Project submitted successfully",
-            "submission": submission.to_dict()
+            "submission": payload
         }), 201
         
     except Exception as e:

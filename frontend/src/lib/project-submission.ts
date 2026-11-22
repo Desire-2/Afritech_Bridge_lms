@@ -30,38 +30,20 @@ export const SUBMISSION_FORMAT_LABELS: Record<string, string> = {
   presentation: 'Presentation file',
 };
 
+import {
+  extensionOf,
+  parseAllowedFileExtensions,
+} from './file-upload-rules';
+
 /**
  * `allowed_file_types` is written by instructors as a comma-separated list
  * with leading dots (".pdf,.docx"), matching the instructor input's
- * placeholder. Some older rows hold a JSON array instead, so both shapes are
- * accepted and normalised to `[".pdf", ".docx"]`. Empty means "any type".
+ * placeholder. Some rows hold a JSON array instead, so both shapes are
+ * accepted and normalised to `[".pdf", ".docx"]` by the shared parser. Empty
+ * means "any type". Re-exported here to keep this module's public API stable.
  */
-export function parseAllowedFileTypes(raw?: string | null): string[] {
-  const value = raw?.trim();
-  if (!value) return [];
-
-  let parts: string[] = [];
-  if (value.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) parts = parsed.map((entry) => String(entry));
-    } catch {
-      parts = [];
-    }
-  }
-  if (!parts.length) parts = value.split(',');
-
-  return parts
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean)
-    .map((entry) => (entry.startsWith('.') ? entry : `.${entry}`));
-}
-
-/** `"Essay.DOCX"` -> `".docx"`; `""` when there is no extension. */
-export function extensionOf(fileName: string): string {
-  const index = fileName.lastIndexOf('.');
-  return index > 0 ? fileName.slice(index).toLowerCase() : '';
-}
+export const parseAllowedFileTypes = parseAllowedFileExtensions;
+export { extensionOf };
 
 /** Files a chosen name is allowed to be, given the project's allow-list. */
 export function isFileTypeAllowed(fileName: string, allowed: string[]): boolean {
@@ -192,4 +174,85 @@ export function parseAttachments(
   }
 
   return [{ url: raw, name: fallbackName || undefined }];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Submission routing (shared by student resubmission + instructor modification)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SubmissionEndpointType = 'assignment' | 'project';
+
+/** Default matches the app's own fallback in the grading surfaces. */
+export const DEFAULT_API_BASE_URL = 'http://localhost:5001/api/v1';
+
+function apiBase(apiBaseUrl?: string | null): string {
+  return (apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, '');
+}
+
+/** Upload folder must match the type of record the endpoint expects. */
+export function submissionUploadFolder(
+  type: SubmissionEndpointType,
+): 'assignments' | 'projects' {
+  return type === 'project' ? 'projects' : 'assignments';
+}
+
+/**
+ * File-backed submission/resubmission endpoint for one submission type.
+ *
+ * Projects do not have a dedicated `resubmit-with-files` route; the existing
+ * project file endpoint is `submit-with-files`. Reusing it (rather than the
+ * assignment route) keeps project ids out of assignment URLs.
+ */
+export function buildResubmissionEndpoint(
+  type: SubmissionEndpointType,
+  id: number,
+  apiBaseUrl?: string | null,
+): string {
+  const base = apiBase(apiBaseUrl);
+  return type === 'project'
+    ? `${base}/uploads/projects/${id}/submit-with-files`
+    : `${base}/uploads/assignments/${id}/resubmit-with-files`;
+}
+
+/** Instructor "request modification" endpoint for one submission type. */
+export function buildModificationRequestEndpoint(
+  type: SubmissionEndpointType,
+  id: number,
+  apiBaseUrl?: string | null,
+): string {
+  const base = apiBase(apiBaseUrl);
+  return type === 'project'
+    ? `${base}/modification/projects/${id}/request-modification`
+    : `${base}/modification/assignments/${id}/request-modification`;
+}
+
+export interface ResubmissionPayloadOptions {
+  text?: string | null;
+  notes?: string | null;
+  files?: unknown[];
+  teamMembers?: number[];
+}
+
+/**
+ * The assignment and project upload routes accept different body field names.
+ * Keeping the projection here means neither student surface can accidentally
+ * send an assignment-shaped body to a project endpoint (or vice versa).
+ */
+export function buildResubmissionPayload(
+  type: SubmissionEndpointType,
+  options: ResubmissionPayloadOptions,
+): Record<string, unknown> {
+  const files = Array.isArray(options.files) ? options.files : [];
+  if (type === 'project') {
+    return {
+      text_content: options.text?.trim() || undefined,
+      files,
+      team_members: options.teamMembers ?? [],
+    };
+  }
+  return {
+    content: options.text?.trim() || undefined,
+    files,
+    resubmission_notes: options.notes?.trim() || undefined,
+  };
 }

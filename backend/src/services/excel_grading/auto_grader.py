@@ -12,16 +12,14 @@ Includes retry logic, status tracking, and notification on completion.
 import logging
 import threading
 import time
-import json
 from typing import Optional, Dict, Any, List
 
+from .excel_file_detection import (
+    course_is_excel,
+    has_excel_files as _has_detected_excel_files,
+)
+
 logger = logging.getLogger(__name__)
-
-# Excel file extensions (must match ExcelGradingService.ALLOWED_EXTENSIONS)
-EXCEL_EXTENSIONS = {'.xlsx', '.xlsm', '.xls', '.csv'}
-
-# Keywords to detect Excel courses (must match excel_grading_service.py)
-EXCEL_COURSE_KEYWORDS = ['ms excel', 'microsoft excel', 'excel', 'spreadsheet']
 
 # Auto-grading configuration
 MAX_RETRIES = 2
@@ -30,60 +28,13 @@ AUTO_GRADE_TIMEOUT = 120  # seconds
 
 
 def _has_excel_files(files_data: Any) -> bool:
-    """
-    Check if the submission contains any Excel files.
-
-    Args:
-        files_data: Raw file_url/file_path field — could be JSON string,
-                    list, dict, or plain URL string.
-
-    Returns:
-        True if at least one file has an Excel extension.
-    """
-    if not files_data:
-        return False
-
-    # Parse JSON string if needed
-    if isinstance(files_data, str):
-        try:
-            files_data = json.loads(files_data)
-        except (json.JSONDecodeError, TypeError):
-            # Plain URL — check extension
-            return any(files_data.lower().endswith(ext) for ext in EXCEL_EXTENSIONS)
-
-    # Normalise to a list
-    if isinstance(files_data, dict):
-        files_data = [files_data]
-
-    if not isinstance(files_data, list):
-        return False
-
-    for f in files_data:
-        name = ''
-        if isinstance(f, dict):
-            name = (
-                f.get('original_filename', '')
-                or f.get('filename', '')
-                or f.get('name', '')
-                or f.get('file_name', '')
-            ).lower()
-        elif isinstance(f, str):
-            name = f.lower()
-
-        if any(name.endswith(ext) for ext in EXCEL_EXTENSIONS):
-            return True
-
-    return False
+    """Compatibility wrapper used by the AAGE dispatcher and tests."""
+    return _has_detected_excel_files(files_data)
 
 
 def _is_excel_course(course) -> bool:
-    """Check if the course is an MS Excel course."""
-    if not course:
-        return False
-    title = (getattr(course, 'title', '') or '').lower()
-    description = (getattr(course, 'description', '') or '').lower()
-    combined = f"{title} {description}"
-    return any(kw in combined for kw in EXCEL_COURSE_KEYWORDS)
+    """Compatibility wrapper used by the AAGE dispatcher and tests."""
+    return course_is_excel(course)
 
 
 def _run_grading_in_background(
@@ -118,87 +69,97 @@ def _run_grading_in_background(
                     force=(force or current_attempt > 1),
                 )
 
-                status = result.get('status', 'unknown')
+                status = str(result.get('status') or 'unknown')
 
                 if status == 'completed':
-                    grade_data = result.get('result', {})
+                    grade_data = result.get('result') or {}
                     total_score = grade_data.get('total_score', 0)
                     max_score = grade_data.get('max_score', 100)
 
                     logger.info(
-                        f"✅ Auto-grading completed: {submission_type} #{submission_id} → "
-                        f"{total_score}/{max_score} "
-                        f"({grade_data.get('grade_letter', '?')})"
+                        "🤖 Auto-grading result: %s #%s → %s/%s (%s)",
+                        submission_type, submission_id, total_score, max_score,
+                        grade_data.get('grade_letter', '?'),
                     )
 
-                    eligible_for_auto_approval = _auto_approve_grading_result(
-                        app, submission_id, submission_type, grade_data,
+                    # One finalisation path is shared by the auto-grader, the
+                    # full Excel endpoint and the unified dispatcher.  Creating
+                    # an ExcelGradingResult alone has never been enough to make
+                    # the grade visible to the student.
+                    outcome = finalize_excel_grade(
+                        app, submission_id, submission_type, student_id, result,
                     )
-                    if not eligible_for_auto_approval:
-                        # Keep the result visible as a preliminary assessment,
-                        # but do not write an authoritative grade, open a
-                        # resubmission cycle, or advance learning progress.
+                    publication_status = outcome.get('status')
+                    if publication_status == 'published':
                         logger.info(
-                            "⏸️ Assignment remains pending instructor review: %s #%s",
+                            "✅ Auto-grade published for %s #%s",
                             submission_type, submission_id,
                         )
-                        return
-
-                    _apply_grade_to_submission(
-                        app, submission_id, submission_type, student_id,
-                        total_score, max_score, grade_data,
-                    )
-                    modification_requested = _auto_request_modification_if_needed(
-                        app, submission_id, submission_type, student_id,
-                        total_score, max_score, grade_data,
-                    )
-                    if not modification_requested:
-                        _update_learning_progress(
-                            app, submission_id, submission_type, student_id,
-                            total_score, max_score,
+                    elif publication_status == 'pending_review':
+                        logger.info(
+                            "⏸️ Auto-grade pending instructor review: %s #%s",
+                            submission_type, submission_id,
                         )
-                    _notify_student_auto_graded(
-                        app, submission_id, submission_type, student_id, result,
-                        modification_requested=modification_requested,
-                    )
-                    return  # Done
+                    else:
+                        logger.info(
+                            "Auto grade not applied for %s #%s: %s",
+                            submission_type, submission_id,
+                            outcome.get('reason') or publication_status,
+                        )
+                    return
 
-                elif status == 'already_graded':
+                if status in ('already_graded', 'pending_review'):
                     logger.info(
-                        f"ℹ️ Auto-grading skipped: {submission_type} #{submission_id} "
-                        f"already graded"
+                        "ℹ️ Auto-grading skipped: %s #%s (%s)",
+                        submission_type, submission_id, status,
                     )
                     return
 
-                elif status in ('failed', 'skipped'):
+                if status in ('failed', 'skipped'):
                     reason = result.get('reason', result.get('message', 'unknown'))
                     logger.warning(
-                        f"⚠️ Auto-grading {status}: {submission_type} #{submission_id} — {reason}"
+                        "⚠️ Auto-grading %s: %s #%s — %s",
+                        status, submission_type, submission_id, reason,
                     )
                     if (
                         current_attempt < max_attempts
-                        and result.get('reason') in ('download_failed',)
+                        and result.get('reason') == 'download_failed'
                     ):
-                        logger.info(f"🔄 Retrying auto-grade in {RETRY_DELAY_SECONDS}s…")
+                        logger.info("🔄 Retrying auto-grade in %ss…", RETRY_DELAY_SECONDS)
                         current_attempt += 1
                         # Sleep outside app context to release DB connections
                         break  # Break inner with-block, sleep below
-                    return
-
-                else:
-                    logger.warning(
-                        f"❓ Auto-grading returned unexpected status '{status}' "
-                        f"for {submission_type} #{submission_id}"
+                    # The trigger returned True before the thread ran, so the
+                    # submission hook suppressed AAGE.  Hand a genuinely failed
+                    # Excel job to AAGE now instead of leaving it ungraded.
+                    _queue_aage_fallback(
+                        submission_id, submission_type, student_id,
+                        force=force, reason=reason,
                     )
                     return
 
+                logger.warning(
+                    "❓ Auto-grading returned unexpected status '%s' for %s #%s",
+                    status, submission_type, submission_id,
+                )
+                _queue_aage_fallback(
+                    submission_id, submission_type, student_id,
+                    force=force, reason='unexpected_status',
+                )
+                return
+
             except Exception as e:
                 logger.exception(
-                    f"❌ Auto-grading exception for {submission_type} #{submission_id}: {e}"
+                    "❌ Auto-grading exception for %s #%s: %s",
+                    submission_type, submission_id, e,
                 )
                 if current_attempt < max_attempts:
                     current_attempt += 1
                     break  # Break inner with-block, sleep below
+                _queue_aage_fallback(
+                    submission_id, submission_type, student_id,
+                    force=force, reason='exception',
+                )
                 return
 
         # Sleep between retries (outside app context)
@@ -274,6 +235,55 @@ def _auto_approve_grading_result(
         return False
 
 
+def _mark_excel_result_preliminary(
+    submission_id: int,
+    submission_type: str,
+    reason: str,
+):
+    """Keep a result out of student grades when publication did not happen.
+
+    Auto-approval marks the result final before the grade is written. If the
+    write is then refused (for example because an older published grade is
+    higher), leaving that flag set would expose the lower AI score in the
+    student result API even though the authoritative grade was retained.
+    """
+    try:
+        from src.models.excel_grading_models import ExcelGradingResult
+        from src.models.user_models import db
+
+        column = (
+            ExcelGradingResult.assignment_submission_id
+            if submission_type == 'assignment'
+            else ExcelGradingResult.project_submission_id
+        )
+        result = (ExcelGradingResult.query
+                  .filter(ExcelGradingResult.submission_type == submission_type,
+                          column == submission_id)
+                  .order_by(ExcelGradingResult.graded_at.desc())
+                  .first())
+        if result is None:
+            return
+
+        result.instructor_reviewed = False
+        result.instructor_reviewed_at = None
+        result.manual_review_required = True
+        result.status = 'completed'
+        result.instructor_notes = (
+            f"Not published: {reason}. Instructor review required."
+        )
+        db.session.commit()
+    except Exception:
+        logger.exception(
+            "Failed to keep Excel result preliminary for %s #%s (%s)",
+            submission_type, submission_id, reason,
+        )
+        try:
+            from src.models.user_models import db
+            db.session.rollback()
+        except Exception:
+            pass
+
+
 def _apply_grade_to_submission(
     app,
     submission_id: int,
@@ -282,12 +292,19 @@ def _apply_grade_to_submission(
     total_score: float,
     max_score: float,
     grade_data: Dict[str, Any],
+    *,
+    allow_lower: bool = False,
 ) -> bool:
     """
     Write the AI-generated grade directly onto the AssignmentSubmission or
     ProjectSubmission record, mirroring what the instructor grading endpoint
     does.  This makes the grade visible in the student's dashboard/API
     immediately after auto-grading completes.
+
+    ``allow_lower`` is reserved for deliberate human decisions (an instructor
+    approving a reviewed score). Automatic/re-graded AI runs must never replace
+    an existing, higher published grade for the same submission — otherwise a
+    non-deterministic re-grade silently reduces the student's score.
 
     Returns True on success.
     """
@@ -326,6 +343,24 @@ def _apply_grade_to_submission(
 
         # Clamp
         scaled_grade = max(0, min(points_possible, scaled_grade))
+
+        # An AI re-grade must not silently lower a grade that is already on the
+        # submission.  A resubmission clears the grade first, so genuine new
+        # work is still free to receive any score.  Manual approval passes
+        # allow_lower=True because that is an explicit instructor decision.
+        existing_grade = getattr(submission, "grade", None)
+        if not allow_lower and existing_grade is not None:
+            try:
+                if scaled_grade < float(existing_grade) - 0.01:
+                    logger.info(
+                        "Auto grade kept existing score for %s #%s: new %.2f "
+                        "is lower than published %.2f",
+                        submission_type, submission_id, scaled_grade,
+                        float(existing_grade),
+                    )
+                    return False
+            except (TypeError, ValueError):
+                pass
 
         # Build a clean feedback string from the AI overall_feedback
         feedback = grade_data.get('overall_feedback', '')
@@ -783,6 +818,143 @@ def _notify_student_auto_graded(
         logger.warning(f"⚠️ Auto-grade notification failed: {e}")
 
 
+def _resolve_student_id(submission_id: int, submission_type: str) -> Optional[int]:
+    """Best-effort lookup used by callers that do not have the submission loaded."""
+    try:
+        from src.models.course_models import AssignmentSubmission, ProjectSubmission
+
+        if submission_type == 'assignment':
+            submission = AssignmentSubmission.query.get(submission_id)
+        elif submission_type == 'project':
+            submission = ProjectSubmission.query.get(submission_id)
+        else:
+            return None
+        return getattr(submission, 'student_id', None) if submission else None
+    except Exception:
+        return None
+
+
+def finalize_excel_grade(
+    app,
+    submission_id: int,
+    submission_type: str,
+    student_id: Optional[int],
+    result: Dict[str, Any],
+    *,
+    allow_lower: bool = False,
+    notify: bool = True,
+) -> Dict[str, Any]:
+    """Apply the existing Excel approval/publication pipeline to a saved result.
+
+    ``ExcelGradingService.grade_submission`` only creates an ``ExcelGradingResult``.
+    Every caller that should produce a student-visible grade must go through this
+    function so auto-grading, manual grading and the unified dispatcher cannot
+    drift apart.  It adds no new scoring logic.
+    """
+    grade_data = (result or {}).get('result') or {}
+    total_score = grade_data.get('total_score', 0)
+    max_score = grade_data.get('max_score', 100)
+    if student_id is None:
+        student_id = _resolve_student_id(submission_id, submission_type)
+
+    publication: Dict[str, Any] = {
+        "status": "pending_review",
+        "approved": False,
+        "applied": False,
+        "reason": "manual_review_required",
+        "modification_requested": False,
+        "learning_progress_updated": False,
+        "notified": False,
+    }
+
+    eligible = _auto_approve_grading_result(
+        app, submission_id, submission_type, grade_data,
+    )
+    if not eligible:
+        return publication
+
+    publication.update({"approved": True, "reason": None})
+    if not student_id:
+        publication.update({"status": "failed", "reason": "student_not_found"})
+        return publication
+
+    applied = _apply_grade_to_submission(
+        app, submission_id, submission_type, student_id,
+        total_score, max_score, grade_data, allow_lower=allow_lower,
+    )
+    if not applied:
+        # Auto-approval already marked the result final. Undo that so the
+        # student result endpoints cannot show the lower score that was just
+        # refused by the canonical submission grade.
+        _mark_excel_result_preliminary(
+            submission_id, submission_type, "higher_published_grade_retained",
+        )
+        publication.update({
+            "status": "kept_higher_grade",
+            "reason": "higher_published_grade_retained",
+        })
+        return publication
+
+    publication["applied"] = True
+    modification_requested = _auto_request_modification_if_needed(
+        app, submission_id, submission_type, student_id,
+        total_score, max_score, grade_data,
+    )
+    publication["modification_requested"] = modification_requested
+    if not modification_requested:
+        publication["learning_progress_updated"] = _update_learning_progress(
+            app, submission_id, submission_type, student_id,
+            total_score, max_score,
+        )
+
+    if notify:
+        _notify_student_auto_graded(
+            app, submission_id, submission_type, student_id, result,
+            modification_requested=modification_requested,
+        )
+        publication["notified"] = True
+
+    publication["status"] = "published"
+    return publication
+
+
+def _queue_aage_fallback(
+    submission_id: int,
+    submission_type: str,
+    student_id: Optional[int],
+    *,
+    force: bool = False,
+    reason: Optional[str] = None,
+):
+    """Hand a failed Excel auto-grade to AAGE without running both at once.
+
+    The submission hook suppresses AAGE as soon as the Excel thread starts.
+    This callback restores the fallback only when Excel definitively fails, so
+    a student never ends up with no grading engine at all.
+    """
+    try:
+        from ..aage.submission_dispatch import enqueue_for_submission
+
+        job = enqueue_for_submission(
+            submission_type=submission_type,
+            submission_id=submission_id,
+            student_id=student_id,
+            excel_grading_triggered=False,
+            force=force,
+            requested_by=student_id,
+        )
+        if job is not None:
+            logger.info(
+                "AAGE fallback queued for %s #%s after Excel failure (%s): job=%s",
+                submission_type, submission_id, reason, job.id,
+            )
+    except Exception:
+        logger.exception(
+            "AAGE fallback failed for %s #%s after Excel failure (%s)",
+            submission_type, submission_id, reason,
+        )
+
+
 def trigger_auto_excel_grading(
     submission_id: int,
     submission_type: str,
@@ -810,12 +982,17 @@ def trigger_auto_excel_grading(
     try:
         # Guard 1: Must be an Excel course
         if not _is_excel_course(course):
+            logger.info(
+                "Auto-grade skipped: course %s is not an Excel course (%s #%s)",
+                getattr(course, 'id', '?'), submission_type, submission_id,
+            )
             return False
 
         # Guard 2: Must contain at least one Excel file
         if not _has_excel_files(files_data):
-            logger.debug(
-                f"Auto-grade skipped: no Excel files in {submission_type} #{submission_id}"
+            logger.info(
+                "Auto-grade skipped: no Excel files in %s #%s",
+                submission_type, submission_id,
             )
             return False
 

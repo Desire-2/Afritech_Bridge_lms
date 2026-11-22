@@ -29,6 +29,11 @@ import {
   Archive
 } from 'lucide-react';
 import FileUploadService, { UploadedFile, FileUploadProgress, StagedFile } from '@/services/file-upload.service';
+import {
+  buildResubmissionEndpoint,
+  buildResubmissionPayload,
+  submissionUploadFolder,
+} from '@/lib/project-submission';
 import { toast } from 'sonner';
 
 interface ModificationRequest {
@@ -70,14 +75,18 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [resubmissionNotes, setResubmissionNotes] = useState('');
 
+  const submissionLabel = request.type === 'project' ? 'Project' : 'Assignment';
+
   // Assignment type handling
   const isFileUpload = request.assignment_type === 'file_upload' || request.assignment_type === 'both';
   const isTextResponse = request.assignment_type === 'text_response' || request.assignment_type === 'both';
   
   // File handling
-  const allowedFileTypes = request.allowed_file_types 
-    ? request.allowed_file_types.split(',').map(t => t.trim()) 
-    : ['*'];
+  // `allowed_file_types` is stored as a JSON array string or a comma list of
+  // bare extensions. Resolve both into normalised dot-extensions for the
+  // uploader and the input's `accept` attribute (undefined = unrestricted).
+  const allowedTypes = FileUploadService.resolveAllowedTypes(request.allowed_file_types);
+  const allowedFileTypes = allowedTypes ?? ['*'];
   
   const maxFileSizeMB = request.max_file_size_mb || 10;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
@@ -110,13 +119,9 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
         throw new Error('File staging not available. Please refresh the page.');
       }
       
-      const allowedMimeTypes = allowedFileTypes.includes('*') 
-        ? undefined 
-        : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
-      
       const newStagedFiles = FileUploadService.stageFiles(files, {
-        allowedTypes: allowedMimeTypes,
-        maxFileSize: maxFileSizeBytes,
+        allowedTypes,
+        maxSize: maxFileSizeBytes,
         maxFiles: 10
       });
       
@@ -217,7 +222,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
         }
         
         const uploadResult = await FileUploadService.uploadStagedFiles(validStagedFiles, {
-          folder: 'assignments',
+          folder: submissionUploadFolder(request.type),
           assignmentId: request.id,
           onFileProgress: (fileId, progress) => {
             setUploadProgress(prev => ({ ...prev, [fileId]: progress }));
@@ -247,12 +252,20 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
         uploadedAt: file.uploadedAt
       }));
       
-      // Get the correct API base URL
-      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
-      
-      // Use the enhanced resubmission endpoint
-      const endpoint = `${API_BASE_URL}/uploads/assignments/${request.id}/resubmit-with-files`;
-      
+      // Projects and assignments use different existing upload endpoints and
+      // different body field names. Never send a project id to the assignment
+      // resubmission route.
+      const endpoint = buildResubmissionEndpoint(
+        request.type,
+        request.id,
+        process.env.NEXT_PUBLIC_API_URL,
+      );
+      const payload = buildResubmissionPayload(request.type, {
+        text: submissionText,
+        notes: resubmissionNotes,
+        files: filesMetadata,
+      });
+
       // Call backend API with file metadata
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -260,11 +273,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          content: submissionText || undefined,
-          files: filesMetadata,
-          resubmission_notes: resubmissionNotes.trim() || undefined
-        })
+        body: JSON.stringify(payload)
       });
       
       const result = await response.json();
@@ -280,7 +289,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
             console.warn('Failed to cleanup uploaded files after submission failure:', cleanupError);
           }
         }
-        throw new Error(result.error || 'Resubmission failed');
+        throw new Error(result.error || `${submissionLabel} resubmission failed`);
       }
       
       // Clean up staged files after successful submission
@@ -289,8 +298,8 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
       }
       setStagedFiles([]);
       
-      toast.success('Assignment Resubmitted!', {
-        description: result.message || 'Your assignment has been resubmitted successfully'
+      toast.success(`${submissionLabel} Resubmitted!`, {
+        description: result.message || `Your ${submissionLabel.toLowerCase()} has been resubmitted successfully`
       });
       
       onSuccess();
@@ -298,7 +307,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
       
     } catch (error: any) {
       console.error('Resubmission error:', error);
-      const errorMessage = error.message || 'Failed to resubmit assignment';
+      const errorMessage = error.message || `Failed to resubmit ${submissionLabel.toLowerCase()}`;
       setError(errorMessage);
       toast.error('Resubmission Failed', {
         description: errorMessage
@@ -317,7 +326,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
         <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-700">
           <div>
             <h2 className="text-xl font-semibold text-slate-900 dark:text-white">
-              Resubmit Assignment
+              Resubmit {submissionLabel}
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
               {request.title}
@@ -348,7 +357,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
             <div className="flex items-start justify-between">
               <div>
                 <h4 className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
-                  Assignment Details
+                  {submissionLabel} Details
                 </h4>
                 <div className="space-y-1 text-sm text-blue-700 dark:text-blue-300">
                   <p><strong>Type:</strong> {request.assignment_type || 'Not specified'}</p>
@@ -555,7 +564,7 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
               ) : (
                 <>
                   <Send className="h-4 w-4 mr-2" />
-                  Resubmit Assignment
+                  Resubmit {submissionLabel}
                 </>
               )}
             </button>

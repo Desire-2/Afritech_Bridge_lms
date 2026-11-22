@@ -3,16 +3,20 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { canAccessInstructorAage } from '@/components/aage/roles';
 
 /**
- * A utility component to protect routes that require instructor role
- * @param children The components to render if the user has instructor role
+ * A utility component to protect the shared instructor grading workspace.
+ * @param children The components to render for instructor/admin users
  */
 export function InstructorGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [hasCheckedPermissions, setHasCheckedPermissions] = useState(false);
+  // Admins may use the instructor grading workspace too; only students and
+  // unknown roles are redirected. Kept in sync with the AAGE page guard.
+  const canAccess = canAccessInstructorAage(user?.role);
 
   useEffect(() => {
     // Wait for authentication to complete
@@ -26,25 +30,18 @@ export function InstructorGuard({ children }: { children: React.ReactNode }) {
         router.push(redirectUrl);
         return;
       } 
-      // If authenticated but not an instructor, redirect to their appropriate dashboard
-      else if (user?.role !== 'instructor') {
-        console.log('InstructorGuard: User role is', user?.role, ', redirecting to appropriate dashboard');
+      // If authenticated but not allowed here, send the user to a safe dashboard.
+      else if (!canAccess) {
+        console.log('InstructorGuard: User role is', user?.role, ', redirecting to student dashboard');
         setHasCheckedPermissions(true);
-        if (user?.role === 'admin') {
-          router.push('/admin/dashboard');
-        } else if (user?.role === 'student') {
-          router.push('/student/dashboard');
-        } else {
-          // Fallback to student dashboard for unknown roles
-          router.push('/student/dashboard');
-        }
+        router.push('/student/dashboard');
         return;
       } else {
-        // User is instructor, allow access
+        // Instructor or admin: allow access to the shared grading workspace.
         setHasCheckedPermissions(true);
       }
     }
-  }, [isAuthenticated, isLoading, router, user, hasCheckedPermissions]);
+  }, [canAccess, isAuthenticated, isLoading, router, user, hasCheckedPermissions]);
 
   // Show loading screen only during initial load
   if (isLoading && !hasCheckedPermissions) {
@@ -59,7 +56,7 @@ export function InstructorGuard({ children }: { children: React.ReactNode }) {
   }
 
   // Don't show anything if we're redirecting
-  if (!isAuthenticated || user?.role !== 'instructor') {
+  if (!isAuthenticated || !canAccess) {
     return null;
   }
 

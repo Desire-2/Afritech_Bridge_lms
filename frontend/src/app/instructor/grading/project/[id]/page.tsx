@@ -8,10 +8,12 @@ import SubmissionFileManager from '@/components/SubmissionFileManager';
 import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/grading.service';
 import { EnhancedFileService } from '@/services/enhanced-file.service';
 import { parseFileInfo } from '@/utils/fileUtils';
+import { parseAllowedFileExtensions } from '@/lib/file-upload-rules';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
 import { CommentBankPanel } from '@/components/grading/CommentBankPanel';
 import { RubricGradingPanel } from '@/components/grading/RubricGradingPanel';
-import ExcelAIGradingButton from '@/components/grading/ExcelAIGradingButton';
+import UniversalAIGradingButton from '@/components/grading/UniversalAIGradingButton';
+import GradingSubNavigation from '@/components/instructor/GradingSubNavigation';
 import {
   FileText, User, Calendar, Clock, BookOpen, ExternalLink, Star,
   MessageSquare, History, AlertTriangle, CheckCircle, Eye, Award, Target,
@@ -252,6 +254,7 @@ const ProjectGradingDetail = () => {
 
   return (
     <div className="max-w-7xl mx-auto p-3 sm:p-4 lg:p-6 space-y-4">
+      <GradingSubNavigation compact activeTab="submissions" />
       {/* HEADER */}
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-3 sm:p-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -675,14 +678,14 @@ const ProjectGradingDetail = () => {
             </div>
           )}
 
-          {/* AI Excel Grading */}
+          {/* AI Grading (Excel + AAGE) */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2"><Sparkles className="w-4 h-4" /> AI Excel Grading</h3>
-              <p className="text-purple-200 text-[10px] mt-0.5">Automated analysis for Excel submissions</p>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2"><Sparkles className="w-4 h-4" /> AI Grading</h3>
+              <p className="text-purple-200 text-[10px] mt-0.5">Automated analysis for this submission</p>
             </div>
             <div className="p-4">
-              <ExcelAIGradingButton submissionId={submissionId} submissionType="project" onGradingComplete={(aiResult) => {
+              <UniversalAIGradingButton submissionId={submissionId} submissionType="project" passingScore={passingScore} onGradingComplete={(aiResult) => {
                 // Scale AI score to project points
                 if (aiResult.total_score != null && aiResult.max_score) {
                   const scaled = Math.round((aiResult.total_score / aiResult.max_score) * maxPoints * 100) / 100;
@@ -781,7 +784,7 @@ const ProjectGradingDetail = () => {
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1.5">Allowed Types</span>
                   <div className="flex flex-wrap gap-1">
-                    {submission.project.allowed_file_types.split(',').map((type: string, i: number) => (
+                    {parseAllowedFileExtensions(submission.project.allowed_file_types).map((type, i) => (
                       <span key={i} className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-700 rounded text-[10px] font-medium text-slate-600 dark:text-slate-400">{type.trim()}</span>
                     ))}
                   </div>
@@ -860,7 +863,7 @@ const ProjectGradingDetail = () => {
             student_name: getStudentName(),
             student_id: submission.student_info?.id || 0,
             assignment_title: submission.project_title || submission.project?.title || 'Unknown Project',
-            assignment_id: submission.project?.id || 0,
+            project_id: submission.project?.id || 0,
             submission_type: 'project'
           }}
           onSuccess={() => { setShowModificationModal(false); fetchSubmission(); }}

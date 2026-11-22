@@ -10,6 +10,7 @@ import {
   Clock
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { buildModificationRequestEndpoint } from '@/lib/project-submission';
 
 interface RequestModificationModalProps {
   isOpen: boolean;
@@ -19,7 +20,10 @@ interface RequestModificationModalProps {
     student_name: string;
     student_id: number;
     assignment_title: string;
-    assignment_id: number;
+    /** Present for assignment submissions. */
+    assignment_id?: number;
+    /** Present for project submissions. */
+    project_id?: number;
     submission_type: 'assignment' | 'project';
   };
   onSuccess: () => void;
@@ -59,13 +63,26 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
       return;
     }
 
+    // The endpoint path needs the assignment/project id, never the submission
+    // id. Older callers passed project ids through `assignment_id`, so accept
+    // both but prefer the type-specific field.
+    const targetId = submission.submission_type === 'project'
+      ? (submission.project_id ?? submission.assignment_id)
+      : submission.assignment_id;
+    if (!targetId || !Number.isFinite(targetId)) {
+      setError('This submission is missing its assessment id. Please refresh and try again.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      const endpoint = submission.submission_type === 'assignment' 
-        ? `${process.env.NEXT_PUBLIC_API_URL}/modification/assignments/${submission.assignment_id}/request-modification`
-        : `${process.env.NEXT_PUBLIC_API_URL}/modification/projects/${submission.assignment_id}/request-modification`;
+      const endpoint = buildModificationRequestEndpoint(
+        submission.submission_type,
+        targetId,
+        process.env.NEXT_PUBLIC_API_URL,
+      );
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {

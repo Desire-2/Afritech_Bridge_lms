@@ -118,9 +118,11 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
   );
   const canResubmit = hasModificationRequest && isSubmitted && !resubmittedForCurrentRequest;
 
-  const allowedFileTypes = assignment.allowed_file_types 
-    ? assignment.allowed_file_types.split(',').map(t => t.trim()) 
-    : ['*'];
+  // `allowed_file_types` is stored as a JSON array string or a comma list of
+  // bare extensions. Resolve both into normalised dot-extensions for the
+  // uploader and the input's `accept` attribute (undefined = unrestricted).
+  const allowedTypes = FileUploadService.resolveAllowedTypes(assignment.allowed_file_types);
+  const allowedFileTypes = allowedTypes ?? ['*'];
   
   const maxFileSizeMB = assignment.max_file_size_mb || 50;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
@@ -134,10 +136,6 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
     setError(null);
     
     try {
-      const allowedMimeTypes = allowedFileTypes.includes('*') 
-        ? undefined 
-        : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
-      
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const fileKey = `${file.name}-${file.size}-${Date.now()}-${i}`;
@@ -162,7 +160,7 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
           const uploadedFile = await FileUploadService.uploadFile(file, {
             folder: 'assignments',
             assignmentId: assignment.id,
-            allowedTypes: allowedMimeTypes,
+            allowedTypes,
             maxSize: maxFileSizeBytes,
             onProgress: (progress) => {
               setUploadProgress(prev => ({ ...prev, [fileKey]: progress }));

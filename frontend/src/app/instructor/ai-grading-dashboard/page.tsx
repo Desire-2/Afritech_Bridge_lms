@@ -49,6 +49,7 @@ import ExcelGradingService, {
 } from "@/services/excel-grading.service";
 import InstructorService from "@/services/instructor.service";
 import { Course } from "@/types/api";
+import GradingSubNavigation from "@/components/instructor/GradingSubNavigation";
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -176,7 +177,6 @@ export default function AIGradingDashboardPage() {
   const [recentResults, setRecentResults] = useState<ExcelGradingResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
   const perPage = 10;
 
@@ -269,7 +269,6 @@ export default function AIGradingDashboardPage() {
       setStats(statsData);
       setLearningStats(learningData);
       setRecentResults(historyData?.results || []);
-      setPage(1);
     } catch (err: any) {
       setError(err.message || "Failed to load AI grading data");
     } finally {
@@ -309,6 +308,7 @@ export default function AIGradingDashboardPage() {
   // ── Render ──────────────────────────────────────────────────
   return (
     <div className="space-y-6 pb-8">
+      <GradingSubNavigation />
       {/* Header */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-500 p-6 sm:p-8 text-white">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PHBhdGggZD0iTTM2IDE4YzMuMzE0IDAgNiAyLjY4NiA2IDZzLTIuNjg2IDYtNiA2LTYtMi42ODYtNi02IDIuNjg2LTYgNi02eiIvPjwvZz48L2c+PC9zdmc+')] opacity-40" />

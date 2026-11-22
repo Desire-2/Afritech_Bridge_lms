@@ -8,12 +8,33 @@ from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, 
 from sqlalchemy.orm import relationship
 from ..models.user_models import db
 
+# ``Rubric.profile_id`` logically references ``grading_profiles``. The column
+# is intentionally a plain integer in both the migration and the additive
+# self-heal path so retrofitting a constraint onto legacy rows cannot fail on
+# orphan ids. Importing the AAGE module registers the profile table even when
+# only this module was imported.
+from . import aage_models as _aage_models  # noqa: F401
+
 
 class Rubric(db.Model):
-    """Rubric template for assignments/projects"""
+    """Rubric template for assignments/projects
+
+    Also serves as the AAGE ``GradingRubric`` entity: the grading engine adds
+    lifecycle/approval metadata (``status``, ``version``, discipline, approval
+    audit) on top of the original columns so ``Assignment.rubric_id`` and
+    ``Project.rubric_id`` keep pointing at the same table.
+    """
     __tablename__ = 'rubrics'
     
     id = Column(Integer, primary_key=True)
+    # Legacy compatibility: pre-AAGE databases created this table with a NOT
+    # NULL ``name`` column (and an ``is_active`` flag).  The AAGE model uses
+    # ``title`` instead, but the ORM must still populate these legacy columns
+    # on INSERT or those databases reject the row with
+    # ``NOT NULL constraint failed: rubrics.name``.  They are intentionally not
+    # part of to_dict()/the public contract.
+    name = Column(String(200), nullable=False, default="")
+    is_active = Column(Boolean, nullable=False, default=True)
     title = Column(String(200), nullable=False)
     description = Column(Text)
     instructor_id = Column(Integer, ForeignKey('users.id'), nullable=False)
@@ -22,11 +43,45 @@ class Rubric(db.Model):
     total_points = Column(Float, nullable=False)
     created_at = Column(DateTime, default=now_local)
     updated_at = Column(DateTime, default=now_local, onupdate=now_local)
-    
+
+    # ── AAGE extensions (all nullable / additive) ────────────────────────
+    status = Column(String(30), default='approved')   # draft|pending_approval|approved|archived
+    version = Column(Integer, default=1)
+    discipline = Column(String(60))                   # frontend|backend|data_science|...
+    assessment_kind = Column(String(20))              # assignment|project
+    assessment_id = Column(Integer)                   # owning assessment id (polymorphic)
+    source = Column(String(20))                       # ai|instructor|profile
+    generated_by_ai = Column(Boolean, default=False)
+    summary = Column(Text)
+    learning_objectives = Column(JSON)
+    deliverables = Column(JSON)
+    technologies = Column(JSON)
+    evaluation_methods = Column(JSON)
+    evaluator_recommendations = Column(JSON)          # ["frontend", "backend", ...]
+    unverifiable_requirements = Column(JSON)          # [{requirement, reason}]
+    parent_rubric_id = Column(Integer)                # lineage when forked
+    profile_id = Column(Integer)                      # logical grading_profiles.id
+    approved_by = Column(Integer)                     # logical users.id
+    approved_at = Column(DateTime)
+    criteria_weights_total = Column(Float)            # must be 100.0 when approved
+
     # Relationships
     criteria = relationship('RubricCriterion', backref='rubric', cascade='all, delete-orphan', lazy='dynamic')
     instructor = relationship('User', foreign_keys=[instructor_id])
-    
+    approver = relationship(
+        'User',
+        foreign_keys=[approved_by],
+        primaryjoin='Rubric.approved_by == User.id',
+    )
+
+    def is_approved(self) -> bool:
+        # Legacy rows pre-date the status column: treat them as approved so
+        # existing graded assessments keep working.
+        return (self.status or 'approved') == 'approved'
+
+    def weights_total(self) -> float:
+        return round(sum(float(c.weight or 0) for c in self.criteria.all()), 2)
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -38,12 +93,36 @@ class Rubric(db.Model):
             'total_points': self.total_points,
             'criteria': [c.to_dict() for c in self.criteria.all()],
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            # AAGE fields
+            'status': self.status or 'approved',
+            'version': self.version or 1,
+            'discipline': self.discipline,
+            'assessment_kind': self.assessment_kind,
+            'assessment_id': self.assessment_id,
+            'source': self.source,
+            'generated_by_ai': bool(self.generated_by_ai),
+            'summary': self.summary,
+            'learning_objectives': self.learning_objectives or [],
+            'deliverables': self.deliverables or [],
+            'technologies': self.technologies or [],
+            'evaluation_methods': self.evaluation_methods or [],
+            'evaluator_recommendations': self.evaluator_recommendations or [],
+            'unverifiable_requirements': self.unverifiable_requirements or [],
+            'profile_id': self.profile_id,
+            'approved_by': self.approved_by,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'criteria_weights_total': self.criteria_weights_total,
         }
 
 
 class RubricCriterion(db.Model):
-    """Individual criterion within a rubric"""
+    """Individual criterion within a rubric
+
+    AAGE extends it with weighting (must total 100 across the rubric),
+    required/optional marking, evidence requirements and per-evaluator
+    instructions.
+    """
     __tablename__ = 'rubric_criteria'
     
     id = Column(Integer, primary_key=True)
@@ -55,7 +134,16 @@ class RubricCriterion(db.Model):
     
     # Performance levels (JSON array of {level, points, description})
     performance_levels = Column(JSON)
-    
+
+    # ── AAGE extensions ─────────────────────────────────────────────────
+    weight = Column(Float, default=0)                 # percentage of the final score
+    is_required = Column(Boolean, default=True)
+    criterion_key = Column(String(80))                # stable id across rubric versions
+    evidence_requirements = Column(JSON)              # ["source file", "screenshot", ...]
+    evidence_category = Column(String(30))            # expected default category
+    evaluator_hint = Column(String(120))              # which specialist evaluator to prefer
+    evaluator_instructions = Column(Text)             # evaluator-specific guidance
+
     created_at = Column(DateTime, default=now_local)
     
     def to_dict(self):
@@ -67,7 +155,14 @@ class RubricCriterion(db.Model):
             'max_points': self.max_points,
             'order_index': self.order_index,
             'performance_levels': self.performance_levels or [],
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'weight': self.weight or 0,
+            'is_required': True if self.is_required is None else bool(self.is_required),
+            'criterion_key': self.criterion_key,
+            'evidence_requirements': self.evidence_requirements or [],
+            'evidence_category': self.evidence_category,
+            'evaluator_hint': self.evaluator_hint,
+            'evaluator_instructions': self.evaluator_instructions,
         }
 
 

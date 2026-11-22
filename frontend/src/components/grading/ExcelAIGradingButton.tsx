@@ -7,7 +7,7 @@
  * Shows loading state, then displays the result panel on completion.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Brain,
   Sparkles,
@@ -181,6 +181,22 @@ interface Props {
   onGradingComplete?: (result: ExcelGradingResult) => void;
   /** Compact mode: just the button, no embedded result panel */
   compact?: boolean;
+  /**
+   * Optional dispatcher-provided start function. When supplied, the button
+   * uses the unified grading endpoint instead of calling the legacy Excel
+   * endpoint directly, while keeping the existing Excel result panel.
+   */
+  startGrading?: (force: boolean) => Promise<any>;
+  /**
+   * Excel result already returned by the unified status endpoint. Supplying it
+   * avoids a second mount-time call to the legacy Excel result endpoint.
+   */
+  initialResult?: ExcelGradingResult | null;
+  /**
+   * Historical-result viewer: the unified button owns grading, so no run or
+   * re-run controls are shown here. Full detail is still loaded on demand.
+   */
+  readOnly?: boolean;
 }
 
 export default function ExcelAIGradingButton({
@@ -188,21 +204,37 @@ export default function ExcelAIGradingButton({
   submissionType = "assignment",
   onGradingComplete,
   compact = false,
+  startGrading,
+  initialResult,
+  readOnly = false,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorReason, setErrorReason] = useState<string | null>(null);
+  const [publicationStatus, setPublicationStatus] = useState<string | null>(null);
   const [result, setResult] = useState<ExcelGradingResult | null>(null);
   const [existingResult, setExistingResult] =
-    useState<ExcelGradingResult | null>(null);
-  const [checkingExisting, setCheckingExisting] = useState(true);
+    useState<ExcelGradingResult | null>(initialResult ?? null);
+  // With a dispatcher, the unified status call already told us whether an
+  // Excel result exists. Skip the legacy lookup in that path entirely.
+  const [checkingExisting, setCheckingExisting] = useState(
+    !initialResult && !startGrading,
+  );
 
-  // Check for existing AI grading result on mount
-  useEffect(() => {
-    checkExistingResult();
-  }, [submissionId, submissionType]);
+  // Refs mirror the latest result so async callbacks never read a stale render
+  // snapshot. All writes go through these updaters to keep refs and state in sync.
+  const existingResultRef = useRef<ExcelGradingResult | null>(initialResult ?? null);
+  const updateExistingResult = useCallback((value: ExcelGradingResult | null) => {
+    existingResultRef.current = value;
+    setExistingResult(value);
+  }, []);
 
-  const checkExistingResult = async () => {
+  /**
+   * Fetch the full Excel result and return it. Returning the value (instead of
+   * reading the `existingResult` state variable) avoids the stale-closure bug
+   * where a just-fetched result was checked against the previous render.
+   */
+  const checkExistingResult = useCallback(async (): Promise<ExcelGradingResult | null> => {
     setCheckingExisting(true);
     try {
       const existing = await ExcelGradingService.getResultBySubmission(
@@ -210,31 +242,52 @@ export default function ExcelAIGradingButton({
         submissionType
       );
       if (existing && existing.id) {
-        setExistingResult(existing);
-        setResult(existing);
+        updateExistingResult(existing);
+        return existing;
       }
+      return null;
     } catch {
       // No existing result — that's fine
+      return null;
     } finally {
       setCheckingExisting(false);
     }
-  };
+  }, [submissionId, submissionType, updateExistingResult]);
+
+  // Only the standalone Excel path needs a mount-time lookup. When the
+  // dispatcher is present its unified status payload is the source of truth.
+  useEffect(() => {
+    if (initialResult?.id) {
+      updateExistingResult(initialResult);
+      setCheckingExisting(false);
+      return;
+    }
+    if (startGrading) {
+      setCheckingExisting(false);
+      return;
+    }
+    void checkExistingResult();
+  }, [checkExistingResult, initialResult, startGrading, updateExistingResult]);
 
   const handleGrade = async (force = false) => {
     setLoading(true);
     setError(null);
     setErrorReason(null);
     try {
-      const response = await ExcelGradingService.gradeSubmission(submissionId, {
-        submission_type: submissionType,
-        force,
-      });
+      const response = startGrading
+        ? await startGrading(force)
+        : await ExcelGradingService.gradeSubmission(submissionId, {
+            submission_type: submissionType,
+            force,
+          });
 
       if (response.status === "failed" || response.status === "skipped") {
         setError(response.message || response.error || "AI grading failed");
         setErrorReason(response.reason || null);
         return;
       }
+
+      setPublicationStatus(response.publication?.status || null);
 
       // The grading result may be nested under response.result
       // (status=completed wraps it) or flat (already_graded / direct).
@@ -245,14 +298,14 @@ export default function ExcelAIGradingButton({
 
       if (gradingResult?.id) {
         setResult(gradingResult);
-        setExistingResult(gradingResult);
+        updateExistingResult(gradingResult);
         onGradingComplete?.(gradingResult);
       } else {
-        // Result saved on backend — re-fetch to get the full object
-        await checkExistingResult();
-        if (existingResult) {
-          onGradingComplete?.(existingResult);
-        }
+        // Result saved on backend — use the freshly returned value, not the
+        // stale render snapshot captured by this callback.
+        const refreshed = await checkExistingResult();
+        const completed = refreshed ?? existingResultRef.current;
+        if (completed) onGradingComplete?.(completed);
       }
     } catch (err: any) {
       setError(err.message || "AI grading request failed");
@@ -261,9 +314,24 @@ export default function ExcelAIGradingButton({
     }
   };
 
+  const handleViewExisting = async () => {
+    // Load the detailed panel only when the user asks for it. The lightweight
+    // unified-status summary is enough to render the trigger state above.
+    const full = await checkExistingResult();
+    const shown = full ?? existingResultRef.current;
+    if (!shown) return;
+    setResult(shown);
+    updateExistingResult(shown);
+    setPublicationStatus(
+      shown.instructor_reviewed ? "published" : "pending_review"
+    );
+    // A historical viewer must never overwrite the current published grade.
+    if (!readOnly) onGradingComplete?.(shown);
+  };
+
   const handleReviewComplete = (updated: ExcelGradingResult) => {
     setResult(updated);
-    setExistingResult(updated);
+    updateExistingResult(updated);
     onGradingComplete?.(updated);
   };
 
@@ -281,24 +349,26 @@ export default function ExcelAIGradingButton({
       {/* ── Trigger Buttons ────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
         {!existingResult ? (
-          <button
-            onClick={() => handleGrade(false)}
-            disabled={loading}
-            className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Analyzing Excel file...
-              </>
-            ) : (
-              <>
-                <Brain className="h-4 w-4" />
-                <Sparkles className="h-3.5 w-3.5" />
-                Run AI Grading
-              </>
-            )}
-          </button>
+          readOnly ? null : (
+            <button
+              onClick={() => handleGrade(false)}
+              disabled={loading}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg text-sm font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Analyzing Excel file...
+                </>
+              ) : (
+                <>
+                  <Brain className="h-4 w-4" />
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Run AI Grading
+                </>
+              )}
+            </button>
+          )
         ) : (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 rounded-lg text-sm font-medium">
@@ -307,7 +377,7 @@ export default function ExcelAIGradingButton({
               {existingResult.grade_letter})
             </div>
             <button
-              onClick={() => handleGrade(true)}
+              onClick={() => void handleViewExisting()}
               disabled={loading}
               className="flex items-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
@@ -316,11 +386,39 @@ export default function ExcelAIGradingButton({
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              Re-grade
+              View AI result
             </button>
+            {!readOnly && (
+              <button
+                onClick={() => {
+                  if (window.confirm(
+                    "Run a new AI evaluation? The published grade stays unchanged unless you approve the new result."
+                  )) {
+                    void handleGrade(true);
+                  }
+                }}
+                disabled={loading}
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Re-run AI
+              </button>
+            )}
           </div>
         )}
       </div>
+
+      {publicationStatus && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          {publicationStatus === "pending_review"
+            ? "AI assessment saved — awaiting instructor review. The published grade is unchanged."
+            : publicationStatus === "kept_higher_grade"
+            ? "Published grade retained because the new AI score was lower."
+            : publicationStatus === "published"
+            ? "AI result published to the student grade."
+            : null}
+        </p>
+      )}
 
       {/* ── Error ──────────────────────────────── */}
       {error && (() => {
@@ -348,6 +446,7 @@ export default function ExcelAIGradingButton({
         <ExcelGradingResultPanel
           result={result}
           onReviewComplete={handleReviewComplete}
+          readOnly={readOnly}
         />
       )}
     </div>

@@ -12,7 +12,6 @@ Coordinates:
 Only processes MS Excel course submissions with allowed extensions.
 """
 
-import json
 import time
 import logging
 import re
@@ -21,15 +20,14 @@ from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from src.utils.time_utils import now_local
 
+from .excel_file_detection import (
+    EXCEL_EXTENSIONS as ALLOWED_EXTENSIONS,
+    course_is_excel,
+    has_excel_extension,
+    normalize_submission_files,
+)
+
 logger = logging.getLogger(__name__)
-
-# Allowed Excel file extensions
-ALLOWED_EXTENSIONS = {'.xlsx', '.xlsm', '.xls', '.csv'}
-
-# Keywords to identify MS Excel courses
-EXCEL_COURSE_KEYWORDS = [
-    'ms excel', 'microsoft excel', 'excel', 'spreadsheet',
-]
 
 
 class ExcelGradingService:
@@ -88,13 +86,22 @@ class ExcelGradingService:
                     'status': 'skipped',
                 }
 
-            # Step 3: Check if already graded (unless force)
+            # Step 3: Reuse a finalised result. A preliminary/unreviewed result
+            # is not "already graded": reusing it silently used to leave the
+            # student with no grade and no explanation.
             if not force:
                 existing = self._get_existing_result(submission_id, submission_type)
                 if existing and existing.status == 'completed':
+                    if self._is_finalized(existing):
+                        return {
+                            'status': 'already_graded',
+                            'result': existing.to_dict(),
+                        }
                     return {
-                        'status': 'already_graded',
+                        'status': 'pending_review',
+                        'message': 'AI assessment is complete and awaiting instructor review.',
                         'result': existing.to_dict(),
+                        'publication': {'status': 'pending_review'},
                     }
 
             # Step 4: Get file(s) from submission
@@ -254,17 +261,42 @@ class ExcelGradingService:
         results = []
         for sub in submissions:
             result = self.grade_submission(sub.id, submission_type, force=force)
+            publication = {'status': 'not_applicable'}
+            if result.get('status') == 'completed':
+                try:
+                    from flask import current_app, has_app_context
+                    from .auto_grader import finalize_excel_grade
+
+                    if has_app_context():
+                        publication = finalize_excel_grade(
+                            current_app._get_current_object(), sub.id,
+                            submission_type, sub.student_id, result,
+                        )
+                    else:
+                        publication = {
+                            'status': 'pending_review',
+                            'reason': 'no_app_context',
+                        }
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.exception("Batch Excel publication failed for %s", sub.id)
+                    publication = {'status': 'failed', 'reason': str(exc)}
+            elif result.get('status') == 'pending_review':
+                publication = {'status': 'pending_review',
+                               'reason': 'instructor_review_required'}
+
             results.append({
                 'submission_id': sub.id,
                 'student_id': sub.student_id,
                 'status': result.get('status'),
                 'score': result.get('result', {}).get('total_score') if result.get('result') else None,
+                'publication': publication.get('status'),
                 'error': result.get('error'),
             })
 
         succeeded = sum(1 for r in results if r['status'] == 'completed')
         failed = sum(1 for r in results if r['status'] == 'failed')
-        skipped = sum(1 for r in results if r['status'] in ('skipped', 'already_graded'))
+        skipped = sum(1 for r in results if r['status'] in (
+            'skipped', 'already_graded', 'pending_review'))
 
         return {
             'total': len(results),
@@ -342,59 +374,36 @@ class ExcelGradingService:
 
     def _is_excel_course(self, course) -> bool:
         """Check if the course is an MS Excel course."""
-        title = (course.title or '').lower()
-        description = (course.description or '').lower()
-        combined = f"{title} {description}"
-
-        return any(kw in combined for kw in EXCEL_COURSE_KEYWORDS)
+        return course_is_excel(course)
 
     # ------------------------------------------------------------------
     # Internal: File handling
     # ------------------------------------------------------------------
 
     def _extract_files(self, submission, submission_type: str) -> List[Dict[str, Any]]:
-        """Extract file metadata from submission.
-
-        Both assignment and project submissions may store files as a JSON
-        array in their file column (file_url for assignments, file_path for
-        projects).  We try JSON parsing first, then fall back to treating
-        the value as a plain URL/path.
-        """
-        files = []
-
+        """Extract file metadata from submission using the shared parser."""
         if submission_type == 'assignment':
             raw = getattr(submission, 'file_url', None)
         else:
             raw = getattr(submission, 'file_path', None)
 
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                if isinstance(parsed, list):
-                    files.extend(parsed)
-                elif isinstance(parsed, dict):
-                    files.append(parsed)
-                else:
-                    # Unexpected JSON scalar — treat as URL
-                    files.append({'url': str(parsed), 'filename': 'submission_file'})
-            except (json.JSONDecodeError, TypeError):
-                # Plain URL or path string
-                fn = getattr(submission, 'file_name', None) or 'submission_file'
-                files.append({
-                    'url': raw,
-                    'filename': fn,
-                    'original_filename': fn,
-                })
-
+        files = normalize_submission_files(raw)
+        # Legacy plain-URL submissions kept the real name in a separate column.
+        if len(files) == 1 and isinstance(raw, str) and not has_excel_extension(
+            files[0].get('original_filename') or files[0].get('filename') or ''
+        ):
+            declared_name = getattr(submission, 'file_name', None)
+            if declared_name and has_excel_extension(declared_name):
+                files[0]['original_filename'] = declared_name
+                files[0]['filename'] = declared_name
         return files
 
     def _filter_excel_files(self, files: List[Dict]) -> List[Dict]:
-        """Filter to only Excel file types."""
+        """Filter to only Excel file types, regardless of metadata key."""
         result = []
         for f in files:
-            name = (f.get('original_filename') or f.get('filename') or '').lower()
-            ext = '.' + name.rsplit('.', 1)[-1] if '.' in name else ''
-            if ext in ALLOWED_EXTENSIONS:
+            name = f.get('original_filename') or f.get('filename') or ''
+            if has_excel_extension(name):
                 result.append(f)
         return result
 
@@ -415,6 +424,10 @@ class ExcelGradingService:
             or ''
         )
         storage = (file_info.get('storage') or '').lower()
+        # An HTML file submitted as course work is expected to download as
+        # text/html. Without this hint the generic auth-wall guard below treats
+        # a real .html submission as a login page and discards it.
+        allow_html = self._declares_html_file(file_info)
 
         # ----------------------------------------------------------
         # 1. Explicit Google Drive file_id
@@ -439,7 +452,7 @@ class ExcelGradingService:
         # 3. Vercel Blob or any absolute HTTP(S) URL → HTTP GET
         # ----------------------------------------------------------
         if url.startswith('http://') or url.startswith('https://'):
-            content = self._download_from_url(url)
+            content = self._download_from_url(url, allow_html=allow_html)
             if content:
                 return content
 
@@ -452,7 +465,7 @@ class ExcelGradingService:
             for origin in frontend_origins:
                 full_url = origin.rstrip('/') + url
                 logger.info(f"Trying relative path via frontend: {full_url[:120]}")
-                content = self._download_from_url(full_url)
+                content = self._download_from_url(full_url, allow_html=allow_html)
                 if content:
                     return content
 
@@ -461,7 +474,7 @@ class ExcelGradingService:
         # ----------------------------------------------------------
         download_url = file_info.get('download_url') or file_info.get('downloadUrl')
         if download_url and (download_url.startswith('http://') or download_url.startswith('https://')):
-            content = self._download_from_url(download_url)
+            content = self._download_from_url(download_url, allow_html=allow_html)
             if content:
                 return content
 
@@ -521,11 +534,33 @@ class ExcelGradingService:
             return None
 
     @staticmethod
-    def _download_from_url(url: str) -> Optional[bytes]:
+    def _declares_html_file(file_info: Dict) -> bool:
+        """Whether the submission metadata says this file is HTML."""
+        name = str(
+            file_info.get('original_filename')
+            or file_info.get('filename')
+            or file_info.get('pathname')
+            or ''
+        ).lower()
+        if name.endswith(('.html', '.htm', '.xhtml')):
+            return True
+        content_type = str(
+            file_info.get('contentType') or file_info.get('content_type') or ''
+        ).lower()
+        return 'html' in content_type
+
+    @staticmethod
+    def _download_from_url(
+        url: str, *, allow_html: bool = False
+    ) -> Optional[bytes]:
         """
         Download file bytes from any public HTTP/HTTPS URL.
         Handles Vercel Blob, S3, and any publicly accessible file.
         Enforces a 100 MB download limit to prevent memory abuse.
+
+        ``allow_html`` must be set when the submitted file itself is HTML;
+        otherwise a real .html submission is indistinguishable from the login
+        page the auth-wall guard is meant to reject.
         """
         import requests as http_requests
 
@@ -536,9 +571,10 @@ class ExcelGradingService:
             resp = http_requests.get(url, timeout=(10, 60), stream=True)
             resp.raise_for_status()
 
-            # Sanity-check: reject HTML error pages
+            # Sanity-check: reject HTML error pages, but never reject a file
+            # the student actually submitted as HTML.
             content_type = resp.headers.get('Content-Type', '')
-            if 'text/html' in content_type and resp.status_code == 200:
+            if 'text/html' in content_type and not allow_html and resp.status_code == 200:
                 # Might be a redirect/login page rather than the actual file
                 first_chunk = next(resp.iter_content(50), b'')
                 if b'<!DOCTYPE' in first_chunk or b'<html' in first_chunk:
@@ -1337,6 +1373,16 @@ class ExcelGradingService:
     # ------------------------------------------------------------------
     # Internal: DB persistence
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_finalized(result) -> bool:
+        """A result is final only after auto-approval or instructor review."""
+        if result is None:
+            return False
+        return bool(
+            getattr(result, 'instructor_reviewed', False)
+            or getattr(result, 'status', None) == 'reviewed'
+        )
 
     def _get_existing_result(self, submission_id: int, submission_type: str):
         """Check for existing grading result."""

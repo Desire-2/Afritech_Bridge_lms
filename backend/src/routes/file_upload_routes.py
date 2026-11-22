@@ -17,7 +17,7 @@ from ..models.student_models import LessonCompletion
 from ..utils.validators import StudentValidators
 from ..utils.google_drive_service import google_drive_service
 from ..utils.email_notifications import notify_instructor_of_submission
-from ..services.excel_grading.auto_grader import trigger_auto_excel_grading
+from ..services.aage.submission_dispatch import enqueue_for_submission
 
 logger = logging.getLogger(__name__)
 
@@ -157,19 +157,15 @@ def submit_assignment_with_files(assignment_id):
         
         logger.info(f"Assignment {assignment_id} submitted by user {current_user_id} with {len(files_data)} files")
         
-        # Auto-trigger AI grading for Excel submissions
-        auto_grading_triggered = False
-        try:
-            course = Course.query.get(assignment.course_id)
-            auto_grading_triggered = trigger_auto_excel_grading(
-                submission_id=submission.id,
-                submission_type='assignment',
-                student_id=current_user_id,
-                course=course,
-                files_data=files_data,
-            )
-        except Exception as ag_err:
-            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        # Every assignment submission is graded by AAGE; spreadsheet files use
+        # the native spreadsheet specialist. Fail-open: grading never blocks
+        # the student's submission.
+        aage_job = enqueue_for_submission(
+            submission_type='assignment',
+            submission_id=submission.id,
+            student_id=current_user_id,
+        )
+        auto_grading_triggered = aage_job is not None
 
         # Email the instructor that a new submission arrived (non-blocking)
         try:
@@ -193,6 +189,7 @@ def submit_assignment_with_files(assignment_id):
                 "has_text": bool(data.get('content')),
                 "status": "submitted",
                 "ai_grading_triggered": auto_grading_triggered,
+                "aage_job_id": aage_job.id if aage_job else None,
             }
         }), 201
         
@@ -305,20 +302,15 @@ def resubmit_assignment_with_files(assignment_id):
         
         logger.info(f"Assignment {assignment_id} resubmitted by user {current_user_id} with {len(files_data)} files")
         
-        # Auto-trigger AI grading for Excel resubmissions
-        auto_grading_triggered = False
-        try:
-            course = Course.query.get(assignment.course_id)
-            auto_grading_triggered = trigger_auto_excel_grading(
-                submission_id=existing.id,
-                submission_type='assignment',
-                student_id=current_user_id,
-                course=course,
-                files_data=files_data,
-                force=True,  # Force re-grade on resubmission (ignores previous result)
-            )
-        except Exception as ag_err:
-            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        # A resubmission supersedes an in-flight job and any older result.
+        # Spreadsheet files are handled by the native AAGE specialist.
+        aage_job = enqueue_for_submission(
+            submission_type='assignment',
+            submission_id=existing.id,
+            student_id=current_user_id,
+            force=True,
+        )
+        auto_grading_triggered = aage_job is not None
 
         # Email the instructor about the resubmission (non-blocking)
         try:
@@ -344,6 +336,7 @@ def resubmit_assignment_with_files(assignment_id):
                 "has_text": bool(data.get('content')),
                 "status": "resubmitted",
                 "ai_grading_triggered": auto_grading_triggered,
+                "aage_job_id": aage_job.id if aage_job else None,
             }
         }), 200
         
@@ -449,19 +442,15 @@ def submit_project_with_files(project_id):
         
         logger.info(f"Project {project_id} submitted by user {current_user_id} with {len(files_data)} files")
         
-        # Auto-trigger AI grading for Excel submissions
-        auto_grading_triggered = False
-        try:
-            course = Course.query.get(project.course_id)
-            auto_grading_triggered = trigger_auto_excel_grading(
-                submission_id=submission.id,
-                submission_type='project',
-                student_id=current_user_id,
-                course=course,
-                files_data=files_data,
-            )
-        except Exception as ag_err:
-            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        # Every project submission is graded by AAGE; spreadsheet files use the
+        # native spreadsheet specialist. Fail-open: grading never blocks the
+        # student's submission.
+        aage_job = enqueue_for_submission(
+            submission_type='project',
+            submission_id=submission.id,
+            student_id=current_user_id,
+        )
+        auto_grading_triggered = aage_job is not None
 
         # Email the instructor that a new project submission arrived (non-blocking)
         try:
@@ -487,6 +476,7 @@ def submit_project_with_files(project_id):
                 "team_size": len(team_members),
                 "status": "submitted",
                 "ai_grading_triggered": auto_grading_triggered,
+                "aage_job_id": aage_job.id if aage_job else None,
             }
         }), 201
         

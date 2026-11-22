@@ -1,5 +1,6 @@
 // File Upload Service with Vercel Blob Storage and Backend Fallback
 import { put, list, del, head } from '@vercel/blob';
+import { resolveAllowedExtensions } from '../lib/file-upload-rules';
 
 export interface UploadedFile {
   url: string;
@@ -96,6 +97,19 @@ export class FileUploadService {
   ];
 
   /**
+   * Turn an assignment/project `allowed_file_types` value into the argument
+   * `validateFile` / `stageFiles` / `uploadFile` expect.
+   *
+   * Returns normalised dot-extensions (e.g. `['.html', '.mp4']`) so validation
+   * is performed against the file name: browsers disagree on MIME strings
+   * (`.js`, `.zip`, `.md`) and sometimes omit them entirely. `undefined` means
+   * unrestricted and falls back to the default accept-list.
+   */
+  static resolveAllowedTypes(raw?: string | null): string[] | undefined {
+    return resolveAllowedExtensions(raw);
+  }
+
+  /**
    * Validate a file before upload
    */
   static validateFile(
@@ -104,7 +118,7 @@ export class FileUploadService {
     maxSize?: number
   ): FileValidationResult {
     const errors: string[] = [];
-    const types = allowedTypes || this.DEFAULT_ALLOWED_TYPES;
+    const types = allowedTypes?.length ? allowedTypes : this.DEFAULT_ALLOWED_TYPES;
     const size = maxSize || this.MAX_FILE_SIZE;
 
     // Check file size
@@ -112,9 +126,21 @@ export class FileUploadService {
       errors.push(`File size ${this.formatBytes(file.size)} exceeds maximum allowed size of ${this.formatBytes(size)}`);
     }
 
-    // Check file type
-    if (!types.includes(file.type)) {
-      errors.push(`File type "${file.type}" is not allowed. Allowed types: ${types.join(', ')}`);
+    // Checks against extensions are authoritative when present: the instructor
+    // configured an extension allow-list, and MIME reporting is not reliable
+    // enough to second-guess it. MIME rules remain supported for callers that
+    // pass MIME types directly.
+    const extensionRules = types
+      .filter((type) => type.startsWith('.'))
+      .map((type) => type.toLowerCase());
+    const fileExtension = `.${this.getFileExtension(file.name).toLowerCase()}`;
+    const typeAllowed = extensionRules.length
+      ? extensionRules.includes(fileExtension)
+      : types.includes(file.type);
+
+    if (!typeAllowed) {
+      const allowed = extensionRules.length ? extensionRules : types;
+      errors.push(`File type "${file.type || fileExtension}" is not allowed. Allowed types: ${allowed.join(', ')}`);
     }
 
     // Check file name

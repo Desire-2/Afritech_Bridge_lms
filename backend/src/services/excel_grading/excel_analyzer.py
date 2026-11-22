@@ -14,6 +14,8 @@ import zipfile
 from io import BytesIO
 from typing import Dict, Any, List, Optional, Tuple
 
+from .ooxml_feature_analyzer import OOXMLFeatureAnalyzer, unsupported_ooxml_features
+
 logger = logging.getLogger(__name__)
 
 # Lazy imports to avoid startup cost
@@ -64,7 +66,11 @@ class ExcelAnalyzer:
                 return {'error': f'Unsupported file type: .{self.ext}', 'sheets': []}
         except Exception as e:
             logger.error(f"Excel analysis failed for {self.file_name}: {e}")
-            return {'error': str(e), 'sheets': []}
+            return {
+                'error': str(e),
+                'ooxml_features': unsupported_ooxml_features(self.ext, self.file_name),
+                'sheets': [],
+            }
 
     # ------------------------------------------------------------------
     # .xlsx / .xlsm  (openpyxl)
@@ -131,19 +137,15 @@ class ExcelAnalyzer:
                          if ws.sheet_state != 'visible']
 
         # OOXML feature presence that openpyxl does not expose as a normal
-        # worksheet object.  Names are evidence only; configuration remains
-        # the responsibility of the relevant evaluator.
-        activex_count = 0
-        form_control_count = 0
-        try:
-            with zipfile.ZipFile(BytesIO(self.file_bytes), 'r') as archive:
-                total_size = sum(info.file_size for info in archive.infolist())
-                if total_size <= 200 * 1024 * 1024:
-                    names = archive.namelist()
-                    activex_count = sum(1 for name in names if '/activeX/' in name or name.startswith('xl/activeX/'))
-                    form_control_count = sum(1 for name in names if 'ctrlProps' in name or 'formulas' in name.lower() and 'control' in name.lower())
-        except Exception:
-            pass
+        # worksheet object.  This is namespaced static evidence only; the
+        # feature analyser never executes formulas, macros, queries or links.
+        ooxml_features = OOXMLFeatureAnalyzer(
+            self.file_bytes, self.file_name, self.ext).analyze()
+        feature_records = ooxml_features.get('features', {})
+        activex_count = int(
+            (feature_records.get('activex_controls') or {}).get('count', 0) or 0)
+        form_control_count = int(
+            (feature_records.get('form_controls') or {}).get('count', 0) or 0)
 
         self.analysis = {
             'file_name': self.file_name,
@@ -161,6 +163,7 @@ class ExcelAnalyzer:
             'activex_count': activex_count,
             'has_activex': activex_count > 0,
             'form_control_count': form_control_count,
+            'ooxml_features': ooxml_features,
             'sheets': sheets_info,
         }
         return self.analysis
@@ -269,6 +272,8 @@ class ExcelAnalyzer:
                     'location': str(getattr(pt, 'location', '')),
                 })
 
+        style_facts = self._collect_style_facts(ws, max_rows, max_cols)
+
         return {
             'name': ws.title,
             'is_hidden': ws.sheet_state != 'visible',
@@ -292,6 +297,118 @@ class ExcelAnalyzer:
             'tab_color': tab_color,
             'data_types_found': list(data_types_found),
             'scan_truncated': scan_truncated,
+            # Static layout/style evidence.  These facts are read from OOXML
+            # metadata only; no workbook calculation or UI action is performed.
+            'freeze_panes': str(getattr(ws, 'freeze_panes', '') or '') or None,
+            'auto_filter': str(getattr(ws, 'auto_filter', None).ref)
+                if getattr(ws, 'auto_filter', None) is not None else None,
+            'tables': [
+                {'name': getattr(table, 'name', ''), 'ref': str(getattr(table, 'ref', ''))}
+                for table in getattr(ws, 'tables', {}).values()
+            ][:30],
+            'column_widths': {
+                key: round(float(dim.width), 2)
+                for key, dim in list(getattr(ws, 'column_dimensions', {}).items())[:60]
+                if getattr(dim, 'width', None)
+            },
+            'styled_cells': style_facts['styled_cells'],
+            'bold_cells': style_facts['bold_cells'],
+            'centered_cells': style_facts['centered_cells'],
+            'filled_cells': style_facts['filled_cells'],
+            'bottom_border_cells': style_facts['bottom_border_cells'],
+            'date_cells': style_facts['date_cells'],
+            'currency_cells': style_facts['currency_cells'],
+            'percentage_cells': style_facts['percentage_cells'],
+            'has_table': bool(getattr(ws, 'tables', {})),
+            'has_auto_filter': bool(getattr(ws, 'auto_filter', None)),
+            'has_freeze_panes': bool(getattr(ws, 'freeze_panes', '')),
+        }
+
+    @staticmethod
+    def _color_id(color: Any) -> Optional[str]:
+        """Return a stable, bounded identifier for a fill/font colour."""
+        for attr in ('rgb', 'theme', 'indexed'):
+            value = getattr(color, attr, None)
+            if value in (None, '', 0, '00000000'):
+                continue
+            return f"{attr}:{value}"
+        return None
+
+    @classmethod
+    def _collect_style_facts(cls, ws: Any, max_rows: int,
+                             max_cols: int) -> Dict[str, List[Any]]:
+        """Collect bounded per-cell formatting evidence for requirement checks."""
+        styled: List[Dict[str, Any]] = []
+        bold: List[str] = []
+        centered: List[str] = []
+        filled: List[str] = []
+        bottom_border: List[str] = []
+        date_cells: List[str] = []
+        currency_cells: List[str] = []
+        percentage_cells: List[str] = []
+        caps = {
+            'styled': 800, 'bold': 200, 'centered': 200, 'filled': 400,
+            'bottom_border': 200, 'date': 200, 'currency': 200, 'percentage': 200,
+        }
+        for row in ws.iter_rows(min_row=1, max_row=max_rows,
+                                min_col=1, max_col=max_cols):
+            for cell in row:
+                coord = cell.coordinate
+                column_letter = re.match(r"[A-Z]+", coord, re.I).group(0).upper()
+                font = getattr(cell, 'font', None)
+                alignment = getattr(cell, 'alignment', None)
+                fill = getattr(cell, 'fill', None)
+                border = getattr(cell, 'border', None)
+                number_format = str(getattr(cell, 'number_format', '') or '')
+                is_bold = bool(getattr(font, 'bold', False))
+                horizontal = str(getattr(alignment, 'horizontal', '') or '').lower()
+                fill_type = str(getattr(fill, 'patternType', '') or '').lower()
+                fill_id = cls._color_id(getattr(fill, 'fgColor', None))
+                bottom_style = str(getattr(getattr(border, 'bottom', None), 'style', '') or '')
+                lowered_format = number_format.lower()
+                is_date = bool(re.search(r'(?<!\\)[dmy]{1,4}', lowered_format)) and '%' not in number_format
+                is_currency = any(token in number_format for token in ('$', '€', '£', 'GH₵', 'GH¢'))
+                is_percentage = '%' in number_format
+                has_style = any((is_bold, horizontal in ('center', 'centercontinuous'),
+                                 fill_id, bottom_style, is_date, is_currency,
+                                 is_percentage))
+                if not has_style:
+                    continue
+                if len(styled) < caps['styled']:
+                    styled.append({
+                        'cell': coord,
+                        'row': cell.row,
+                        'column': column_letter,
+                        'bold': is_bold,
+                        'horizontal': horizontal or None,
+                        'fill': fill_id,
+                        'fill_type': fill_type or None,
+                        'bottom_border': bottom_style or None,
+                        'number_format': number_format[:80],
+                    })
+                if is_bold and len(bold) < caps['bold']:
+                    bold.append(coord)
+                if horizontal in ('center', 'centercontinuous') and len(centered) < caps['centered']:
+                    centered.append(coord)
+                if fill_id and len(filled) < caps['filled']:
+                    filled.append({'cell': coord, 'row': cell.row, 'fill': fill_id})
+                if bottom_style and len(bottom_border) < caps['bottom_border']:
+                    bottom_border.append(coord)
+                if is_date and len(date_cells) < caps['date']:
+                    date_cells.append(coord)
+                if is_currency and len(currency_cells) < caps['currency']:
+                    currency_cells.append(coord)
+                if is_percentage and len(percentage_cells) < caps['percentage']:
+                    percentage_cells.append(coord)
+        return {
+            'styled_cells': styled,
+            'bold_cells': bold,
+            'centered_cells': centered,
+            'filled_cells': filled,
+            'bottom_border_cells': bottom_border,
+            'date_cells': date_cells,
+            'currency_cells': currency_cells,
+            'percentage_cells': percentage_cells,
         }
 
     # ------------------------------------------------------------------
@@ -346,6 +463,7 @@ class ExcelAnalyzer:
             'total_charts': 0,
             'pivot_cache_count': 0,
             'has_vba': False,
+            'ooxml_features': unsupported_ooxml_features(self.ext, self.file_name),
             'sheets': sheets_info,
             'note': '.xls format has limited analysis capabilities; formulas not extractable via pandas.',
         }
@@ -398,6 +516,7 @@ class ExcelAnalyzer:
             'total_charts': 0,
             'pivot_cache_count': 0,
             'has_vba': False,
+            'ooxml_features': unsupported_ooxml_features(self.ext, self.file_name),
             'sheets': [sheet],
             'note': 'CSV files have no formulas, charts, or pivot tables.',
         }

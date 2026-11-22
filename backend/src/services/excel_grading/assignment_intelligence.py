@@ -38,6 +38,7 @@ REQUIREMENT_TYPES = {
     "POWER_QUERY_REQUIREMENT",
     "DAX_REQUIREMENT",
     "VBA_REQUIREMENT",
+    "OOXML_FEATURE_REQUIREMENT",
     "CODE_STRUCTURE_REQUIREMENT",
     "BUSINESS_LOGIC_REQUIREMENT",
     "WORKBOOK_BEHAVIOR_REQUIREMENT",
@@ -112,8 +113,8 @@ _FEATURE_RULES: Sequence[Tuple[str, str, str, str]] = (
     ("linked text box", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Charts", "Linked text box"),
     ("hidden calculations", "STRUCTURE_REQUIREMENT", "Completeness", "Hidden calculation sheet"),
     ("tab color", "FORMAT_REQUIREMENT", "Formatting", "Worksheet tab color"),
-    ("fill handle", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Fill Handle"),
-    ("flash fill", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Flash Fill"),
+    ("fill handle", "STRUCTURE_REQUIREMENT", "Completeness", "Fill Handle"),
+    ("flash fill", "STRUCTURE_REQUIREMENT", "Completeness", "Flash Fill"),
     ("keyboard shortcut", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Keyboard shortcut"),
     ("undo/redo", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Undo/Redo"),
     ("undo and redo", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Undo/Redo"),
@@ -137,9 +138,75 @@ _FEATURE_RULES: Sequence[Tuple[str, str, str, str]] = (
     ("named table", "STRUCTURE_REQUIREMENT", "Formatting", "Named table"),
     ("sensitivity table", "FORMULA_REQUIREMENT", "Formulas", "Sensitivity table"),
     ("monte carlo", "FORMULA_REQUIREMENT", "Formulas", "Monte Carlo simulation"),
-    ("data model", "STRUCTURE_REQUIREMENT", "PivotTables", "Data Model"),
+    ("data model", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "data model"),
+    ("slicer", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "slicer"),
+    ("timeline", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "timeline"),
+    ("sparkline", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "sparkline"),
+    ("external link", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "external link"),
+    ("data connection", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "connection"),
+    ("query table", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "query table"),
+    ("threaded comment", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "threaded comment"),
+    ("comment", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "comment"),
+    ("hyperlink", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "hyperlink"),
+    ("protected range", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "protected range"),
+    ("sheet protection", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "protection"),
+    ("workbook protection", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "protection"),
+    ("print title", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "print title"),
+    ("print area", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "print area"),
+    ("header and footer", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "header and footer"),
+    ("form control", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "form control"),
+    ("embedded object", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "embedded object"),
+    ("conditional formatting", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "conditional formatting"),
+    ("sort state", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "sort state"),
+    ("table style", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "table style"),
+    ("scenario", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "scenario"),
+    ("dynamic array", "OOXML_FEATURE_REQUIREMENT", "WorkbookFeatures", "dynamic formula"),
     ("solver", "WORKBOOK_BEHAVIOR_REQUIREMENT", "Completeness", "Solver"),
 )
+
+# Brief phrase -> namespaced OOXML evidence key.  Only the labels emitted by
+# the rules below are accepted; arbitrary criterion text is never turned into
+# package-level evidence.
+_OOXML_FEATURE_KEYS = {
+    "slicer": "slicers", "slicers": "slicers",
+    "timeline": "timelines", "timelines": "timelines",
+    "sparkline": "sparklines", "sparklines": "sparklines",
+    "pivot table": "pivot_tables", "pivottables": "pivot_tables",
+    "chart": "charts", "charts": "charts",
+    "external link": "external_links", "external links": "external_links",
+    "connection": "connections", "connections": "connections",
+    "data connection": "connections", "data connections": "connections",
+    "query table": "query_tables", "query tables": "query_tables",
+    "power query": "power_query", "data mashup": "power_query",
+    "data model": "data_model", "dax": "dax",
+    "comment": "comments", "comments": "comments",
+    "threaded comment": "threaded_comments",
+    "threaded comments": "threaded_comments",
+    "hyperlink": "hyperlinks", "hyperlinks": "hyperlinks",
+    "protection": "protection", "protected range": "protection",
+    "print setup": "print_setup", "print title": "print_setup",
+    "print area": "print_setup", "header and footer": "print_setup",
+    "form control": "form_controls", "form controls": "form_controls",
+    "activex control": "activex_controls",
+    "embedded object": "embedded_objects", "embedded objects": "embedded_objects",
+    "conditional formatting": "conditional_formatting",
+    "data validation": "data_validation_fields",
+    "sort/filter": "sort_filter", "sort state": "sort_filter",
+    "table style": "table_styles", "table styles": "table_styles",
+    "scenario": "scenarios", "scenarios": "scenarios",
+    "dynamic formula": "formula_features", "dynamic formulas": "formula_features",
+    "named range": "defined_names", "named ranges": "defined_names",
+}
+
+# Keywords that must match as whole words to avoid incidental prose matches.
+_WORD_BOUNDARY_FEATURE_KEYWORDS = {
+    "var", "cvar", "slicer", "slicers", "timeline", "timelines",
+    "sparkline", "sparklines", "scenario", "scenarios", "comment",
+    "comments", "hyperlink", "hyperlinks", "connection", "connections",
+    "protection", "sort state", "table style", "table styles",
+    "external link", "external links", "query table", "query tables",
+    "embedded object", "embedded objects", "print area", "print title",
+}
 
 _VERBS = re.compile(
     r"\b(create|build|calculate|use|apply|insert|rename|format|configure|explain|"
@@ -202,6 +269,9 @@ def _extract_functions(text: str) -> List[str]:
 def _extract_sheets(text: str) -> List[str]:
     names: List[str] = []
     patterns = (
+        r"\brename(?:\s+the)?(?:\s+(?:first|new|copied))?\s+(?:sheet|worksheet|tab)"
+        r"(?:\s+tab)?\s+to\s+[\"']([^\"']+)[\"']",
+        r"\brename\s+it\s+to\s+[\"']([^\"']+)[\"']",
         r"(?:sheet|worksheet|tab)\s+(?:named?|called?|titled?)?\s*[\"']([^\"']+)[\"']",
         r"(?:rename\s+(?:Sheet\d+|sheet\s*\d*)\s+to|sheet\s+named)\s*[\"']?([A-Za-z0-9_][A-Za-z0-9 _-]{1,50})[\"']?",
         r"[\"']([^\"']+)[\"']\s*!",
@@ -254,6 +324,124 @@ def _infer_criticality(text: str, requirement_type: str) -> str:
     return "normal"
 
 
+_PROCEDURAL_RE = re.compile(
+    r"(?:press\s+|keyboard\s+shortcut|`(?:tab|enter|f2|f4)`"
+    r"|ctrl\s*\+\s*(?:home|end|arrow)|double[- ]click|autofit|scroll"
+    r"|drag to fill|group both|ungroup|hide/unhide|quickly return"
+    r"|navigate around|experiment with|observe (?:the|how|change))",
+    re.I,
+)
+_META_RE = re.compile(r"^(?:follow these steps|welcome to|by completing this assignment)", re.I)
+_WEEKDAY_RE = re.compile(
+    r"\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b",
+    re.I,
+)
+_SEQUENCE_RE = re.compile(r"\b(?:week|month|day|quarter)\s*[- ]?\s*\d+\b", re.I)
+
+
+def _is_meta_instruction(text: str) -> bool:
+    # Markdown emphasis around section headings must not hide the trailing
+    # colon that identifies them as non-scoreable navigation text.
+    value = _clean(re.sub(r"\*\*|__|`", "", text))
+    if not value:
+        return True
+    if _META_RE.search(value):
+        return True
+    return value.endswith(':') and len(value) < 120 and not _QUOTED_RE.search(value)
+
+
+def _is_procedural_instruction(text: str) -> bool:
+    """UI actions that leave no deterministic workbook artifact.
+
+    These steps are retained in the assessment contract's ``non_verifiable``
+    section for transparency, but they are never scored as failures.
+    """
+    return bool(_PROCEDURAL_RE.search(text or ""))
+
+
+def _format_feature_for(text: str) -> Optional[str]:
+    lowered = (text or "").lower()
+    checks = (
+        ("merge and center", "merged_title"),
+        ("background fill color", "cell_fill"),
+        ("bottom border", "header_format"),
+        ("short date format", "date_format"),
+        ("currency format", "currency_format"),
+        ("as a percentage", "percentage_format"),
+        ("percentage format", "percentage_format"),
+        ("alternating rows", "alternating_fill"),
+        ("column widths", "column_widths"),
+        ("freeze panes", "freeze_panes"),
+        ("paste special - values", "paste_values"),
+        ("paste special > values", "paste_values"),
+        ("paste special - transpose", "transpose_headers"),
+        ("paste special > transpose", "transpose_headers"),
+        ("absolute reference", "absolute_reference"),
+        ("1 + 'tax rate'", "tax_column"),
+        ("1 + \"tax rate\"", "tax_column"),
+        ("insert a new column", "named_column"),
+        ("new column between", "named_column"),
+        ("copy worksheet", "copied_sheet"),
+        ("sales with tax", "tax_column"),
+    )
+    for marker, feature in checks:
+        if marker in lowered:
+            return feature
+    return None
+
+
+def _pattern_feature_for(text: str) -> Optional[str]:
+    lowered = (text or "").lower()
+    if "fill handle" in lowered:
+        if "formula" in lowered or "copy this formula" in lowered:
+            return "fill_pattern"
+        if _SEQUENCE_RE.search(text) or _WEEKDAY_RE.search(text):
+            return "sequential_data"
+        return "fill_pattern"
+    if _SEQUENCE_RE.search(text) or (_WEEKDAY_RE.search(text) and "type" in lowered):
+        return "sequential_data"
+    return None
+
+
+_EG_PREFIX_RE = re.compile(r"^\s*(?:e\.?g\.?|eg|i\.?e\.?)\s*[,:-]?\s*", re.I)
+
+
+def _parenthetical_values(group: str) -> List[str]:
+    """Extract only meaningful examples from a parenthetical instruction.
+
+    Examples such as ``e.g., E16`` are locations, not required cell *values*.
+    Dates and labels are kept when quoted, because those are real content the
+    analyzer can compare against workbook cells.
+    """
+    text = _EG_PREFIX_RE.sub("", _clean(group))
+    quoted = _QUOTED_RE.findall(text)
+    if quoted:
+        return list(quoted)
+    return [part.strip().strip("'\"") for part in re.split(r"\s*[;,]\s*|\s+/\s+", text)
+            if part.strip()]
+
+
+def _meaningful_parenthetical_value(value: str) -> Optional[str]:
+    text = _EG_PREFIX_RE.sub("", _clean(value)).strip("'\"")
+    lowered = text.lower()
+    if not text or len(text) > 48 or lowered in {"e.g", "eg", "etc"}:
+        return None
+    # A bare cell coordinate is an example location, not a required value.
+    if re.fullmatch(r"\$?[A-Z]{1,3}\$?\d{1,7}", text, re.I):
+        return None
+    if re.search(r"\b(?:row|column|cell|sheet)\b|[A-Z]+\d+:[A-Z]+\d+", lowered):
+        return None
+    if "add a new sheet" in lowered or "double-click" in lowered:
+        return None
+    return text
+
+
+def _location_only(unit: str) -> bool:
+    has_range = bool(re.search(r"\b[A-Z]{1,3}\d+:[A-Z]{1,3}\d+\b", unit or "", re.I))
+    has_row_column = bool(re.search(r"\b(?:row|column)\s+\d+\b", unit or "", re.I))
+    return (has_range or has_row_column) and not _QUOTED_RE.search(unit or "")
+
+
 def _category_for_type(requirement_type: str) -> str:
     return {
         "FORMULA_REQUIREMENT": "Formulas",
@@ -269,6 +457,7 @@ def _category_for_type(requirement_type: str) -> str:
         "POWER_QUERY_REQUIREMENT": "PowerQuery_M",
         "DAX_REQUIREMENT": "DAX",
         "VBA_REQUIREMENT": "VBA",
+        "OOXML_FEATURE_REQUIREMENT": "WorkbookFeatures",
         "CODE_STRUCTURE_REQUIREMENT": "VBA",
         "BUSINESS_LOGIC_REQUIREMENT": "VBA",
         "WORKBOOK_BEHAVIOR_REQUIREMENT": "VBA",
@@ -280,12 +469,16 @@ def _category_for_type(requirement_type: str) -> str:
 
 
 def _evidence_type_for(requirement_type: str) -> str:
-    if requirement_type in {"FORMULA_REQUIREMENT", "FUNCTION_REQUIREMENT", "CELL_REQUIREMENT", "VALUE_REQUIREMENT"}:
-        return "formula" if requirement_type != "VALUE_REQUIREMENT" else "cell_value"
+    if requirement_type in {"FORMULA_REQUIREMENT", "FUNCTION_REQUIREMENT"}:
+        return "formula"
+    if requirement_type in {"CELL_REQUIREMENT", "VALUE_REQUIREMENT"}:
+        return "cell_value"
     if requirement_type == "SHEET_REQUIREMENT":
         return "worksheet"
     if requirement_type in {"VBA_REQUIREMENT", "CODE_STRUCTURE_REQUIREMENT", "BUSINESS_LOGIC_REQUIREMENT", "WORKBOOK_BEHAVIOR_REQUIREMENT"}:
         return "vba_code"
+    if requirement_type == "OOXML_FEATURE_REQUIREMENT":
+        return "workbook_structure"
     if requirement_type == "POWER_QUERY_REQUIREMENT":
         return "m_code"
     if requirement_type == "DAX_REQUIREMENT":
@@ -304,6 +497,8 @@ def _partial_credit_for(requirement_type: str) -> Dict[str, float]:
         return {"method": 0.35, "location": 0.2, "references": 0.2, "result": 0.15, "syntax": 0.1}
     if requirement_type in {"VBA_REQUIREMENT", "CODE_STRUCTURE_REQUIREMENT", "BUSINESS_LOGIC_REQUIREMENT"}:
         return {"presence": 0.3, "structure": 0.25, "behavior": 0.3, "safety": 0.15}
+    if requirement_type == "OOXML_FEATURE_REQUIREMENT":
+        return {"presence": 0.7, "configuration": 0.3}
     if requirement_type == "CHART_REQUIREMENT":
         return {"type": 0.5, "location": 0.15, "configuration": 0.35}
     if requirement_type in {"THEORY_REQUIREMENT", "REFLECTION_REQUIREMENT", "DELIVERABLE_REQUIREMENT", "DOCUMENTATION_REQUIREMENT"}:
@@ -331,6 +526,7 @@ class AssignmentInstructionParser:
                 report_fallback_used = True
         units = _split_instruction_units(primary_text)
         requirements: List[Dict[str, Any]] = []
+        non_verifiable_steps: List[Dict[str, str]] = []
         seen: set = set()
 
         def add_requirement(
@@ -388,10 +584,53 @@ class AssignmentInstructionParser:
             parenthetical_values: List[str] = []
             for group in re.findall(r"\(([^()]{3,240})\)", unit):
                 if any(marker in unit.lower() for marker in ("header", "record", "employee", "column", "category")):
-                    parenthetical_values.extend(re.split(r"\s*[;,]\s*|\s+/\s+", group))
+                    parenthetical_values.extend(_parenthetical_values(group))
             is_theory = bool(_THEORY_MARKERS.search(unit))
             is_deliverable = bool(_DELIVERABLE_MARKERS.search(unit))
             matched_feature = False
+
+            # Section headings and UI-only actions (keyboard shortcuts, mouse
+            # gestures, scrolling) leave no deterministic workbook artifact.
+            # Keep them visible in the contract, but never score them as
+            # missing deliverables.
+            if _is_meta_instruction(unit):
+                non_verifiable_steps.append({
+                    "instruction": unit,
+                    "reason": "section heading or introductory text",
+                })
+                continue
+            format_feature = _format_feature_for(unit)
+            if format_feature:
+                add_requirement(
+                    unit,
+                    "FORMAT_REQUIREMENT",
+                    cells=cells,
+                    sheets=sheets,
+                    expected={"feature": format_feature},
+                    category="Formatting",
+                    method_constraint=_infer_method_constraint(unit),
+                )
+                matched_feature = True
+                continue
+            pattern_feature = _pattern_feature_for(unit)
+            if pattern_feature:
+                add_requirement(
+                    unit,
+                    "STRUCTURE_REQUIREMENT",
+                    cells=cells,
+                    sheets=sheets,
+                    expected={"feature": pattern_feature},
+                    category="Completeness",
+                    method_constraint=_infer_method_constraint(unit),
+                )
+                matched_feature = True
+                continue
+            if _is_procedural_instruction(unit):
+                non_verifiable_steps.append({
+                    "instruction": unit,
+                    "reason": "UI/navigation action has no statically verifiable artifact",
+                })
+                continue
 
             # Explicit function mentions are always separate measurable
             # requirements. This prevents method-specific work from becoming
@@ -423,9 +662,14 @@ class AssignmentInstructionParser:
                         expected={"formula": formula.strip(), "target_cells": cells},
                         method_constraint=_infer_method_constraint(unit),
                     )
+                matched_feature = True
 
-            if parenthetical_values:
-                values = [value.strip() for value in parenthetical_values if value.strip()]
+            values = [
+                value for value in
+                (_meaningful_parenthetical_value(item) for item in parenthetical_values)
+                if value
+            ]
+            if values:
                 add_requirement(
                     f"Required values/labels: {', '.join(values)}",
                     "VALUE_REQUIREMENT",
@@ -438,8 +682,23 @@ class AssignmentInstructionParser:
             if sheets:
                 for sheet in sheets:
                     add_requirement(f"Use worksheet '{sheet}': {unit}", "SHEET_REQUIREMENT", sheets=[sheet])
-            if cells and not functions:
-                add_requirement(unit, "CELL_REQUIREMENT", cells=cells, sheets=sheets, expected={"target_cells": cells})
+            if cells and not functions and not matched_feature and not _location_only(unit):
+                quoted_values = [
+                    value for value in _QUOTED_RE.findall(unit)
+                    if value and value not in sheets
+                    and not re.fullmatch(r"\$?[A-Z]{1,3}\$?\d{1,7}", value, re.I)
+                ]
+                add_requirement(
+                    unit,
+                    "CELL_REQUIREMENT",
+                    cells=cells,
+                    sheets=sheets,
+                    expected={
+                        "target_cells": cells,
+                        "values": quoted_values,
+                        "flexible_location": "e.g." in unit.lower() or "empty cell" in unit.lower(),
+                    },
+                )
 
             # Features are only emitted when the assignment actually names
             # them.  Feature evidence is then delegated to the right analyzer.
@@ -450,9 +709,11 @@ class AssignmentInstructionParser:
                     continue
                 if keyword == "chart" and ("doughnut chart" in feature_scan or "pie chart" in feature_scan):
                     continue
+                if keyword == "comment" and "threaded comment" in feature_scan:
+                    continue
                 keyword_match = (
                     re.search(r"(?<![A-Za-z0-9_])" + re.escape(keyword.strip()) + r"(?![A-Za-z0-9_])", feature_scan, re.I)
-                    if keyword.strip() in {"var", "cvar"}
+                    if keyword.strip() in _WORD_BOUNDARY_FEATURE_KEYWORDS
                     else keyword in feature_scan
                 )
                 if keyword_match:
@@ -572,6 +833,7 @@ class AssignmentInstructionParser:
                 "mastery_level": level["level"],
             },
             "requirements": requirements,
+            "non_verifiable_steps": non_verifiable_steps,
             "required_sheets": required_sheets,
             "required_functions": list(dict.fromkeys(r["verification"]["expected_functions"][0] for r in requirements if r["verification"].get("expected_functions"))),
             "difficulty": level,
@@ -860,6 +1122,33 @@ class RequirementEvaluator:
             })
             return base
 
+        # A package-level feature that could not be inspected is not a failed
+        # submission.  Keep it explicit and route it to the existing review path.
+        if req_type == "OOXML_FEATURE_REQUIREMENT":
+            feature_record, feature_key = self._ooxml_feature_record(req, analyses)
+            if feature_record is None:
+                base.update({
+                    "status": STATUS_MANUAL_REVIEW,
+                    "confidence": 0.25,
+                    "evidence": ["No deterministic OOXML evidence mapping exists for this feature label."],
+                    "missing": ["Static workbook inspection must not invent package-level evidence."],
+                    "suggested_assessment": "Pending instructor review; do not infer this feature from the brief.",
+                })
+                return base
+            if str(feature_record.get("status") or "").upper() == "UNVERIFIABLE":
+                limitation = str(feature_record.get("limitation") or "Static package inspection was unavailable.")
+                reason = str(
+                    ((analyses.get("workbook") or {}).get("ooxml_features") or {}).get("scan", {}).get("reason") or ""
+                )
+                base.update({
+                    "status": STATUS_MANUAL_REVIEW,
+                    "confidence": 0.25,
+                    "evidence": [f"Static OOXML inspection could not decide '{feature_key}'."],
+                    "missing": [reason or limitation],
+                    "suggested_assessment": "Pending instructor review; do not infer this feature from the brief.",
+                })
+                return base
+
         dependency_results = [prior.get(dep) for dep in req.get("depends_on", []) if prior.get(dep)]
         if any(d["status"] in {STATUS_FAILED, STATUS_NOT_FOUND} for d in dependency_results):
             base["missing"].append("A prerequisite requirement failed, so this dependent result is capped at partial credit.")
@@ -903,6 +1192,353 @@ class RequirementEvaluator:
             entries.extend(sheet.get("formulas", []))
         return entries
 
+    @staticmethod
+    def _cell_entries(analyses: Dict[str, Any]) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        for sheet in analyses.get("workbook", {}).get("sheets", []):
+            entries.extend(sheet.get("values", []))
+        return entries
+
+    @staticmethod
+    def _column_letters(coordinate: str) -> str:
+        return re.match(r"[A-Z]+", str(coordinate or ""), re.I).group(0).upper() if re.match(r"[A-Z]+", str(coordinate or ""), re.I) else ""
+
+    @staticmethod
+    def _next_column(column: str) -> str:
+        value = 0
+        for char in column.upper():
+            value = value * 26 + (ord(char) - 64)
+        value += 1
+        result = ""
+        while value:
+            value, remainder = divmod(value - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    @classmethod
+    def _previous_column(cls, column: str) -> str:
+        value = 0
+        for char in column.upper():
+            value = value * 26 + (ord(char) - 64)
+        if value <= 1:
+            return ""
+        value -= 1
+        result = ""
+        while value:
+            value, remainder = divmod(value - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    @classmethod
+    def _formula_references_column(cls, formula: str, column: str) -> bool:
+        if not column:
+            return False
+        return bool(re.search(r"(?<![A-Z0-9_])\$?" + re.escape(column) + r"\$?\d+", str(formula or ""), re.I))
+
+    @classmethod
+    def _constraint_satisfied(cls, constraint: str, entry: Dict[str, Any],
+                              analyses: Dict[str, Any]) -> bool:
+        """Check a semantic constraint without executing workbook formulas.
+
+        A label such as ``Total Sales`` is satisfied by a formula that
+        references the column whose header is ``Total Sales`` (for example
+        ``=SUM(E4:E13)``), not only by the literal words appearing inside the
+        formula string.  This keeps evidence tied to real workbook structure.
+        """
+        token = re.sub(r"[\s$']", "", str(constraint or "")).lower().rstrip(':')
+        if not token:
+            return True
+        formula = str(entry.get("formula", ""))
+        if token in formula.lower().replace(" ", "").replace("$", ""):
+            return True
+        for sheet in analyses.get("workbook", {}).get("sheets", []):
+            for item in sheet.get("values", []):
+                value = re.sub(r"[\s$]", "", str(item.get("value", ""))).lower().rstrip(':')
+                if not value or (token != value and token not in value and value not in token):
+                    continue
+                column = cls._column_letters(str(item.get("cell", "")))
+                if cls._formula_references_column(formula, column):
+                    return True
+                if cls._formula_references_column(formula, cls._next_column(column)):
+                    return True
+        return False
+
+    @staticmethod
+    def _ooxml_feature_record(
+            req: Dict[str, Any],
+            analyses: Dict[str, Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], str]:
+        expected = (req.get("verification", {}).get("expected") or {})
+        label = str(expected.get("feature") or "").strip().lower()
+        key = _OOXML_FEATURE_KEYS.get(label)
+        if not key:
+            return None, label
+        workbook = analyses.get("workbook") or {}
+        features = (workbook.get("ooxml_features") or {}).get("features") or {}
+        record = features.get(key)
+        return (record if isinstance(record, dict) else None), key
+
+    @staticmethod
+    def _evaluate_ooxml_feature_record(
+            label: str, record: Dict[str, Any]
+    ) -> Tuple[float, List[str], List[str], float]:
+        status = str(record.get("status") or "UNVERIFIABLE").upper()
+        evidence = [str(line).strip() for line in (record.get("evidence") or [])
+                    if str(line).strip()]
+        limitation = str(record.get("limitation") or "Static feature evidence was unavailable.")
+        if status in {"PRESENT", "CONFIGURED"}:
+            if not evidence:
+                evidence = [f"{label} package evidence was detected."]
+            return 1.0, evidence[:4], [], 0.86 if status == "CONFIGURED" else 0.84
+        if status == "ABSENT":
+            return 0.0, [], [
+                f"Requested {label} evidence was not found in the workbook package."
+            ], 0.84
+        return 0.0, ["Static OOXML inspection did not complete."], [limitation], 0.2
+
+    @classmethod
+    def _cell_value_matches(cls, expected: str, observed: Any) -> bool:
+        text = str(observed or "").strip().lower()
+        wanted = str(expected or "").strip().strip("'\"").lower()
+        if cls._value_matches(wanted, text):
+            return True
+        if not wanted or not text:
+            return False
+        if wanted in text:
+            return True
+        # Bounded reverse containment prevents a short word such as "Item"
+        # from satisfying a long label such as "Number of Items Sold:".
+        return text in wanted and len(text) >= max(4, int(len(wanted) * 0.6))
+
+    def _feature_evidence(self, req: Dict[str, Any],
+                          analyses: Dict[str, Dict[str, Any]]
+                          ) -> Optional[Tuple[float, List[str], List[str], float]]:
+        """Evaluate a named static workbook feature without executing Excel."""
+        feature = str((req.get("verification", {}).get("expected") or {}).get("feature") or "").lower()
+        if not feature:
+            return None
+        sheets = [s for s in analyses.get("workbook", {}).get("sheets", [])
+                  if isinstance(s, dict)]
+        cells = self._cell_entries(analyses)
+        formulas = self._formula_entries(analyses)
+        evidence: List[str] = []
+        missing: List[str] = []
+
+        if req.get("type") == "OOXML_FEATURE_REQUIREMENT":
+            ooxml_record, _ = self._ooxml_feature_record(req, analyses)
+            if ooxml_record is not None:
+                return self._evaluate_ooxml_feature_record(feature, ooxml_record)
+
+        header_row: List[Dict[str, Any]] = []
+        for sheet in sheets:
+            row_cells = [item for item in cells
+                         if item.get("sheet") == sheet.get("name")
+                         and str(item.get("cell", "")).startswith("3")]
+            if len(row_cells) > len(header_row):
+                header_row = row_cells
+        if not header_row:
+            for sheet in sheets:
+                row_cells = [item for item in cells
+                             if item.get("sheet") == sheet.get("name")
+                             and isinstance(item.get("value"), str)]
+                if len(row_cells) > len(header_row):
+                    header_row = row_cells
+
+        if feature == "merged_title":
+            merged = [m for s in sheets for m in (s.get("merged_cells") or [])
+                      if re.match(r"^[A-Z]+\d+:[A-Z]+\d+$", str(m))]
+            bold = {c for s in sheets for c in s.get("bold_cells", [])}
+            filled = {str(d.get("cell")) for s in sheets for d in s.get("filled_cells", [])}
+            title = next((str(i.get("value")) for i in cells
+                          if "daily sales report" in str(i.get("value", "")).lower()), "")
+            ratio = 0.0
+            if merged:
+                evidence.append("Merged title range detected: " + ", ".join(merged[:3]))
+                ratio = 0.5
+            if title:
+                evidence.append("Title text detected in workbook: " + title[:120])
+                ratio = max(ratio, 0.5)
+            style_signals = sum([
+                bool(bold & {str(i.get("cell")) for i in cells
+                             if str(i.get("value")) == title}),
+                any(str(i.get("cell")) in filled for i in cells
+                    if str(i.get("value")) == title),
+            ])
+            if style_signals:
+                evidence.append(f"Title styling signals detected ({style_signals}/2).")
+                ratio = min(1.0, ratio + 0.25 * style_signals)
+            if ratio < 1.0:
+                missing.append("Merged, styled title text was not fully confirmed.")
+            return ratio, evidence, missing, 0.9 if ratio >= 0.5 else 0.6
+
+        if feature == "header_format":
+            header_cells = {str(i.get("cell")) for i in header_row}
+            bold = {c for s in sheets for c in s.get("bold_cells", [])}
+            centered = {c for s in sheets for c in s.get("centered_cells", [])}
+            borders = {c for s in sheets for c in s.get("bottom_border_cells", [])}
+            signals = []
+            if header_cells & bold:
+                signals.append("bold header cells")
+            if header_cells & centered:
+                signals.append("centered header cells")
+            if header_cells & borders:
+                signals.append("bottom-bordered header cells")
+            if signals:
+                evidence.append("Header formatting detected: " + ", ".join(signals) + ".")
+                return min(1.0, len(signals) / 3.0), evidence, [], 0.92
+            return 0.0, [], ["Bold/centered/bordered header formatting was not detected."], 0.8
+
+        if feature in {"date_format", "currency_format", "percentage_format"}:
+            key = {
+                "date_format": "date_cells", "currency_format": "currency_cells",
+                "percentage_format": "percentage_cells",
+            }[feature]
+            found = [f"{s.get('name')}!{c}" for s in sheets for c in s.get(key, [])]
+            if found:
+                evidence.append(f"{feature.replace('_', ' ').title()} detected in "
+                                f"{len(found)} cell(s): " + ", ".join(found[:5]))
+                return 1.0, evidence, [], 0.9
+            return 0.0, [], [f"{feature.replace('_', ' ').title()} evidence was not detected."], 0.8
+
+        if feature == "cell_fill":
+            found = [f"{s.get('name')}!{d.get('cell')}" for s in sheets
+                     for d in s.get("filled_cells", [])]
+            if found:
+                evidence.append(f"Cell fill styling detected in {len(found)} cell(s): "
+                                + ", ".join(found[:5]))
+                return 1.0, evidence, [], 0.88
+            return 0.0, [], ["Cell fill styling was not detected."], 0.8
+
+        if feature == "alternating_fill":
+            rows: Dict[str, Dict[str, int]] = {}
+            for sheet in sheets:
+                for item in sheet.get("filled_cells", []):
+                    rows.setdefault(str(sheet.get("name")), {}).setdefault(
+                        str(item.get("row")), 0)
+                    rows[str(sheet.get("name"))][str(item.get("row"))] += 1
+            patterned = [name for name, counts in rows.items()
+                         if sum(1 for count in counts.values() if count >= 2) >= 3]
+            if patterned:
+                evidence.append("Banded/alternating fill detected on: " + ", ".join(patterned))
+                return 1.0, evidence, [], 0.82
+            return 0.0, [], ["Alternating row fill was not detected."], 0.75
+
+        if feature == "column_widths":
+            widths = [(s.get("name"), key, value) for s in sheets
+                      for key, value in (s.get("column_widths") or {}).items()
+                      if float(value or 0) > 0]
+            if widths:
+                evidence.append("Explicit column widths detected: "
+                                + ", ".join(f"{name}!{col}={width}" for name, col, width in widths[:5]))
+                return 1.0, evidence, [], 0.78
+            return 0.0, [], ["Explicit column-width evidence was not detected."], 0.7
+
+        if feature == "freeze_panes":
+            found = [f"{s.get('name')}!{s.get('freeze_panes')}" for s in sheets
+                     if s.get("freeze_panes")]
+            if found:
+                evidence.append("Frozen panes detected: " + ", ".join(found[:5]))
+                return 1.0, evidence, [], 0.92
+            return 0.0, [], ["No frozen header/column pane was detected."], 0.85
+
+        if feature == "paste_values":
+            formula_columns: Dict[str, int] = {}
+            for entry in formulas:
+                col = self._column_letters(str(entry.get("cell", "")))
+                formula_columns[col] = formula_columns.get(col, 0) + 1
+            for sheet in sheets:
+                numeric = [item for item in cells
+                           if item.get("sheet") == sheet.get("name")
+                           and isinstance(item.get("value"), (int, float))
+                           and not str(item.get("value", "")).startswith("=")]
+                if len(numeric) >= 5 and formula_columns:
+                    evidence.append(
+                        f"{len(numeric)} static numeric cell(s) detected in "
+                        f"'{sheet.get('name')}' alongside "
+                        f"{sum(formula_columns.values())} formula(s) in the workbook, "
+                        "consistent with paste-special values.")
+                    return 1.0, evidence, [], 0.68
+            return 0.0, [], ["Static value-only result cells were not detected."], 0.7
+
+        if feature == "transpose_headers":
+            row_values = [str(i.get("value", "")).strip().lower() for i in header_row
+                          if str(i.get("value", "")).strip()]
+            for sheet in sheets:
+                column_values = [str(i.get("value", "")).strip().lower() for i in cells
+                                 if i.get("sheet") == sheet.get("name")
+                                 and self._column_letters(str(i.get("cell", ""))) == "A"]
+                shared = [value for value in column_values if value in row_values]
+                if len(shared) >= 3:
+                    evidence.append(
+                        f"Transposed header evidence detected on '{sheet.get('name')}': "
+                        + ", ".join(shared[:8]))
+                    return 1.0, evidence, [], 0.86
+            return 0.0, [], ["Transposed header labels were not detected."], 0.78
+
+        if feature == "fill_pattern":
+            groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+            for entry in formulas:
+                key = (str(entry.get("sheet", "")), self._column_letters(str(entry.get("cell", ""))))
+                groups.setdefault(key, []).append(entry)
+            for (sheet_name, column), entries in groups.items():
+                patterns = [re.sub(r"\d+", "#", str(e.get("formula", "")))
+                            for e in entries]
+                if len(entries) >= 3 and len(set(patterns)) == 1:
+                    cells = [str(e.get("cell")) for e in entries]
+                    evidence.append(
+                        f"Filled relative formula pattern detected in {sheet_name}!{cells[0]}:{cells[-1]} "
+                        f"({len(cells)} cells): {patterns[0]}")
+                    return 1.0, evidence, [], 0.9
+            return 0.0, [], ["A repeated relative formula pattern was not detected."], 0.82
+
+        if feature == "sequential_data":
+            for sheet in sheets:
+                columns: Dict[str, List[str]] = {}
+                for item in cells:
+                    if item.get("sheet") != sheet.get("name"):
+                        continue
+                    value = str(item.get("value", "")).strip()
+                    if _SEQUENCE_RE.search(value) or _WEEKDAY_RE.search(value):
+                        columns.setdefault(self._column_letters(str(item.get("cell", ""))), []).append(value)
+                for column, values in columns.items():
+                    if len(values) >= 3:
+                        evidence.append(
+                            f"Filled sequence detected in {sheet.get('name')}!{column}: "
+                            + ", ".join(values[:8]))
+                        return 1.0, evidence, [], 0.86
+            return 0.0, [], ["Sequential filled labels were not detected."], 0.78
+
+        if feature == "absolute_reference":
+            found = [f"{e.get('sheet')}!{e.get('cell')}: {e.get('formula')}"
+                     for e in formulas if re.search(r"\$[A-Z]+\$?\d+|\$?[A-Z]+\$\d+",
+                                                    str(e.get("formula", "")), re.I)]
+            if found:
+                evidence.append("Absolute reference detected: " + found[0][:220])
+                return 1.0, evidence, [], 0.9
+            return 0.0, [], ["Absolute cell reference was not detected."], 0.85
+
+        if feature in {"named_column", "tax_column", "copied_sheet"}:
+            labels = {str(i.get("value", "")).strip().lower() for i in cells
+                      if isinstance(i.get("value"), str)}
+            wanted = {
+                "named_column": "category",
+                "tax_column": "sales with tax",
+                "copied_sheet": "date",
+            }[feature]
+            if wanted in labels:
+                evidence.append(f"Workbook contains the required '{wanted}' label.")
+                if feature == "copied_sheet":
+                    matching = [s.get("name") for s in sheets
+                                if any(str(i.get("value", "")).strip().lower() == wanted
+                                       for i in cells if i.get("sheet") == s.get("name"))]
+                    if len(matching) >= 2:
+                        evidence.append("Shared header labels detected on: " + ", ".join(matching[:4]))
+                        return 1.0, evidence, [], 0.82
+                    return 0.5, evidence, ["Only one sheet with the shared header was detected."], 0.7
+                return 1.0, evidence, [], 0.82
+            return 0.0, [], [f"Required '{wanted}' label was not detected."], 0.8
+
+        return None
+
     def _measure(self, req: Dict[str, Any], analyses: Dict[str, Dict[str, Any]]) -> Tuple[float, List[str], List[str], float]:
         req_type = req.get("type")
         verification = req.get("verification", {})
@@ -910,6 +1546,92 @@ class RequirementEvaluator:
         formulas = self._formula_entries(analyses)
         evidence: List[str] = []
         missing: List[str] = []
+
+        feature_result = self._feature_evidence(req, analyses)
+        if feature_result is not None:
+            return feature_result
+
+        if req_type in {"CELL_REQUIREMENT", "VALUE_REQUIREMENT"}:
+            expected = verification.get("expected", {}) or {}
+            expected_values = [str(value).strip() for value in expected.get("values", [])
+                               if str(value).strip()]
+            if not expected_values and req_type == "CELL_REQUIREMENT":
+                expected_values = [value for value in _QUOTED_RE.findall(req.get("requirement", ""))
+                                   if value]
+            target_specs = verification.get("target_cells", [])
+            target_cells = {str(item.get("cell", "")).upper() for item in target_specs}
+            observed = self._cell_entries(analyses)
+            exact_hits: List[str] = []
+            alternate_hits: List[str] = []
+            for wanted in expected_values:
+                matches: List[Tuple[str, str, bool]] = []
+                for item in observed:
+                    if not self._cell_value_matches(wanted, item.get("value")):
+                        continue
+                    locator = f"{item.get('sheet', '')}!{item.get('cell', '')}"
+                    at_target = (not target_cells
+                                 or str(item.get("cell", "")).upper() in target_cells)
+                    matches.append((wanted, locator, at_target))
+                # Prefer the requested cell when an example location was only
+                # a hint and the value was also copied elsewhere.
+                preferred = [match for match in matches if match[2]] or matches
+                if preferred:
+                    value, locator, at_target = preferred[0]
+                    hit = f"{value} at {locator}"
+                    if at_target:
+                        exact_hits.append(hit)
+                    else:
+                        alternate_hits.append(hit)
+            if exact_hits:
+                evidence.append("Required value/label found: " + ", ".join(exact_hits[:3]))
+            if alternate_hits:
+                evidence.append("Required value/label found at an equivalent location: "
+                                + ", ".join(alternate_hits[:3]))
+            # A value beside its label belongs to the same logical input even
+            # when inserted columns shifted the example cell reference.  This
+            # uses cell coordinates only; no workbook calculation is performed.
+            if not exact_hits and alternate_hits and any(
+                    re.fullmatch(r"[-+]?\d+(?:\.\d+)?", value) for value in expected_values):
+                promoted: List[str] = []
+                for hit in alternate_hits:
+                    match = re.search(r"at (.+)!([A-Z]+)(\d+)$", hit)
+                    if not match:
+                        continue
+                    sheet_name, column, row = match.groups()
+                    left = self._previous_column(column)
+                    labelled = [
+                        item for item in observed
+                        if item.get("sheet") == sheet_name
+                        and str(item.get("cell", "")).upper() == f"{left}{row}"
+                        and "tax rate" in str(item.get("value", "")).lower()
+                    ]
+                    if labelled:
+                        evidence.append(
+                            f"Numeric value found beside its label at "
+                            f"{sheet_name}!{column}{row}; the example cell was "
+                            "shifted by inserted columns.")
+                        promoted.append(hit)
+                for hit in promoted:
+                    alternate_hits.remove(hit)
+                    exact_hits.append(hit)
+            unmatched = [value for value in expected_values
+                         if not any(value in hit for hit in exact_hits + alternate_hits)]
+            missing = [f"Required value/label not found: {value}" for value in unmatched]
+            if expected_values:
+                found_count = len(exact_hits) + len(alternate_hits)
+                ratio = found_count / max(len(expected_values), 1)
+                if not exact_hits and alternate_hits and not expected.get("flexible_location"):
+                    ratio *= 0.85
+                return min(1.0, ratio), evidence, missing, 0.9 if not missing else 0.7
+            if target_cells:
+                cell_hits = [f"{s.get('name')}!{cell}" for s in analyses.get("workbook", {}).get("sheets", [])
+                             for cell in target_cells
+                             if any(str(i.get("cell", "")).upper() == cell
+                                    for i in s.get("values", []))]
+                if cell_hits:
+                    evidence.append("Required cell location contains content: " + ", ".join(cell_hits[:3]))
+                    return 1.0, evidence, [], 0.72
+            return 0.0, [], ["Required cell value/label was not found."], 0.65
 
         if req_type == "VALUE_REQUIREMENT":
             expected_values = [str(value).strip().lower() for value in verification.get("expected", {}).get("values", [])]
@@ -926,7 +1648,7 @@ class RequirementEvaluator:
             missing = [f"Required value/label not found: {value}" for value in expected_values if value not in found_values]
             return len(found_values) / max(len(expected_values), 1), evidence, missing, 0.9 if not missing else 0.7
 
-        if req_type in {"FORMULA_REQUIREMENT", "FUNCTION_REQUIREMENT", "CELL_REQUIREMENT"}:
+        if req_type in {"FORMULA_REQUIREMENT", "FUNCTION_REQUIREMENT"}:
             expected_feature = str(verification.get("expected", {}).get("feature", "")).lower()
             if expected_feature == "simulation iterations":
                 match = re.search(r"(\d[\d,]*)\s+iterations", req.get("requirement", ""), re.I)
@@ -964,8 +1686,10 @@ class RequirementEvaluator:
                     constraint_failures: List[str] = []
                     for entry in exact_target:
                         evidence.append(f"{', '.join(expected_functions)} detected in {entry.get('sheet', '')}!{entry.get('cell', '')}: {entry.get('formula', '')}")
-                        formula_lower = entry.get("formula", "").lower()
-                        constraint_failures.extend(value for value in constraints if value not in formula_lower)
+                        constraint_failures.extend(
+                            value for value in constraints
+                            if not self._constraint_satisfied(value, entry, analyses)
+                        )
                     if constraint_failures:
                         missing.append("Expected formula constraint(s) not confirmed: " + ", ".join(dict.fromkeys(constraint_failures)))
                         ratio = 0.75
@@ -1179,6 +1903,31 @@ class RequirementEvaluator:
                 else:
                     missing.append("No hidden calculation worksheet was detected.")
                 return (1.0 if found else 0.0, evidence, missing, 0.86 if found else 0.7)
+            if "rename" in text and "sheet" in text:
+                expected_names = [name for name in _QUOTED_RE.findall(req.get("requirement", ""))
+                                  if name.lower() not in {"sheet1", "sheet"}]
+                actual_names = [str(s.get("name", "")) for s in wb.get("sheets", [])]
+                found = [name for name in expected_names
+                         if any(name.lower() == actual.lower() for actual in actual_names)]
+                if found:
+                    evidence.append("Required worksheet name(s) detected: " + ", ".join(found))
+                else:
+                    target = ", ".join(expected_names) or "rename target"
+                    missing.append("Required worksheet name(s) were not detected: " + target)
+                return (1.0 if expected_names and found else 0.0, evidence, missing,
+                        0.92 if found else 0.7)
+            minimum_rows = re.search(r"at least\s+(\d+)\s+rows", text)
+            if minimum_rows:
+                rows_needed = int(minimum_rows.group(1))
+                rows_found = max((int(s.get("row_count", 0) or 0)
+                                  for s in wb.get("sheets", [])), default=0)
+                if rows_found >= rows_needed:
+                    evidence.append(f"Workbook contains {rows_found} rows, meeting the "
+                                    f"required minimum of {rows_needed}.")
+                    return 1.0, evidence, [], 0.78
+                missing.append(f"At least {rows_needed} rows were required; "
+                               f"{rows_found} were detected.")
+                return 0.0, evidence, missing, 0.78
             if wb.get("total_data_cells", 0) > 0:
                 evidence.append(f"Workbook structure contains {wb.get('total_data_cells', 0)} data cell(s).")
                 return 0.8, evidence, [], 0.65

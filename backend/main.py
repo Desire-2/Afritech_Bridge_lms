@@ -1,4 +1,5 @@
 # Main application file for Afritec Bridge LMS
+import atexit
 import os
 import sys
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -56,6 +57,12 @@ from src.models.workflow_models import (  # Autonomous course-creation workflow 
     CourseWorkflow, WorkflowTask, WorkflowEvent, TaskDependency,
     AgentRun, QualityReview, RepairAttempt, CourseGenerationVersion, AgentMemory,
 )  # Import workflow engine models
+from src.models.aage_models import (  # Adaptive AI Assessment & Grading Engine
+    GradingProfile, RubricVersion, GradingJob, SubmissionArtifact,
+    EvaluationRun, EvaluationResult, CriterionScore, EvaluationEvidence,
+    GradingReview, LearningExample, EvaluatorVersion, CalibrationRun,
+    CalibrationCase, GradingAuditLog, ensure_aage_schema,
+)  # Import AAGE models so db.metadata knows their tables
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
@@ -74,6 +81,7 @@ from src.routes.learning_routes import learning_bp # Import learning blueprint
 from src.routes.content_assignment_routes import content_assignment_bp # Import content assignment blueprint
 from src.routes.achievement_routes import achievement_bp # Import achievement blueprint
 from src.routes.grading_routes import grading_bp # Import grading blueprint
+from src.routes.aage_routes import aage_bp # Import AAGE engine API blueprint
 from src.routes.modification_routes import modification_bp # Import modification request blueprint
 from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
@@ -416,6 +424,7 @@ app.register_blueprint(learning_bp) # Register learning blueprint
 app.register_blueprint(content_assignment_bp) # Register content assignment blueprint
 app.register_blueprint(achievement_bp) # Register achievement blueprint
 app.register_blueprint(grading_bp) # Register grading blueprint
+app.register_blueprint(aage_bp) # Register AAGE engine API blueprint
 app.register_blueprint(modification_bp, url_prefix='/api/v1/modification') # Register modification request blueprint
 app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
@@ -452,13 +461,42 @@ logger.info("Maintenance mode middleware initialized and active")
 # startup database seeding or background schedulers while the migration tool is
 # loading the application, especially against a fresh database.
 RUNNING_FLASK_DB_CLI = 'db' in sys.argv[1:]
+RUNNING_DB_UPGRADE = RUNNING_FLASK_DB_CLI and 'upgrade' in sys.argv[1:]
 
-def _auto_migrate_missing_columns():
+
+def _database_has_no_tables():
+    """True only for a completely fresh database (no schema at all)."""
+    try:
+        from sqlalchemy import inspect as _inspect
+        return not _inspect(db.engine).get_table_names()
+    except Exception:
+        return False
+
+
+def _execute_schema_ddl(bind, statement):
+    """Execute DDL on an Engine or on an already-open Connection.
+
+    When a Connection is supplied (the advisory-lock path), the statement and
+    the lock share one session; committing here keeps the session-level
+    advisory lock but releases the DDL transaction immediately.
     """
-    Auto-add columns from models that are missing in the SQLite schema.
-    db.create_all() doesn't alter existing tables, so model changes after
-    the first create are never applied. This fills that gap for dev.
+    if hasattr(bind, "execute") and hasattr(bind, "commit"):
+        bind.execute(statement)
+        bind.commit()
+        return
+    with bind.begin() as conn:
+        conn.execute(statement)
+
+
+def _auto_migrate_missing_columns(bind=None):
     """
+    Auto-add columns from models that are missing in the schema.
+
+    ``bind`` may be an Engine or an already-open Connection. Passing the
+    advisory-locked connection keeps these ALTER statements inside the same
+    PostgreSQL session as the lock instead of opening unlocked connections.
+    """
+    bind = bind or db.engine
     try:
         import sqlalchemy as sa
         from sqlalchemy import inspect
@@ -477,12 +515,11 @@ def _auto_migrate_missing_columns():
         missing = {k: v for k, v in additions.items() if k not in existing}
         if missing:
             logger.info(f"🔧 Auto-migrating missing columns in course_applications: {list(missing.keys())}")
-            with db.engine.connect() as conn:
-                for col_name, col in missing.items():
-                    conn.execute(sa.text(
-                        f"ALTER TABLE course_applications ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
-                    ))
-                conn.commit()
+            for col_name, col in missing.items():
+                _execute_schema_ddl(bind, sa.text(
+                    f"ALTER TABLE course_applications ADD COLUMN {col_name} "
+                    f"{col.type.compile(bind.dialect)}"
+                ))
     except Exception as e:
         logger.warning(f"⚠️ Auto-migration skipped (non-fatal): {e}")
 
@@ -499,12 +536,11 @@ def _auto_migrate_missing_columns():
         missing = {k: v for k, v in additions.items() if k not in existing}
         if missing:
             logger.info(f"🔧 Auto-migrating missing columns in user_ai_settings: {list(missing.keys())}")
-            with db.engine.connect() as conn:
-                for col_name, col in missing.items():
-                    conn.execute(sa.text(
-                        f"ALTER TABLE user_ai_settings ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
-                    ))
-                conn.commit()
+            for col_name, col in missing.items():
+                _execute_schema_ddl(bind, sa.text(
+                    f"ALTER TABLE user_ai_settings ADD COLUMN {col_name} "
+                    f"{col.type.compile(bind.dialect)}"
+                ))
     except Exception as e:
         logger.warning(f"⚠️ user_ai_settings auto-migration skipped (non-fatal): {e}")
 
@@ -520,12 +556,11 @@ def _auto_migrate_missing_columns():
         missing = {k: v for k, v in additions.items() if k not in existing}
         if missing:
             logger.info(f"🔧 Auto-migrating missing columns in module_progress: {list(missing.keys())}")
-            with db.engine.connect() as conn:
-                for col_name, col in missing.items():
-                    conn.execute(sa.text(
-                        f"ALTER TABLE module_progress ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
-                    ))
-                conn.commit()
+            for col_name, col in missing.items():
+                _execute_schema_ddl(bind, sa.text(
+                    f"ALTER TABLE module_progress ADD COLUMN {col_name} "
+                    f"{col.type.compile(bind.dialect)}"
+                ))
     except Exception as e:
         logger.warning(f"⚠️ module_progress auto-migration skipped (non-fatal): {e}")
 
@@ -551,7 +586,7 @@ def _with_db_retry(operation, description,
     for attempt in range(1, attempts + 1):
         try:
             return operation()
-        except (ProgrammingError, OperationalError) as exc:
+        except (ProgrammingError, OperationalError, TimeoutError) as exc:
             try:
                 db.session.rollback()
             except Exception:
@@ -659,19 +694,35 @@ def _bootstrap_schema():
 
     try:
         _with_db_retry(_run, 'Schema bootstrap')
-    except (ProgrammingError, OperationalError) as e:
+    except (ProgrammingError, OperationalError, TimeoutError) as e:
         logger.warning(
             f"⚠️ Schema bootstrap skipped (non-fatal): {type(e).__name__}: {e}"
         )
 
 
 with app.app_context():
+    # ── Fresh-database bootstrap ──────────────────────────────────────────
+    # The historical migration chain is alter-only: it assumes the base tables
+    # were created by create_all() at boot. On a genuinely empty database the
+    # first batch_alter_table() therefore fails with NoSuchTableError, and
+    # later revisions assume many other create_all-only tables as well.
+    # For a brand-new database only, create the model-authoritative schema and
+    # stamp the Alembic head before the upgrade command runs. Existing
+    # databases (including legacy create_all-only ones with no alembic_version)
+    # are never stamped and continue through the real migration chain.
+    if RUNNING_DB_UPGRADE and _database_has_no_tables():
+        logger.info("Fresh database detected; bootstrapping model schema and stamping Alembic head")
+        db.metadata.create_all(bind=db.engine)
+        ensure_aage_schema(db.engine, logger)
+        from flask_migrate import stamp as _alembic_stamp
+        _alembic_stamp()
+        logger.info("Fresh database bootstrap complete")
+
     # ── Schema bootstrap ──────────────────────────────────────────────────
-    # Skip DDL entirely while running `flask db ...` migration commands
+    # Skip normal DDL while running `flask db ...` migration commands
     # (covers `flask db ...`, `python -m flask db ...` and
-    # `flask --app main db ...`): Alembic owns the schema then, and
-    # create_all() racing the migrations is exactly what produced the
-    # "relation ... already exists" crash you saw with `flask db upgrade`.
+    # `flask --app main db ...`): Alembic owns the schema then. The narrow
+    # fresh-database bootstrap above is the only exception.
     if not RUNNING_FLASK_DB_CLI:
         _bootstrap_schema()
 
@@ -691,11 +742,13 @@ with app.app_context():
             try:
                 with db.engine.connect() as lock_conn:
                     with _schema_advisory_lock(lock_conn):
-                        _auto_migrate_missing_columns()
+                        _auto_migrate_missing_columns(lock_conn)
+                        ensure_aage_schema(lock_conn, logger)
             except Exception as e:
                 logger.warning(f"⚠️ Column auto-migration skipped (non-fatal): {e}")
         else:
             _auto_migrate_missing_columns()
+            ensure_aage_schema(db.engine, logger)
 
     if not RUNNING_FLASK_DB_CLI:
         def _seed_core_roles():
@@ -714,7 +767,7 @@ with app.app_context():
         # decided an unreachable database was non-fatal.
         try:
             _with_db_retry(_seed_core_roles, 'Core role seeding')
-        except (ProgrammingError, OperationalError) as e:
+        except (ProgrammingError, OperationalError, TimeoutError) as e:
             db.session.rollback()
             logger.error(
                 "❌ Core role seeding skipped — database unreachable at boot. "
@@ -727,7 +780,7 @@ with app.app_context():
         try:
             _with_db_retry(initialize_default_settings, 'System settings initialization')
             logger.info("✅ System settings initialized successfully")
-        except (ProgrammingError, OperationalError) as e:
+        except (ProgrammingError, OperationalError, TimeoutError) as e:
             db.session.rollback()
             logger.error(
                 "❌ System settings initialization skipped — database unreachable at boot: "
@@ -752,6 +805,83 @@ if not RUNNING_FLASK_DB_CLI:
 # warnings, daily/weekly cleanup, activity stats)
 if not RUNNING_FLASK_DB_CLI:
     init_scheduler(app)
+
+# ---------------------------------------------------------------------------
+# AAGE in-process grading worker
+# ---------------------------------------------------------------------------
+# The GradingJob row is the queue.  Without a worker, /grading/start leaves
+# jobs queued forever, so production starts one bounded daemon worker here.
+# Tests, the Flask db CLI and the reloader parent must never spawn it.
+_aage_worker_thread = None
+
+
+def _aage_worker_enabled():
+    if RUNNING_FLASK_DB_CLI:
+        return False
+    if app.config.get("TESTING") or os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    if "pytest" in sys.modules:
+        return False
+    enabled = os.environ.get("AAGE_WORKER_ENABLED", "true").strip().lower()
+    if enabled not in ("1", "true", "yes", "on"):
+        return False
+    # Under `python main.py` the Werkzeug reloader imports this module twice;
+    # only the child process (WERKZEUG_RUN_MAIN=true) should run a worker.
+    if __name__ == "__main__" and env != "production":
+        use_reloader = os.environ.get("DISABLE_RELOADER") != "true"
+        if use_reloader and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+            return False
+    return True
+
+
+def start_aage_worker(application=None):
+    """Start the AAGE worker once and recover jobs abandoned at restart."""
+    global _aage_worker_thread
+    if _aage_worker_thread is not None and _aage_worker_thread.is_alive():
+        return _aage_worker_thread
+    if not _aage_worker_enabled():
+        logger.info("AAGE worker disabled (test/CLI/reloader/environment)")
+        return None
+
+    from src.services.aage import jobs as aage_jobs
+    from src.services.aage.constants import STALE_LOCK_SECONDS
+
+    target = application or app
+    try:
+        recovery_timeout = int(os.environ.get(
+            "AAGE_WORKER_RECOVERY_TIMEOUT_SECONDS", STALE_LOCK_SECONDS))
+    except (TypeError, ValueError):
+        recovery_timeout = STALE_LOCK_SECONDS
+    try:
+        poll_interval = float(os.environ.get("AAGE_WORKER_POLL_SECONDS", "2"))
+    except (TypeError, ValueError):
+        poll_interval = 2.0
+    poll_interval = max(0.25, min(60.0, poll_interval))
+
+    try:
+        with target.app_context():
+            recovered = aage_jobs.recover_stale(
+                limit=50, timeout_seconds=recovery_timeout)
+            if recovered:
+                logger.warning("AAGE startup recovered %s stale job(s)",
+                               recovered)
+    except Exception:
+        # A recovery failure (e.g. DB still warming up) must not prevent the
+        # worker from starting; the loop retries recovery itself.
+        logger.exception("AAGE startup stale-job recovery failed")
+
+    _aage_worker_thread = aage_jobs.start_worker(
+        target, poll_interval=poll_interval)
+    atexit.register(aage_jobs.stop_worker, _aage_worker_thread)
+    logger.info("AAGE worker started (poll=%.2fs)", poll_interval)
+    return _aage_worker_thread
+
+
+if not RUNNING_FLASK_DB_CLI:
+    try:
+        start_aage_worker(app)
+    except Exception:
+        logger.exception("AAGE worker startup failed; jobs remain queued")
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

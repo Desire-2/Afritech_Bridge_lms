@@ -47,22 +47,15 @@ DEFAULT_RUBRIC = {
     'Completeness':  {'max': 10, 'weight': 0.10},
 }
 
-# Grade letter mapping
-GRADE_MAP = [
-    (90, 'A'),
-    (80, 'B'),
-    (70, 'C'),
-    (60, 'D'),
-    (0, 'F'),
-]
+# Grade letter bands are canonical in AAGE scoring; keep this alias so legacy
+# callers do not need to change while there is only one banding definition.
+GRADE_MAP = [(90, 'A'), (80, 'B'), (70, 'C'), (60, 'D'), (0, 'F')]
 
 
 def compute_grade_letter(percentage: float) -> str:
-    """Convert percentage score to letter grade."""
-    for threshold, letter in GRADE_MAP:
-        if percentage >= threshold:
-            return letter
-    return 'F'
+    """Convert percentage score to the canonical letter grade."""
+    from ..aage.scoring import letter_grade
+    return letter_grade(percentage)
 
 
 class GradingEngine:

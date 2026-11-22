@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
-import StudentExcelGradingResult from '@/components/grading/StudentExcelGradingResult';
+import StudentAageGradingResult from '@/components/grading/StudentAageGradingResult';
 import FileUploadService, { UploadedFile, FileUploadProgress, StagedFile } from '@/services/file-upload.service';
 import { toast } from 'sonner';
 
@@ -159,9 +159,11 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const backendAllowsResubmit = displayAssignment.can_resubmit !== false;
   const canResubmit = hasModificationRequest && isSubmitted && !resubmittedForCurrentRequest && backendAllowsResubmit;
 
-  const allowedFileTypes = displayAssignment.allowed_file_types 
-    ? displayAssignment.allowed_file_types.split(',').map(t => t.trim()) 
-    : ['*'];
+  // `allowed_file_types` is stored as a JSON array string or a comma list of
+  // bare extensions. Resolve both into normalised dot-extensions for the
+  // uploader and the input's `accept` attribute (undefined = unrestricted).
+  const allowedTypes = FileUploadService.resolveAllowedTypes(displayAssignment.allowed_file_types);
+  const allowedFileTypes = allowedTypes ?? ['*'];
   
   const maxFileSizeMB = displayAssignment.max_file_size_mb || 10;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
@@ -264,18 +266,13 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
         throw new Error('File staging not available. Please refresh the page.');
       }
       
-      // Convert file types for validation
-      const allowedMimeTypes = allowedFileTypes.includes('*') 
-        ? undefined 
-        : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
-      
       const remainingSlots = Math.max(0, 10 - stagedFiles.length);
       if (remainingSlots === 0) {
         throw new Error('You can select a maximum of 10 files. Remove a file before adding another.');
       }
 
       const newStagedFiles = FileUploadService.stageFiles(files.slice(0, remainingSlots), {
-        allowedTypes: allowedMimeTypes,
+        allowedTypes,
         maxSize: maxFileSizeBytes,
         maxFiles: 10 // Reasonable limit
       });
@@ -1229,9 +1226,9 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               </div>
             )}
 
-            {/* AI Excel Grading Result */}
+            {/* AI Grading Result (AAGE first, legacy Excel only when applicable) */}
             {(displayAssignment.submission_status?.id || submissionResult?.submission?.id) && (
-              <StudentExcelGradingResult
+              <StudentAageGradingResult
                 submissionId={displayAssignment.submission_status?.id || submissionResult?.submission?.id}
                 submissionType="assignment"
               />

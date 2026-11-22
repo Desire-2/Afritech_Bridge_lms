@@ -46,6 +46,24 @@ from .user_models import (
     Role
 )
 
+# Legacy grading models. Rubric is the single source of truth shared by
+# assignments, projects and the AAGE rubric engine; importing it here also
+# registers the extended rubric columns and its AAGE profile relationship.
+try:
+    from .grading_models import (
+        Rubric,
+        RubricCriterion,
+        FeedbackTemplate,
+        GradingHistory,
+        GradingSession,
+    )
+except ImportError:  # pragma: no cover - optional in minimal deployments
+    Rubric = None
+    RubricCriterion = None
+    FeedbackTemplate = None
+    GradingHistory = None
+    GradingSession = None
+
 # Student Models - Contains UserProgress and other student tracking models
 try:
     from .student_models import UserProgress, Badge, UserBadge, LessonCompletion
@@ -104,6 +122,44 @@ from .workflow_models import (
     AgentResultStatus,
 )
 
+# Adaptive AI Assessment & Grading Engine (AAGE)
+try:
+    from .aage_models import (
+        GradingProfile,
+        RubricVersion,
+        GradingJob,
+        SubmissionArtifact,
+        EvaluationRun,
+        EvaluationResult,
+        CriterionScore,
+        EvaluationEvidence,
+        GradingReview,
+        LearningExample,
+        EvaluatorVersion,
+        CalibrationRun,
+        CalibrationCase,
+        GradingAuditLog,
+    )
+except ImportError:  # pragma: no cover - engine tables optional at import time
+    # Keep every name referenced by __all__ defined even when the optional
+    # engine tables cannot be imported.  Assigning only GradingProfile made
+    # `from src.models import GradingJob` fail with an AttributeError.
+    GradingProfile = None
+    RubricVersion = None
+    GradingJob = None
+    SubmissionArtifact = None
+    EvaluationRun = None
+    EvaluationResult = None
+    CriterionScore = None
+    EvaluationEvidence = None
+    GradingReview = None
+    LearningExample = None
+    EvaluatorVersion = None
+    CalibrationRun = None
+    CalibrationCase = None
+    GradingAuditLog = None
+
+
 __all__ = [
     # Course Models
     'Course',
@@ -130,6 +186,13 @@ __all__ = [
     'UserBadge',
     'Certificate',
     
+    # Grading Models
+    'Rubric',
+    'RubricCriterion',
+    'FeedbackTemplate',
+    'GradingHistory',
+    'GradingSession',
+
     # Enums
     'QuizFeedbackPolicy',
     'QuizPublishStatus',
@@ -157,6 +220,22 @@ __all__ = [
     'WorkflowStatus',
     'WorkflowTaskStatus',
     'AgentResultStatus',
+
+    # AAGE (Adaptive AI Assessment & Grading Engine)
+    'GradingProfile',
+    'RubricVersion',
+    'GradingJob',
+    'SubmissionArtifact',
+    'EvaluationRun',
+    'EvaluationResult',
+    'CriterionScore',
+    'EvaluationEvidence',
+    'GradingReview',
+    'LearningExample',
+    'EvaluatorVersion',
+    'CalibrationRun',
+    'CalibrationCase',
+    'GradingAuditLog',
 ]
 
 print("✅ Models package loaded - Quiz consolidation complete")
