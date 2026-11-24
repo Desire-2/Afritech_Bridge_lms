@@ -30,9 +30,9 @@ from app.services import notifications as ns
 from app.services.weekly_i18n import SUPPORTED_LANGUAGES, bilingual, normalize_language, t
 from app.services.weekly_policy import (
     DEFAULTS, WeekPolicyError, available_weeks, business_timezone, get_policy,
-    in_week, is_late, is_valid_week_start, require_week_start,
-    submission_deadline, week_bounds, week_end_for, week_for_submission,
-    week_window,
+    in_week, is_late, is_valid_week_start, normalize_week_start,
+    require_week_start, submission_deadline, week_bounds, week_end_for,
+    week_for_submission, week_window,
 )
 from app.services.weekly_report_service import WeeklyReportError, WeeklyReportService
 
@@ -1521,15 +1521,22 @@ class TestSundayWeekPolicy:
         assert not in_week(datetime(2031, 1, 11, 23, 59, 59, tzinfo=local), sunday)
         assert in_week(saturday, sunday)
 
-    def test_non_sunday_periods_are_rejected_everywhere(self, client, admin_hdr):
+    def test_generation_normalizes_non_sunday_reference_dates(self, client, admin_hdr):
         monday = date(2031, 1, 13)
+        legacy_saturday = date(2031, 1, 18)
         assert not is_valid_week_start(monday)
         with pytest.raises(WeekPolicyError):
             require_week_start(monday)
-        r = client.post('/api/weekly-reports/generate', headers=admin_hdr,
-                        json={'employee_id': _agent().id, 'week_start': monday.isoformat()})
-        assert r.status_code == 400, r.get_data(as_text=True)
-        assert r.get_json()['code'] == 'weekly_report.invalid_week'
+        assert normalize_week_start(monday) == date(2031, 1, 12)
+        assert normalize_week_start(legacy_saturday) == date(2031, 1, 19)
+
+        monday_report = _generate(client, admin_hdr, _agent(), monday)
+        assert monday_report.week_start == date(2031, 1, 12)
+        assert monday_report.week_end == date(2031, 1, 18)
+
+        legacy_report = _generate(client, admin_hdr, _agent(), legacy_saturday)
+        assert legacy_report.week_start == date(2031, 1, 19)
+        assert legacy_report.week_end == date(2031, 1, 25)
 
     def test_weeks_endpoint_returns_sunday_saturday_pairs(self, client, agent_hdr):
         weeks = _assert_ok(client.get('/api/weekly-reports/weeks', headers=agent_hdr))['weeks']

@@ -21,7 +21,7 @@ from .audit import audit
 from .weekly_policy import (
     get_policy, period_label, submission_deadline, is_late, money,
     week_bounds, week_end_for, require_week_start, is_valid_week_start,
-    week_window, in_week, business_timezone,
+    normalize_week_start, week_window, in_week, business_timezone,
 )
 from .weekly_i18n import bilingual, t
 
@@ -82,7 +82,8 @@ class WeeklyReportService:
         if employee is None:
             raise WeeklyReportError('Employee not found', 'weekly_report.employee_not_found', 404)
         policy = get_policy()
-        week_start = require_week_start(week_start or week_bounds()[0], policy)
+        week_start = normalize_week_start(
+            week_start or week_bounds(policy=policy)[0], policy)
         week_end = week_end_for(week_start, policy)
 
         existing = WeeklyReport.query.filter_by(

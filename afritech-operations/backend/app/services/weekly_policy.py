@@ -129,6 +129,21 @@ def week_bounds(on_date=None, policy=None):
     return start, start + timedelta(days=6)
 
 
+def normalize_week_start(value, policy=None):
+    """Return the legal Sunday start for any caller-supplied generation date.
+
+    Saturday is the legacy start boundary, so it moves to the following Sunday
+    and keeps the same Sunday–Saturday working days. Every other non-Sunday
+    date resolves to the Sunday that begins its own reporting week.
+    """
+    day = local_date(value, policy)
+    if day.weekday() == WEEK_START_WEEKDAY:
+        return day
+    if day.weekday() == WEEK_END_WEEKDAY:
+        return day + timedelta(days=1)
+    return week_bounds(day, policy)[0]
+
+
 def week_end_for(week_start, policy=None):
     """Return the inclusive Saturday end for a validated Sunday start."""
     return require_week_start(week_start, policy) + timedelta(days=6)

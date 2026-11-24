@@ -57,9 +57,13 @@ move the period back to the old Saturday–Friday rule.
 | `shortage_requires_evidence` | `true` | Evidence mandatory for explained shortages |
 | `statement_items` | `21` | Number of statement lines in exports |
 
-`require_week_start()` rejects any report whose `week_start` is not a Sunday;
-`week_window()` and `in_week()` are the only boundary helpers used by services
-and schedulers. The deadline is stored as an aware UTC `due_at` on each report
+`require_week_start()` still rejects a stored report whose `week_start` is not a
+Sunday. Report *generation* accepts any reference date through
+`normalize_week_start()`: Monday–Friday resolves to the Sunday beginning that
+week, and a legacy Saturday start moves to the following Sunday so the same
+working days stay in scope. Generated rows always store Sunday/Saturday
+boundaries. `week_window()` and `in_week()` are the only boundary helpers used
+by services and schedulers. The deadline is stored as an aware UTC `due_at` on each report
 while the report keeps its business `timezone_name`. A scheduler run on Sunday
 creates and reminds for the **completed** Sunday–Saturday week, not the week that
 has just begun. Historical weeks are available through

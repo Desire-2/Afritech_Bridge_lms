@@ -14,8 +14,8 @@ from ..models import (
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
 from ..services.weekly_policy import (
-    WeekPolicyError, available_weeks, business_timezone, get_policy,
-    require_week_start, week_bounds, week_end_for,
+    available_weeks, business_timezone, get_policy,
+    normalize_week_start, week_bounds, week_end_for,
 )
 from ..services.weekly_report_service import WeeklyReportService, WeeklyReportError
 from ..services.weekly_i18n import SUPPORTED_LANGUAGES, t
@@ -168,10 +168,9 @@ def generate():
     if err:
         return err
     if week_start:
-        try:
-            week_start = require_week_start(week_start)
-        except WeekPolicyError as exc:
-            return json_error(str(exc), 400, 'weekly_report.invalid_week')
+        # Generation accepts any reference date and stores the legal Sunday
+        # start. Strict validation still applies to stored report periods.
+        week_start = normalize_week_start(week_start)
     kwargs = {}
     if employee_id:
         try:
