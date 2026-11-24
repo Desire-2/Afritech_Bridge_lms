@@ -157,6 +157,7 @@ class AuditLog(db.Model):
     entity_id = db.Column(db.String(64))
     previous_value = db.Column(db.Text)
     new_value = db.Column(db.Text)
+    reason = db.Column(db.Text)
     ip_address = db.Column(db.String(64))
     user_agent = db.Column(db.String(255))
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
@@ -173,6 +174,7 @@ class AuditLog(db.Model):
             'entity_id': self.entity_id,
             'previous_value': self.previous_value,
             'new_value': self.new_value,
+            'reason': self.reason,
             'ip_address': self.ip_address,
             'user_agent': self.user_agent,
             'created_at': self.created_at.isoformat() if self.created_at else None,

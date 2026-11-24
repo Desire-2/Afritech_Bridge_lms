@@ -39,6 +39,20 @@ PERMISSIONS = [
     ('expenses.create', 'Create Expenses', 'Submit expenses'),
     ('expenses.approve', 'Approve Expenses', 'Approve or reject expenses'),
     ('expenses.view', 'View Expenses', 'View expenses'),
+    # weekly financial report / money submission. Deliberately absent from the
+    # Company Secretary's administrative family.
+    ('weekly_reports.view', 'View Weekly Financial Report',
+     'View own or assigned weekly financial reports'),
+    ('weekly_reports.submit', 'Submit Weekly Financial Report',
+     'Submit a Service Agent weekly financial report and MoMo evidence'),
+    ('weekly_reports.review', 'Review Weekly Financial Report',
+     'Verify transfers and review weekly financial reports'),
+    ('weekly_reports.adjust', 'Adjust Weekly Financial Report',
+     'Record audited financial adjustments and overrides'),
+    ('weekly_reports.export', 'Export Weekly Financial Report',
+     'Download the verified weekly PDF/Excel statement'),
+    ('weekly_reports.manage', 'Manage Weekly Financial Reports',
+     'Generate reports and configure the weekly reporting policy'),
     # payroll
     ('payroll.manage', 'Manage Payroll', 'Create and edit payroll periods'),
     ('payroll.approve', 'Approve Payroll', 'Approve payroll'),
@@ -219,6 +233,22 @@ OPERATIONAL_SERVICE_PERMISSIONS = [
     'clients.view',
 ]
 
+# Restricted weekly money family. These codes are never part of the
+# administrative/Company Secretary permission set.
+WEEKLY_FINANCIAL_PERMISSIONS = [
+    'weekly_reports.view', 'weekly_reports.submit', 'weekly_reports.review',
+    'weekly_reports.adjust', 'weekly_reports.export', 'weekly_reports.manage',
+]
+AGENT_WEEKLY_PERMISSIONS = ['weekly_reports.view', 'weekly_reports.submit', 'weekly_reports.export']
+MANAGER_WEEKLY_PERMISSIONS = [
+    'weekly_reports.view', 'weekly_reports.review', 'weekly_reports.adjust',
+    'weekly_reports.export', 'weekly_reports.manage',
+]
+ACCOUNTANT_WEEKLY_PERMISSIONS = [
+    'weekly_reports.view', 'weekly_reports.review', 'weekly_reports.adjust',
+    'weekly_reports.export',
+]
+
 # ── electronics shop permission families ─────────────────────────────────────
 #
 # The shop is a separate business unit: none of these codes may be granted to
@@ -333,6 +363,7 @@ ROLE_PERMISSIONS = {
         'notifications.view',
         *ADMINISTRATIVE_PERMISSIONS,
         *SHOP_OVERSIGHT_PERMISSIONS,
+        *MANAGER_WEEKLY_PERMISSIONS,
     ],
     'service_agent': [
         'services.view',
@@ -340,6 +371,7 @@ ROLE_PERMISSIONS = {
         'transactions.create', 'transactions.view', 'transactions.edit',
         'closings.submit', 'closings.view',
         'expenses.create',
+        *AGENT_WEEKLY_PERMISSIONS,
         'attendance.view',
         'tasks.view',
         # The service centre reads company communication like everyone else —
@@ -371,6 +403,7 @@ ROLE_PERMISSIONS = {
         'notifications.view',
         *STAFF_COMMUNICATION_PERMISSIONS,
         *SHOP_FINANCE_OVERSIGHT_PERMISSIONS,
+        *ACCOUNTANT_WEEKLY_PERMISSIONS,
     ],
     # Dedicated administrative coordination role. Explicitly independent from
     # the manager permission set: no service-centre writes, no financial access.

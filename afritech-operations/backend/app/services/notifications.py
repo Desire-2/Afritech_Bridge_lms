@@ -50,7 +50,7 @@ from flask import current_app
 from ..extensions import db
 from ..models import (
     AdminRequest, Attendance, DailyClosing, Employee, FollowUp,
-    Notification, NotificationPreference, PayrollItem, Task, User,
+    Notification, NotificationPreference, PayrollItem, Task, User, WeeklyReport,
 )
 from ..auth.scope import (
     FINANCIAL_VIEW_PERMISSIONS, can_access_service_agents,
@@ -69,6 +69,17 @@ EVENT_DEDUP_WINDOW_SECONDS = 60
 
 SEVERITY_BY_TYPE = {
     'cash_shortage': 'critical',
+    'weekly_report_generated': 'info',
+    'weekly_report_due': 'warning',
+    'weekly_report_late': 'warning',
+    'weekly_report_submitted': 'warning',
+    'weekly_report_submitted_ack': 'info',
+    'weekly_report_returned': 'warning',
+    'weekly_report_approved': 'info',
+    'weekly_report_rejected': 'critical',
+    'weekly_report_shortage': 'critical',
+    'weekly_momo_verified': 'info',
+    'weekly_override_requested': 'warning',
     'closing_reviewed': 'warning',
     'closing_approval': 'warning',
     'expense_approval': 'warning',
@@ -121,6 +132,17 @@ SEVERITY_BY_TYPE = {
 # Known notification types surfaced in the notification-preferences UI.
 NOTIFICATION_TYPES = {
     'cash_shortage': 'Cash shortage alert',
+    'weekly_report_generated': 'Weekly financial report generated',
+    'weekly_report_due': 'Weekly financial report due',
+    'weekly_report_late': 'Weekly financial report is late',
+    'weekly_report_submitted': 'Weekly financial report awaiting review',
+    'weekly_report_submitted_ack': 'Weekly financial report submission confirmed',
+    'weekly_report_returned': 'Weekly financial report needs correction',
+    'weekly_report_approved': 'Weekly financial report approved',
+    'weekly_report_rejected': 'Weekly financial report rejected',
+    'weekly_report_shortage': 'Weekly financial report shortage',
+    'weekly_momo_verified': 'Weekly money submission verification',
+    'weekly_override_requested': 'Weekly financial override requested',
     'closing_approval': 'Daily closing awaiting approval',
     'closing_reviewed': 'Closing review result',
     'expense_approval': 'Expense awaiting approval',
@@ -181,6 +203,19 @@ NOTIFICATION_TYPES = {
 # them, which is exactly the point — no commission, revenue, profit, payroll,
 # salary, service-cost or shop-money event may reach that role.
 TYPE_PERMISSIONS = {
+    'weekly_report_generated': ('weekly_reports.view',),
+    'weekly_report_due': ('weekly_reports.view',),
+    'weekly_report_late': ('weekly_reports.view',),
+    'weekly_report_submitted': ('weekly_reports.review', 'weekly_reports.manage'),
+    'weekly_report_submitted_ack': ('weekly_reports.view',),
+    'weekly_report_returned': ('weekly_reports.view',),
+    'weekly_report_approved': ('weekly_reports.view',),
+    'weekly_report_rejected': ('weekly_reports.view',),
+    'weekly_report_shortage': ('weekly_reports.review', 'weekly_reports.adjust',
+                               'weekly_reports.manage'),
+    'weekly_momo_verified': ('weekly_reports.view', 'weekly_reports.review'),
+    'weekly_override_requested': ('weekly_reports.review', 'weekly_reports.adjust',
+                                  'weekly_reports.manage'),
     'cash_shortage': (
         'closings.view', 'closings.approve', 'expenses.view', 'reports.view',
         'payroll.view', 'employees.earnings.view_all',
@@ -236,6 +271,7 @@ MANDATORY_TYPES = {'cash_shortage', 'shop_out_of_stock'}
 _AGENT_SCOPED_MODELS = {
     'task': (Task, Task.assigned_to),
     'daily_closing': (DailyClosing, DailyClosing.employee_id),
+    'weekly_report': (WeeklyReport, WeeklyReport.employee_id),
     'followup': (FollowUp, FollowUp.employee_id),
     'admin_request': (AdminRequest, AdminRequest.requested_by),
     'attendance': (Attendance, Attendance.employee_id),
@@ -595,6 +631,37 @@ def notify_users_with_permission(permission, notification_type, message, severit
         if u.has_permission(permission):
             sent.append(notify(u, notification_type, message, severity or SEVERITY_BY_TYPE.get(notification_type, 'info'),
                                related_type, related_id, rule))
+    return [x for x in sent if x is not None]
+
+
+def notify_weekly_reviewers(report, notification_type, message, severity=None,
+                            related_type='weekly_report', related_id=None, rule=None):
+    """Notify weekly reviewers without leaking another branch to Managers.
+
+    Accountants and Super Admins are system-wide. A Manager only receives a
+    weekly notification when the report belongs to that Manager's branch — the
+    same boundary the weekly API enforces.
+    """
+    if related_id is None and related_type == 'weekly_report':
+        related_id = report.id
+    sent = []
+    for user in User.query.filter(User.is_active.is_(True)).all():
+        if not (user.is_super_admin or user.has_permission('weekly_reports.review')):
+            continue
+        manager_scoped = (
+            not user.is_super_admin
+            and 'manager' in user.role_codes
+            and 'accountant' not in user.role_codes
+        )
+        if manager_scoped:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+            if not report.branch_id or not employee or employee.branch_id != report.branch_id:
+                continue
+        sent.append(notify(
+            user, notification_type, message,
+            severity or SEVERITY_BY_TYPE.get(notification_type, 'info'),
+            related_type, related_id, rule,
+        ))
     return [x for x in sent if x is not None]
 
 

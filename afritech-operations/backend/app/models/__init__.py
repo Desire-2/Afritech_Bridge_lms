@@ -15,6 +15,12 @@ from .administration import (
     REQUEST_TYPES, REQUEST_STATUSES, DOCUMENT_CATEGORIES, ANNOUNCEMENT_CATEGORIES,
     AUDIENCES, FOLLOWUP_STATUSES, ESCALATION_STATUSES, ACTION_ITEM_STATUSES,
 )
+from .weekly_reports import (
+    WeeklyReport, MoMoSubmission, WeeklyReportAdjustment, WeeklyReportExpense,
+    OutstandingAllocation, WEEKLY_REPORT_STATUSES, WEEKLY_REPORT_TRANSITIONS,
+    MOMO_PROVIDERS, MOMO_VERIFICATION_STATUSES, SHORTAGE_REASON_CATEGORIES,
+    ADJUSTMENT_KINDS,
+)
 from .shop import (
     ShopSeries, ShopProductCategory, ShopBrand, ShopAttribute, ShopSupplier,
     ShopProduct, ShopProductVariant, ShopProductAttributeValue,
@@ -71,4 +77,8 @@ __all__ = [
     'ShopCustomer', 'ShopSale', 'ShopSaleItem', 'ShopPayment', 'ShopReturn',
     'ShopReturnItem', 'ShopWarrantyRegistration', 'ShopWarrantyCase',
     'ShopPromotion', 'ShopPromotionItem', 'ShopShift', 'ShopDailyClosing',
+    'WeeklyReport', 'MoMoSubmission', 'WeeklyReportAdjustment', 'WeeklyReportExpense',
+    'OutstandingAllocation', 'WEEKLY_REPORT_STATUSES', 'WEEKLY_REPORT_TRANSITIONS',
+    'MOMO_PROVIDERS', 'MOMO_VERIFICATION_STATUSES', 'SHORTAGE_REASON_CATEGORIES',
+    'ADJUSTMENT_KINDS',
 ]

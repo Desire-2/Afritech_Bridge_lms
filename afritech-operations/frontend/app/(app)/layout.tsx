@@ -8,6 +8,7 @@ import AccessDenied from '@/components/AccessDenied';
 import { useAuth } from '@/lib/auth';
 import { api, fmtDateTime, logout } from '@/lib/api';
 import { routeDenied, pageIdentity, roleLabel } from '@/lib/permissions';
+import { isWeeklyNotificationType, localizedWeeklyMessage, useWeeklyI18n } from '@/lib/weekly-i18n';
 import { Loading, Badge } from '@/components/ui';
 
 interface NotifItem {
@@ -21,6 +22,7 @@ interface NotifItem {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const { t: weeklyT, lang: weeklyLang } = useWeeklyI18n();
   const router = useRouter();
   const pathname = usePathname();
   const [notice, setNotice] = useState<NotifItem[]>([]);
@@ -99,7 +101,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </button>
             <div>
               {identity.group && <div className="header-eyebrow">{identity.group}</div>}
-              <h1>{identity.title}</h1>
+              <h1>{identity.i18nKey ? weeklyT(identity.i18nKey) : identity.title}</h1>
             </div>
           </div>
           <div className="d-flex align-items-center gap-2 position-relative">
@@ -127,7 +129,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   {notice.length === 0 && <div className="list-group-item small text-muted">No notifications.</div>}
                   {notice.map((n) => (
                     <Link href="/notifications" key={n.id} onClick={() => markRead(n)} className={`list-group-item list-group-item-action ${n.is_read ? '' : 'bg-primary-subtle'}`}>
-                      <div className="small fw-semibold mb-1">{n.message || n.type}</div>
+                      <div className="small fw-semibold mb-1">
+                        {isWeeklyNotificationType(n.type)
+                          ? localizedWeeklyMessage(n.message, weeklyLang) || n.type
+                          : n.message || n.type}
+                      </div>
                       <div className="small text-muted d-flex align-items-center gap-2">
                         <Badge status={n.severity} />
                         <span>{fmtDateTime(n.created_at)}</span>

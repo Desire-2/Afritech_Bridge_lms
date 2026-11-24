@@ -80,6 +80,13 @@ export const P = {
   auditView: 'audit.view',
   settingsManage: 'settings.manage',
   integrationManage: 'integration.manage',
+  // Weekly Service Agent financial reports (restricted money family)
+  weeklyReportsView: 'weekly_reports.view',
+  weeklyReportsSubmit: 'weekly_reports.submit',
+  weeklyReportsReview: 'weekly_reports.review',
+  weeklyReportsAdjust: 'weekly_reports.adjust',
+  weeklyReportsExport: 'weekly_reports.export',
+  weeklyReportsManage: 'weekly_reports.manage',
   // Electronics shop (mirrors backend SHOP_PERMISSIONS)
   shopView: 'shop.view',
   shopProductsView: 'shop.products.view',
@@ -150,6 +157,8 @@ export type NavItem = {
   /** Any single permission grants access. */
   perm?: string | string[];
   roles?: string[];
+  /** Optional weekly-i18n key; the sidebar renders this label when present. */
+  i18nKey?: string;
 };
 
 export type NavGroup = {
@@ -176,6 +185,8 @@ export const NAV: NavGroup[] = [
       { label: 'Clients', href: '/clients', icon: 'bi-people', perm: [P.clientsView, P.clientsManage] },
       { label: 'Daily Closing', href: '/closings', icon: 'bi-calendar-check', perm: [P.closingsView, P.closingsSubmit, P.closingsApprove] },
       { label: 'My Expenses', href: '/finance/expenses', icon: 'bi-receipt-cutoff', perm: [P.expensesView, P.expensesCreate] },
+      { label: 'Weekly Financial Report', href: '/finance/weekly-reports', icon: 'bi-graph-up-arrow', perm: P.weeklyReportsView, i18nKey: 'nav.weeklyReports' },
+      { label: 'Weekly Report Review', href: '/finance/weekly-reports/review', icon: 'bi-clipboard-check', perm: P.weeklyReportsReview, i18nKey: 'nav.weeklyReview' },
     ],
   },
   {
@@ -313,6 +324,8 @@ const ROUTE_GUARDS: { path: string; perm: string | string[] }[] = [
   { path: '/leave', perm: [P.leaveView, P.leaveManage] },
   { path: '/reports/operational', perm: P.reportsOperational },
   { path: '/finance/revenue', perm: P.reportsView },
+  { path: '/finance/weekly-reports/review', perm: P.weeklyReportsReview },
+  { path: '/finance/weekly-reports', perm: P.weeklyReportsView },
   { path: '/finance/expenses', perm: [P.expensesView, P.expensesCreate] },
   { path: '/finance/commissions', perm: P.settingsManage },
   { path: '/finance/payroll', perm: P.payrollView },
@@ -339,7 +352,7 @@ export function routeDenied(user: any | null, pathname: string): boolean {
 }
 
 /** Resolve current page title + group from the nav config (for the top header). */
-export function pageIdentity(pathname: string): { title: string; group: string } {
+export function pageIdentity(pathname: string): { title: string; group: string; i18nKey?: string } {
   if (pathname === '/') return { title: 'Dashboard', group: 'Overview' };
   if (pathname === '/profile') return { title: 'My Profile', group: 'Overview' };
   let best: NavItem | undefined;
@@ -353,5 +366,7 @@ export function pageIdentity(pathname: string): { title: string; group: string }
       }
     }
   }
-  return best ? { title: best.label, group: bestGroup } : { title: pathname, group: '' };
+  return best
+    ? { title: best.label, group: bestGroup, i18nKey: best.i18nKey }
+    : { title: pathname, group: '' };
 }

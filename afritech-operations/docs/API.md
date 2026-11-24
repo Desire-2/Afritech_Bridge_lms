@@ -97,6 +97,22 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 | PUT | `/payroll/items/{id}` | bonus/deduction/advance/adjustment → net recompute |
 | GET | `/reports/cash-reconciliation` | |
 
+## Weekly service-agent financial report
+
+All endpoints are under `/api/weekly-reports` and use the restricted
+`weekly_reports.*` permission family (Company Secretary has none). See
+[WEEKLY_FINANCIAL_REPORTING.md](./WEEKLY_FINANCIAL_REPORTING.md) for the full
+workflow, calculation formula, policy settings and bilingual export details.
+
+- `GET /policy` · `GET /weeks`
+- `GET /queue` (reviewers) · `GET /` · `POST /generate`
+- `GET/PATCH /{id}` · `POST /{id}/submit`
+- `GET /{id}/transactions` · `GET /{id}/daily-closings` · `GET /{id}/expenses`
+- `POST/DELETE /{id}/momo[/…]` · `GET /{id}/evidence`
+- `POST /{id}/override` · `POST /{id}/missing-closings/override`
+- `POST /{id}/review` · `POST /{id}/adjustments` · `GET /{id}/audit`
+- `GET /{id}/export?format=pdf|xlsx&lang=en|rw`
+
 ## Attendance & tasks
 
 - `POST /api/attendance/record` · `POST /api/attendance/clock-in` · `POST /api/attendance/clock-out`

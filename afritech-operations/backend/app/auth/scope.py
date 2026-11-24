@@ -35,6 +35,8 @@ SERVICE_OPERATION_PERMISSIONS = (
     'transactions.view_all', 'transactions.create', 'transactions.edit',
     'transactions.approve', 'transactions.cancel',
     'closings.view', 'closings.submit', 'closings.approve',
+    'weekly_reports.view', 'weekly_reports.review', 'weekly_reports.adjust',
+    'weekly_reports.manage',
 )
 
 # Permissions that unlock *raw pay columns* (base salary, hourly rate,
@@ -53,6 +55,8 @@ EMPLOYEE_FINANCIAL_PERMISSIONS = (
 FINANCIAL_VIEW_PERMISSIONS = EMPLOYEE_FINANCIAL_PERMISSIONS + (
     'expenses.view', 'expenses.approve',
     'reports.view', 'reports.export',
+    'weekly_reports.view', 'weekly_reports.review', 'weekly_reports.adjust',
+    'weekly_reports.export', 'weekly_reports.manage',
 )
 
 

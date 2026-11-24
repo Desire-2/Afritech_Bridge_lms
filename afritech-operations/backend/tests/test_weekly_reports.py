@@ -1,0 +1,1372 @@
+"""Weekly Service Agent financial report — focused backend tests.
+
+Fixtures deliberately use two isolated calendar windows (2031 and 2020) so the
+rows created here cannot collide with the dev seed (last 30 days) or with other
+test modules.  API routes commit their own transactions, so the module-level
+``_cleanup`` fixture removes everything at teardown instead of relying on the
+global rollback in conftest.py.
+"""
+import io
+import itertools
+import json
+import os
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from app.extensions import db
+from app.models import (
+    AuditLog, Client, DailyClosing, Employee, Expense, MoMoSubmission,
+    MOMO_PROVIDERS, Notification, OutstandingAllocation, Payment, PaymentMethod,
+    SHORTAGE_REASON_CATEGORIES, Service, ServiceTransaction, Setting, User,
+    WEEKLY_REPORT_STATUSES, WeeklyReport, WeeklyReportAdjustment,
+    WeeklyReportExpense, generate_transaction_number,
+)
+from app.services import automation as automation_service
+from app.services import notifications as ns
+from app.services.weekly_i18n import SUPPORTED_LANGUAGES, bilingual, normalize_language, t
+from app.services.weekly_policy import (
+    DEFAULTS, available_weeks, business_timezone, get_policy, is_late,
+    submission_deadline, week_bounds,
+)
+from app.services.weekly_report_service import WeeklyReportError, WeeklyReportService
+
+svc = WeeklyReportService()
+
+_future_seq = itertools.count()
+_past_seq = itertools.count()
+_TRACKED_REPORT_IDS = set()
+
+
+def _future_week():
+    # week_bounds() reads settings, so it must run inside the app context.
+    return week_bounds(date(2031, 1, 15))[0] + timedelta(weeks=next(_future_seq))
+
+
+def _past_week():
+    return week_bounds(date(2020, 1, 15))[0] - timedelta(weeks=next(_past_seq))
+
+
+def _hdr(client, email):
+    r = client.post('/api/auth/login', json={'email': email, 'password': 'Password123!'})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    return {'Authorization': f"Bearer {r.get_json()['access_token']}"}
+
+
+def _user(email):
+    return User.query.filter_by(email=email).first()
+
+
+def _agent():
+    return _user('agent@afritech.dev').employee
+
+
+def _agent2():
+    emp = Employee.query.filter_by(employee_number='EMP-00005').first()
+    assert emp is not None
+    return emp
+
+
+def _generate(client, hdr, employee=None, week_start=None):
+    employee = employee or _agent()
+    week_start = week_start or _future_week()
+    body = {'employee_id': employee.id, 'week_start': week_start.isoformat()}
+    r = client.post('/api/weekly-reports/generate', headers=hdr, json=body)
+    assert r.status_code in (200, 201), r.get_data(as_text=True)
+    report = WeeklyReport.query.get(r.get_json()['report']['id'])
+    _TRACKED_REPORT_IDS.add(report.id)
+    return report
+
+
+def _detail(client, hdr, report_id):
+    r = client.get(f'/api/weekly-reports/{report_id}', headers=hdr)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    return r.get_json()['report']
+
+
+def _components(client, hdr, report_id):
+    return _detail(client, hdr, report_id)['calculation']['components']
+
+
+def _authorize_override(report, actor=None):
+    report = WeeklyReport.query.get(report.id)
+    svc.authorize_shortage_override(report, 'Authorized by finance for this test.',
+                                    actor or _user('accountant@afritech.dev'))
+    db.session.commit()
+
+
+def _submit(client, hdr, report_id, payload=None, data=None, override=True):
+    report = WeeklyReport.query.get(report_id)
+    if override:
+        _authorize_override(report)
+    if data is not None:
+        r = client.post(f'/api/weekly-reports/{report_id}/submit', headers=hdr,
+                        data=data, content_type='multipart/form-data')
+    else:
+        r = client.post(f'/api/weekly-reports/{report_id}/submit', headers=hdr,
+                        json=payload or {})
+    return r
+
+
+def _assert_ok(response):
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()
+
+
+def _txn(employee, day, price=1000, cost=400, status='completed', paid=True, cash=True):
+    service = Service.query.first()
+    client = Client.query.first()
+    pm = PaymentMethod.query.filter_by(code='cash' if cash else 'momo').first()
+    gross = Decimal(str(price)) - Decimal(str(cost))
+    rate = service.commission_rate or Decimal('0.20')
+    commission = (gross * rate).quantize(Decimal('0.01'))
+    t = ServiceTransaction(
+        transaction_number=f'WKT-{uuid.uuid4().hex[:12]}',
+        transaction_date=day, status=status, service_id=service.id,
+        client_id=client.id, employee_id=employee.id, branch_id=employee.branch_id,
+        payment_method_id=pm.id, service_name=service.name,
+        official_cost=cost, customer_price=price, commission_rate_used=rate,
+        commission_source='service', gross_profit=gross, commission_amount=commission,
+        company_profit=gross - commission, is_cash=cash,
+    )
+    db.session.add(t)
+    db.session.flush()
+    if paid:
+        db.session.add(Payment(
+            transaction_id=t.id, amount=price, payment_method_id=pm.id,
+            paid_at=datetime.now(timezone.utc)))
+    db.session.flush()
+    return t
+
+
+def _expense(day, amount=250, status='approved', code='cash', description='WKE-test expense'):
+    pm = PaymentMethod.query.filter_by(code=code).first()
+    e = Expense(amount=amount, category='transport', description=description,
+                expense_date=day, payment_method_id=pm.id,
+                submitted_by=_user('agent@afritech.dev').id,
+                approved_by=_user('manager@afritech.dev').id, status=status)
+    db.session.add(e)
+    db.session.flush()
+    return e
+
+
+def _momo(client, hdr, report_id, reference=None, amount=100, **extra):
+    payload = {
+        'provider': 'momo', 'reference': reference or f'WKM-{uuid.uuid4().hex[:10]}',
+        'amount': amount, 'sender_phone': '+250788123456',
+        'recipient_phone': '+250788654321', 'confirmation_code': extra.get('confirmation_code', ''),
+    }
+    payload.update({k: v for k, v in extra.items() if k != 'confirmation_code'})
+    r = client.post(f'/api/weekly-reports/{report_id}/momo', headers=hdr, json=payload)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    return r.get_json()['submission']
+
+
+def _review(client, hdr, report_id, action, **payload):
+    return client.post(f'/api/weekly-reports/{report_id}/review', headers=hdr,
+                       json={'action': action, **payload})
+
+
+@pytest.fixture(autouse=True)
+def _cleanup():
+    yield
+    # A test that intentionally triggers an IntegrityError leaves the session
+    # in a failed state; API routes commit their own work, so rolling back here
+    # cannot undo the rows we need to delete.
+    db.session.rollback()
+    # API routes commit, so teardown must actively remove our synthetic rows.
+    reports = WeeklyReport.query.filter(
+        db.or_(WeeklyReport.week_start >= date(2031, 1, 1),
+               WeeklyReport.week_start <= date(2020, 12, 31))).all()
+    ids = sorted(set(r.id for r in reports) | _TRACKED_REPORT_IDS)
+    _TRACKED_REPORT_IDS.clear()
+    if ids:
+        refs = [m.id for m in MoMoSubmission.query.filter(MoMoSubmission.report_id.in_(ids)).all()]
+        adjs = [a.id for a in WeeklyReportAdjustment.query.filter(WeeklyReportAdjustment.report_id.in_(ids)).all()]
+        for model, column, values in (
+            (MoMoSubmission, MoMoSubmission.id, refs),
+            (WeeklyReportAdjustment, WeeklyReportAdjustment.id, adjs),
+            (WeeklyReportExpense, WeeklyReportExpense.report_id, ids),
+            (OutstandingAllocation, OutstandingAllocation.report_id, ids),
+            (WeeklyReport, WeeklyReport.id, ids),
+        ):
+            if values:
+                model.query.filter(column.in_(values)).delete(synchronize_session=False)
+        if refs:
+            Notification.query.filter(Notification.related_type == 'weekly_report',
+                                      Notification.related_id.in_(refs)).delete(synchronize_session=False)
+        entity_ids = [str(i) for i in ids + refs + adjs]
+        AuditLog.query.filter(AuditLog.entity.in_(
+            ('weekly_report', 'weekly_momo_submission', 'weekly_report_adjustment')),
+            AuditLog.entity_id.in_(entity_ids)).delete(synchronize_session=False)
+        Notification.query.filter(Notification.related_type == 'weekly_report',
+                                  Notification.related_id.in_(ids)).delete(synchronize_session=False)
+
+    txn_ids = [t.id for t in ServiceTransaction.query.filter(
+        ServiceTransaction.transaction_number.like('WKT-%')).all()]
+    if txn_ids:
+        Payment.query.filter(Payment.transaction_id.in_(txn_ids)).delete(synchronize_session=False)
+        ServiceTransaction.query.filter(ServiceTransaction.id.in_(txn_ids)).delete(synchronize_session=False)
+    DailyClosing.query.filter(DailyClosing.notes.like('WKC-%')).delete(synchronize_session=False)
+    Expense.query.filter(Expense.description.like('WKE-%')).delete(synchronize_session=False)
+    MoMoSubmission.query.filter(MoMoSubmission.reference.like('WKM-%')).delete(synchronize_session=False)
+    db.session.commit()
+
+
+@pytest.fixture
+def policy_override():
+    touched = {}
+
+    def _set(key, value):
+        table_key = f'weekly_reporting.{key}'
+        row = Setting.query.filter_by(key=table_key).first()
+        if key not in touched:
+            touched[key] = (row.value if row else None)
+        if value is None:
+            if row:
+                db.session.delete(row)
+        elif row:
+            row.value = str(value)
+        else:
+            db.session.add(Setting(key=table_key, value=str(value), value_type='string',
+                                   group='weekly_reporting'))
+        db.session.commit()
+
+    yield _set
+    for key, original in touched.items():
+        _set(key, original)
+
+
+@pytest.fixture
+def no_email(monkeypatch):
+    """Keep notification tests focused on the in-app rows."""
+    monkeypatch.setattr(ns, 'email_for_recipient', lambda *args, **kwargs: None)
+
+
+class TestGeneration:
+    def test_generate_is_idempotent_and_unique_constraint_enforced(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        first = _generate(client, admin_hdr, emp, week)
+        second = _generate(client, admin_hdr, emp, week)
+        assert first.id == second.id
+        assert WeeklyReport.query.filter_by(employee_id=emp.id, week_start=week).count() == 1
+
+        duplicate = WeeklyReport(
+            report_number=f'WR-DUP-{uuid.uuid4().hex[:6]}', employee_id=emp.id,
+            branch_id=emp.branch_id, week_start=week, week_end=week + timedelta(days=6),
+            due_at=submission_deadline(week), status='draft')
+        db.session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            db.session.flush()
+        db.session.rollback()
+
+    def test_report_number_period_deadline_and_policy_snapshot(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        report = _generate(client, admin_hdr, emp, week)
+        assert report.report_number.startswith(f'WR-{week:%Y%m%d}-{emp.id:04d}-')
+        assert report.week_end == week + timedelta(days=6)
+        assert report.timezone_name == 'Africa/Kigali'
+        assert report.period_label == f'{week.isoformat()} – {(week + timedelta(days=6)).isoformat()}'
+        assert report.due_at.replace(tzinfo=None) == submission_deadline(week).replace(tzinfo=None)
+        calc = json.loads(report.calculation)
+        assert set(DEFAULTS) <= set(calc['policy'])
+        assert calc['policy']['timezone'] == 'Africa/Kigali'
+        assert json.loads(report.snapshot or '{}') == {}  # not locked until submission
+        audit_row = AuditLog.query.filter_by(action='weekly_report_generated',
+                                             entity_id=str(report.id)).first()
+        assert audit_row is not None and audit_row.user_email == 'admin@afritech.dev'
+
+    def test_branch_scoping_on_generation(self, client, admin_hdr):
+        week = _future_week()
+        one = _generate(client, admin_hdr, _agent(), week)
+        two = _generate(client, admin_hdr, _agent2(), week)
+        assert one.branch_id == _agent().branch_id
+        assert two.branch_id == _agent2().branch_id
+        assert one.branch_id != two.branch_id
+        result = _assert_ok(client.post(
+            '/api/weekly-reports/generate', headers=admin_hdr,
+            json={'week_start': (week + timedelta(weeks=1)).isoformat()}))
+        assert result['created'] >= 2
+        assert result['week_start'] == (week + timedelta(weeks=1)).isoformat()
+
+    def test_current_previous_and_historical_weeks(self, client, admin_hdr):
+        reference = date(2031, 1, 20)
+        weeks = available_weeks(reference)
+        assert len(weeks) == 13
+        assert weeks[0] == week_bounds(reference)[0]
+        assert weeks[1] == weeks[0] - timedelta(days=7)
+        assert weeks[-1] == weeks[0] - timedelta(days=84)
+        # Both a previous and a historical week can be materialised.
+        assert _generate(client, admin_hdr, week_start=weeks[1]).week_start == weeks[1]
+        assert _generate(client, admin_hdr, week_start=weeks[-1]).week_start == weeks[-1]
+
+    def test_late_detection_and_automation_flag(self, client, admin_hdr):
+        report = _generate(client, admin_hdr, week_start=_past_week())
+        assert report.status == 'late' and report.is_late is True
+        future = _generate(client, admin_hdr)
+        assert future.status == 'draft' and future.is_late is False
+        future.week_start = _past_week()
+        future.is_late = False
+        future.status = 'draft'
+        db.session.commit()
+        flagged = automation_service.weekly_report_late_alert(date.today())
+        db.session.commit()
+        assert flagged >= 1
+        db.session.refresh(future)
+        assert future.status == 'late' and future.is_late is True
+
+    def test_manual_generation_permissions(self, client, admin_hdr, agent_hdr, manager_hdr):
+        emp = _agent()
+        week = _future_week()
+        assert client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                           json={'employee_id': emp.id, 'week_start': week.isoformat()}).status_code == 403
+        # Managers can generate only for employees in their own branch.
+        manager_emp = _user('manager@afritech.dev').employee
+        assert _generate(client, manager_hdr, manager_emp, week).employee_id == manager_emp.id
+        r = client.post('/api/weekly-reports/generate', headers=manager_hdr,
+                        json={'employee_id': emp.id, 'week_start': (week + timedelta(weeks=1)).isoformat()})
+        assert r.status_code == 403
+        assert r.get_json()['error'] == 'You can only generate reports for your branch'
+        # Admin is not branch-scoped.
+        assert _generate(client, admin_hdr, _agent2(), week).employee_id == _agent2().id
+
+
+class TestCalculation:
+    def test_formula_and_source_transaction_filters(self, client, admin_hdr, accountant_hdr):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=1)
+        _txn(emp, day, price=1000, cost=400)                       # fully paid cash
+        _txn(emp, day, price=500, cost=100, cash=False)            # fully paid momo
+        partial = _txn(emp, day, price=800, cost=200, paid=False)  # part payment
+        db.session.add(Payment(transaction_id=partial.id, amount=400,
+                               payment_method_id=PaymentMethod.query.filter_by(code='cash').first().id))
+        _txn(emp, day, price=600, cost=300, paid=False)            # unpaid
+        _txn(emp, day, price=700, cost=200, status='cancelled')    # ineligible status
+        _txn(emp, day, price=900, cost=300, status='refunded')     # ineligible status
+        db.session.commit()
+
+        report = _generate(client, admin_hdr, emp, week)
+        calc = svc.build_calculation(report)
+        c = calc['components']
+        assert calc['eligible_transaction_count'] == 3
+        assert c['eligible_collections'] == '1900.00'  # 1000 + 500 + 400 part payment
+        assert c['service_costs'] == '700.00'          # all eligible official costs (display)
+        assert c['verified_service_costs'] == '500.00'  # only fully paid
+        assert c['verified_provider_payments'] == '500.00'
+        assert c['commission_earned'] == '320.00'      # 20% of 1600 gross profit, shown separately
+        assert c['commission_retained'] == '0.00'      # only retained when configured
+        assert c['expected_remittance'] == '1400.00'   # 0 + 1900 - 500
+        statuses = {row['payment_status']: row for row in calc['transactions']}
+        assert statuses['paid']['is_eligible'] is True
+        assert statuses['partially_paid']['is_eligible'] is True
+        assert statuses['unpaid']['is_eligible'] is False
+
+    def test_daily_closings_do_not_double_count_collections(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=1)
+        _txn(emp, day, price=1000, cost=400)
+        closing = DailyClosing(employee_id=emp.id, branch_id=emp.branch_id,
+                               closing_date=day, transaction_count=1, actual_cash=9999,
+                               notes='WKC-manual large cash', status='submitted')
+        db.session.add(closing)
+        db.session.commit()
+
+        report = _generate(client, admin_hdr, emp, week)
+        calc = svc.build_calculation(report)
+        assert calc['components']['eligible_collections'] == '1000.00'
+        assert calc['components']['expected_remittance'] == '600.00'
+        day_row = next(r for r in calc['daily_closings'] if r['date'] == day.isoformat())
+        assert day_row['actual_cash'] == '9999.00'
+        assert day_row['collections'] == '1000.00'
+        assert day_row['comments'] == 'WKC-manual large cash'
+
+    def test_only_approved_collection_funded_expenses_are_deducted(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=2)
+        _txn(emp, day, price=1000, cost=400)
+        _expense(day, amount=250, status='approved', code='cash')
+        _expense(day, amount=300, status='approved', code='momo', description='WKE-non cash')
+        _expense(day, amount=400, status='pending', code='cash', description='WKE-pending')
+        _expense(day, amount=100, status='paid', code='cash', description='WKE-paid')
+        db.session.commit()
+
+        report = _generate(client, admin_hdr, emp, week)
+        calc = svc.build_calculation(report)
+        assert calc['components']['approved_collection_expenses'] == '350.00'
+        assert calc['components']['expected_remittance'] == '250.00'
+        assert len(calc['expenses']) == 2
+
+    def test_expense_linked_to_one_report_only(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=1)
+        _txn(emp, day, price=1000, cost=400)
+        expense = _expense(day, amount=100, description='WKE-once')
+        db.session.commit()
+
+        first = _generate(client, admin_hdr, emp, week)
+        assert _submit(client, agent_hdr := _hdr(client, 'agent@afritech.dev'), first.id).status_code == 200
+        assert WeeklyReportExpense.query.filter_by(expense_id=expense.id).count() == 1
+
+        second = _generate(client, admin_hdr, emp, week + timedelta(weeks=1))
+        # Make the second report's date window overlap the expense date without
+        # colliding with the unique (employee, week_start) constraint; the link
+        # must stop the same expense being deducted twice.
+        second.week_start = first.week_start + timedelta(days=1)
+        second.week_end = first.week_end
+        db.session.commit()
+        assert svc.build_calculation(WeeklyReport.query.get(second.id))['components'][
+            'approved_collection_expenses'] == '0.00'
+        with pytest.raises(IntegrityError):
+            db.session.add(WeeklyReportExpense(report_id=second.id, expense_id=expense.id,
+                                               amount=100))
+            db.session.flush()
+        db.session.rollback()
+
+    def test_adjustments_and_commission_toggle(self, client, admin_hdr, policy_override):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=1)
+        _txn(emp, day, price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        for kind, amount in (('authorized_receipt', 500), ('provider_payment', 120),
+                            ('authorized_refund', 50), ('other_outflow', 30)):
+            db.session.add(WeeklyReportAdjustment(
+                report_id=report.id, kind=kind, adjusted_amount=amount,
+                reason='Documented test adjustment', actor_id=_user('accountant@afritech.dev').id))
+        db.session.commit()
+        c = svc.build_calculation(WeeklyReport.query.get(report.id))['components']
+        assert c['authorized_receipts'] == '500.00'
+        assert c['verified_provider_payments'] == '520.00'  # 400 verified cost + 120 adjustment
+        assert c['authorized_refunds'] == '50.00'
+        assert c['other_outflows'] == '30.00'
+        # 0 opening + 1000 collections - 400 verified cost + 500 receipt
+        # - 120 provider payment - 50 refund - 30 outflow = 900
+        assert c['expected_remittance'] == '900.00'
+
+        policy_override('commission_retained', 'true')
+        c = svc.build_calculation(WeeklyReport.query.get(report.id))['components']
+        assert c['commission_retained'] == '120.00'  # 20% of 600 gross profit
+        assert c['commission_earned'] == '120.00'
+        assert c['expected_remittance'] == '780.00'
+
+    def test_submitted_calculation_is_frozen_snapshot(self, client, admin_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, _hdr(client, 'agent@afritech.dev'), report.id).status_code == 200
+        expected = _components(client, accountant_hdr, report.id)['expected_remittance']
+        # New source rows appear after submission; the frozen calculation must not move.
+        _txn(_agent(), report.week_start, price=5000, cost=1000)
+        db.session.commit()
+        frozen = json.loads(WeeklyReport.query.get(report.id).snapshot)
+        assert frozen['components']['expected_remittance'] == expected
+        svc.refresh(WeeklyReport.query.get(report.id), _user('accountant@afritech.dev'))
+        db.session.commit()
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == expected
+
+
+class TestDailyClosingIntegration:
+    def test_per_day_totals_missing_days_and_comments(self, client, admin_hdr):
+        emp = _agent()
+        week = _future_week()
+        day = week + timedelta(days=2)
+        _txn(emp, day, price=900, cost=300)
+        db.session.add(DailyClosing(
+            employee_id=emp.id, branch_id=emp.branch_id, closing_date=day,
+            status='approved', actual_cash=800, notes='WKC-verified count',
+            submitted_at=datetime.now(timezone.utc)))
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        calc = svc.build_calculation(report)
+        assert len(calc['daily_closings']) == 7
+        assert calc['missing_closings'] == [
+            (week + timedelta(days=i)).isoformat() for i in range(7) if i != 2]
+        row = calc['daily_closings'][2]
+        assert row['status'] == 'approved'
+        assert row['transaction_count'] == 1
+        assert row['collections'] == '900.00'
+        assert row['comments'] == 'WKC-verified count'
+        assert calc['daily_closings'][0]['expected_cash'] is None
+
+    def test_missing_closing_override_requires_reason(self, client, admin_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        url = f'/api/weekly-reports/{report.id}/missing-closings/override'
+        assert client.post(url, headers=accountant_hdr, json={}).status_code == 400
+        r = _assert_ok(client.post(url, headers=accountant_hdr,
+                                   json={'reason': 'Banking outage on Monday'}))
+        assert r['report']['has_missing_closing_override'] is True
+        assert r['report']['missing_closing_override_by'] == _user('accountant@afritech.dev').id
+
+    def test_shortage_override_requires_reason_and_audit(self, client, admin_hdr):
+        report = _generate(client, admin_hdr)
+        actor = _user('accountant@afritech.dev')
+        with pytest.raises(WeeklyReportError) as exc:
+            svc.authorize_shortage_override(report, '', actor)
+        assert exc.value.status == 400
+        svc.authorize_shortage_override(WeeklyReport.query.get(report.id),
+                                        'CFO approved timing difference', actor)
+        db.session.commit()
+        report = WeeklyReport.query.get(report.id)
+        assert report.override_reason == 'CFO approved timing difference'
+        assert report.override_authorized_by == actor.id and report.override_authorized_at
+        log = AuditLog.query.filter_by(action='weekly_report_shortage_override_authorized',
+                                       entity_id=str(report.id)).first()
+        assert log is not None and json.loads(log.new_value)['override_reason'] == report.override_reason
+
+
+class TestWorkflow:
+    def test_draft_update_ready_submit_locks(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        r = _assert_ok(client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                                    json={'shortage_reason_category': 'cash_count_error',
+                                          'shortage_explanation': 'Counted twice',
+                                          'reviewer_note': 'agent note'}))
+        assert r['report']['shortage_explanation'] == 'Counted twice'
+        assert report.status == 'draft'
+        submitted = _submit(client, agent_hdr, report.id, payload={'submission_note': 'weekly pack'})
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+        body = submitted.get_json()['report']
+        assert body['status'] == 'submitted' and body['current_version'] == 2
+        assert body['submitted_at'] and body['submitted_by'] == _user('agent@afritech.dev').id
+        assert WeeklyReport.query.get(report.id).snapshot
+        assert client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                            json={'shortage_explanation': 'tamper'}).status_code == 409
+        assert WeeklyReport.query.get(report.id).shortage_explanation == 'Counted twice'
+
+    def test_resubmission_after_correction_increments_version(self, client, admin_hdr,
+                                                              agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'request_correction',
+                    reason='Attach the bank statement')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()['report']['status'] == 'returned_for_correction'
+        assert r.get_json()['report']['correction_note'] == 'Attach the bank statement'
+        r = _assert_ok(client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                                    json={'shortage_explanation': 'Bank statement attached'}))
+        assert r['report']['status'] == 'returned_for_correction'
+        r = _submit(client, agent_hdr, report.id)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()['report']['current_version'] == 3
+        assert r.get_json()['report']['status'] == 'submitted'
+        assert r.get_json()['report']['correction_note'] is None
+        actions = [row.action for row in AuditLog.query.filter_by(
+            entity='weekly_report', entity_id=str(report.id)).all()]
+        assert 'weekly_report_submitted' in actions
+        assert 'weekly_report_returned_for_correction' in actions
+
+    def test_approve_sets_closing_outstanding_and_reject_requires_reason(self, client,
+                                                                         admin_hdr, agent_hdr,
+                                                                         accountant_hdr):
+        report = _generate(client, admin_hdr)
+        _submit(client, agent_hdr, report.id)
+        r = _review(client, accountant_hdr, report.id, 'approve', reason='all matched')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['report']
+        assert body['status'] == 'approved'
+        assert body['approved_by'] == _user('accountant@afritech.dev').id and body['approved_at']
+        assert _review(client, accountant_hdr, report.id, 'approve').status_code == 409
+
+        other = _generate(client, admin_hdr)
+        _submit(client, agent_hdr, other.id)
+        assert _review(client, accountant_hdr, other.id, 'reject').status_code == 400
+        r = _review(client, accountant_hdr, other.id, 'reject', reason='duplicate transfer')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()['report']['status'] == 'rejected'
+        assert r.get_json()['report']['rejection_reason'] == 'duplicate transfer'
+
+    def test_invalid_transitions_rejected(self, client, admin_hdr, agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        with pytest.raises(WeeklyReportError) as exc:
+            svc.transition(report, 'approved', _user('accountant@afritech.dev'))
+        assert exc.value.status == 409
+        assert _review(client, accountant_hdr, report.id, 'approve').status_code == 409
+        _submit(client, agent_hdr, report.id)
+        assert client.post(f'/api/weekly-reports/{report.id}/submit',
+                           headers=agent_hdr, json={}).status_code == 409
+        assert _review(client, accountant_hdr, report.id, 'approve').status_code == 200
+        assert _review(client, accountant_hdr, report.id, 'request_correction',
+                       reason='too late').status_code == 409
+
+    def test_allowed_transitions_exposed_in_detail(self, client, admin_hdr, agent_hdr,
+                                                    accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _detail(client, agent_hdr, report.id)['allowed_transitions'] == [
+            'ready_for_submission', 'late']
+        _submit(client, agent_hdr, report.id)
+        assert set(_detail(client, accountant_hdr, report.id)['allowed_transitions']) == {
+            'under_financial_review', 'returned_for_correction'}
+
+
+class TestMoMo:
+    def test_add_multiple_submissions_and_mask_phones(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        one = _momo(client, agent_hdr, report.id, reference='wkm-one', amount=100,
+                    confirmation_code='CONF-1')
+        two = _momo(client, agent_hdr, report.id, reference='WKM-TWO', amount=250,
+                    provider='bank_transfer')
+        assert one['reference'] == 'WKM-ONE' and one['provider'] == 'momo'
+        assert one['sender_phone'] == '+250******456'
+        assert one['recipient_phone'] == '+250******321'
+        assert one['confirmation_code'] == 'CONF-1'
+        assert two['provider'] == 'bank_transfer'
+        assert _components(client, agent_hdr, report.id)['agent_reported_submitted'] == '350.00'
+        assert _components(client, agent_hdr, report.id)['verified_submitted'] == '0.00'
+
+    def test_duplicate_reference_rejected(self, client, admin_hdr, agent_hdr):
+        first = _generate(client, admin_hdr)
+        second = _generate(client, admin_hdr)
+        _momo(client, agent_hdr, first.id, reference='WKM-DUP', amount=100)
+        r = client.post(f'/api/weekly-reports/{second.id}/momo', headers=agent_hdr,
+                        json={'reference': 'wkm-dup', 'amount': 50})
+        assert r.status_code == 409
+        assert r.get_json()['code'] == 'weekly_report.duplicate_reference'
+
+    def test_evidence_is_not_provider_confirmation(self, client, admin_hdr, agent_hdr,
+                                                    accountant_hdr, tmp_path, monkeypatch):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        report = _generate(client, admin_hdr)
+        evidence = (io.BytesIO(b'%PDF-1.4\nevidence'), 'momo.png')
+        r = client.post(f'/api/weekly-reports/{report.id}/momo', headers=agent_hdr,
+                        data={'reference': 'WKM-EVIDENCE', 'amount': '200',
+                              'provider': 'momo', 'confirmation_code': '',
+                              'evidence': evidence},
+                        content_type='multipart/form-data')
+        assert r.status_code == 201, r.get_data(as_text=True)
+        sub = r.get_json()['submission']
+        assert sub['verification_status'] == 'pending' and sub['evidence_path']
+        assert _components(client, agent_hdr, report.id)['agent_reported_submitted'] == '200.00'
+        assert _components(client, agent_hdr, report.id)['verified_submitted'] == '0.00'
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        assert _components(client, accountant_hdr, report.id)['verified_submitted'] == '0.00'
+        r = _review(client, accountant_hdr, report.id, 'verify_momo', momo_id=sub['id'],
+                    note='Transfer confirmed in bank portal')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert _components(client, accountant_hdr, report.id)['verified_submitted'] == '200.00'
+        detail = _detail(client, accountant_hdr, report.id)
+        assert detail['status'] == 'under_financial_review'
+        assert detail['momo_submissions'][0]['verification_status'] == 'verified'
+        assert detail['momo_submissions'][0]['verified_by'] == _user('accountant@afritech.dev').id
+
+    def test_delete_only_while_editable(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        sub = _momo(client, agent_hdr, report.id, amount=100)
+        url = f'/api/weekly-reports/{report.id}/momo/{sub["id"]}'
+        assert client.delete(url, headers=agent_hdr).status_code == 200
+        assert MoMoSubmission.query.get(sub['id']) is None
+        sub = _momo(client, agent_hdr, report.id, reference='WKM-LOCK', amount=100)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        assert client.delete(f'/api/weekly-reports/{report.id}/momo/{sub["id"]}',
+                             headers=agent_hdr).status_code == 409
+
+
+class TestShortageSurplus:
+    def test_shortage_requires_category_explanation_and_evidence(self, client, admin_hdr,
+                                                                  agent_hdr):
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        url = f'/api/weekly-reports/{report.id}/submit'
+        r = client.post(url, headers=agent_hdr, json={})
+        assert r.status_code == 400
+        assert r.get_json()['code'] == 'weekly_report.shortage_explanation'
+        r = client.post(url, headers=agent_hdr,
+                        json={'shortage_reason_category': 'cash_count_error'})
+        assert r.status_code == 400
+        r = client.post(url, headers=agent_hdr, json={
+            'shortage_reason_category': 'cash_count_error',
+            'shortage_explanation': 'Cash counted twice',
+        })
+        assert r.status_code == 400
+        assert r.get_json()['code'] == 'weekly_report.shortage_evidence'
+        assert WeeklyReport.query.get(report.id).status == 'draft'
+
+    def test_shortage_with_evidence_and_resolution_date(self, client, admin_hdr, agent_hdr,
+                                                        tmp_path, monkeypatch):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        evidence = (io.BytesIO(b'%PDF-1.4\nshortage'), 'proof.pdf')
+        r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr,
+                        data={'shortage_reason_category': 'unrecorded_collection',
+                              'shortage_explanation': 'Client paid at closing time',
+                              'expected_resolution_date': (week + timedelta(days=9)).isoformat(),
+                              'evidence': evidence},
+                        content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        detail = r.get_json()['report']
+        assert detail['shortage_amount'] == 600.0
+        assert detail['shortage_evidence_name'] == 'proof.pdf'
+        assert detail['expected_resolution_date'] == (week + timedelta(days=9)).isoformat()
+        assert detail['shortage_explanation'] == 'Client paid at closing time'
+
+    def test_authorized_override_allows_unexplained_shortage(self, client, admin_hdr,
+                                                              agent_hdr, accountant_hdr):
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        _authorize_override(report, _user('accountant@afritech.dev'))
+        r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr, json={})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['report']
+        assert body['has_override'] is True and body['shortage_amount'] == 600.0
+        assert body['override_authorized_by'] == _user('accountant@afritech.dev').id
+
+    def test_surplus_after_verification(self, client, admin_hdr, agent_hdr, accountant_hdr):
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        sub = _momo(client, agent_hdr, report.id, amount=900, reference='WKM-SURPLUS')
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        # Unverified submissions do not offset the shortage.
+        before = _components(client, accountant_hdr, report.id)
+        assert before['agent_reported_submitted'] == '900.00'
+        assert before['verified_submitted'] == '0.00'
+        assert before['shortage_amount'] == '600.00'
+        r = _review(client, accountant_hdr, report.id, 'verify_momo', momo_id=sub['id'])
+        assert r.status_code == 200, r.get_data(as_text=True)
+        c = _components(client, accountant_hdr, report.id)
+        assert c['verified_submitted'] == '900.00'
+        assert c['expected_remittance'] == '600.00'
+        assert c['surplus_amount'] == '300.00'
+        assert c['shortage_amount'] == '0.00'
+
+
+class TestAdjustmentsCarryForward:
+    def test_adjustment_api_has_full_audit_trail(self, client, admin_hdr, agent_hdr,
+                                                  accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'authorized_receipt', 'label': 'Bank interest',
+                              'original_amount': 0, 'adjusted_amount': 125,
+                              'reason': 'Verified bank statement line 7'})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        adj = r.get_json()['adjustment']
+        assert adj['actor_email'] == 'accountant@afritech.dev'
+        assert adj['created_at'] and adj['reason'] == 'Verified bank statement line 7'
+        assert r.get_json()['report']['authorized_receipts'] == 125.0
+        log = AuditLog.query.filter_by(action='weekly_report_adjustment_recorded',
+                                       entity_id=str(adj['id'])).first()
+        assert log is not None and log.user_email == 'accountant@afritech.dev'
+        assert json.loads(log.new_value)['adjusted_amount'] == 125.0
+        audit_items = _assert_ok(client.get(f'/api/weekly-reports/{report.id}/audit',
+                                            headers=accountant_hdr))['items']
+        assert any(row['entity'] == 'weekly_report_adjustment'
+                   and row['entity_id'] == str(adj['id']) for row in audit_items)
+
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'not_a_kind', 'adjusted_amount': 10, 'reason': 'a valid reason'})
+        assert r.status_code == 400
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'authorized_receipt', 'adjusted_amount': 10, 'reason': 'x'})
+        assert r.status_code == 400
+
+    def test_opening_outstanding_carried_once_with_allocation_history(self, client, admin_hdr):
+        prior = _generate(client, admin_hdr)
+        prior.status = 'approved'
+        prior.closing_outstanding = 250
+        db.session.commit()
+        week = prior.week_start + timedelta(days=7)
+        report = _generate(client, admin_hdr, _agent(), week)
+        assert report.opening_outstanding == 250
+        allocations = OutstandingAllocation.query.filter_by(report_id=report.id).all()
+        assert len(allocations) == 1
+        assert allocations[0].kind == 'carry_forward'
+        assert allocations[0].source_report_id == prior.id
+        assert allocations[0].to_dict()['actor_email'] == 'admin@afritech.dev'
+        again = _generate(client, admin_hdr, _agent(), week)
+        assert again.id == report.id
+        assert OutstandingAllocation.query.filter_by(report_id=report.id).count() == 1
+        assert svc.build_calculation(WeeklyReport.query.get(report.id))['components'][
+            'opening_outstanding'] == '250.00'
+
+    def test_waiver_and_correction_require_audited_allocation(self, client, admin_hdr,
+                                                               agent_hdr, accountant_hdr):
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)  # expected 600
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'outstanding_waiver', 'original_amount': 100,
+                              'adjusted_amount': 0, 'reason': 'Waived after bank confirmation'})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        report = WeeklyReport.query.get(report.id)
+        assert report.closing_outstanding == 500
+        waiver = OutstandingAllocation.query.filter_by(report_id=report.id,
+                                                       kind='outstanding_waiver').first()
+        assert waiver is not None and waiver.amount == -100
+        assert waiver.to_dict()['actor_email'] == 'accountant@afritech.dev' and waiver.created_at
+
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'outstanding_correction', 'original_amount': 0,
+                              'adjusted_amount': 40, 'reason': 'Opening balance corrected'})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        report = WeeklyReport.query.get(report.id)
+        assert report.closing_outstanding == 540
+        correction = OutstandingAllocation.query.filter_by(report_id=report.id,
+                                                           kind='outstanding_correction').first()
+        assert correction is not None and correction.amount == 40
+        assert OutstandingAllocation.query.filter_by(report_id=report.id).count() == 2
+
+
+class TestRBACSecurity:
+    def test_agent_is_scoped_to_own_report(self, client, admin_hdr, agent_hdr):
+        mine = _generate(client, admin_hdr, _agent())
+        other = _generate(client, admin_hdr, _agent2())
+        for method in ('get', 'patch'):
+            r = getattr(client, method)(f'/api/weekly-reports/{other.id}', headers=agent_hdr,
+                                        json={} if method == 'patch' else None)
+            assert r.status_code == 403
+        assert client.post(f'/api/weekly-reports/{other.id}/submit',
+                           headers=agent_hdr, json={}).status_code == 403
+        assert client.post(f'/api/weekly-reports/{other.id}/momo', headers=agent_hdr,
+                           json={'reference': 'WKM-FORBIDDEN', 'amount': 10}).status_code == 403
+        assert client.get(f'/api/weekly-reports/{other.id}/export?format=pdf',
+                          headers=agent_hdr).status_code == 403
+        r = _assert_ok(client.get('/api/weekly-reports', headers=agent_hdr))
+        assert mine.id in {row['id'] for row in r['items']}
+        assert other.id not in {row['id'] for row in r['items']}
+
+    def test_manager_is_branch_scoped(self, client, admin_hdr, manager_hdr):
+        manager_emp = _user('manager@afritech.dev').employee
+        current = week_bounds(date.today())[0]
+        own = _generate(client, admin_hdr, manager_emp, current)
+        other = _generate(client, admin_hdr, _agent(), current)
+        own.status = other.status = 'submitted'
+        db.session.commit()
+
+        assert client.get(f'/api/weekly-reports/{own.id}', headers=manager_hdr).status_code == 200
+        assert client.get(f'/api/weekly-reports/{other.id}', headers=manager_hdr).status_code == 403
+        queue = _assert_ok(client.get('/api/weekly-reports/queue', headers=manager_hdr))
+        ids = {row['id'] for row in queue['items']}
+        assert own.id in ids and other.id not in ids
+        listing = _assert_ok(client.get('/api/weekly-reports', headers=manager_hdr))
+        assert own.id in {row['id'] for row in listing['items']}
+        assert other.id not in {row['id'] for row in listing['items']}
+        weeks = _assert_ok(client.get('/api/weekly-reports/weeks', headers=manager_hdr))['weeks']
+        assert weeks[0]['week_start'] == current.isoformat()
+        assert weeks[0]['report_count'] == 1
+        admin_weeks = _assert_ok(client.get('/api/weekly-reports/weeks',
+                                            headers=admin_hdr))['weeks']
+        assert admin_weeks[0]['report_count'] == 2
+
+    def test_company_secretary_has_no_weekly_access(self, client, admin_hdr, no_email):
+        secretary = _hdr(client, 'secretary@afritech.dev')
+        report = _generate(client, admin_hdr)
+        paths = [
+            '/api/weekly-reports', '/api/weekly-reports/policy',
+            '/api/weekly-reports/weeks', '/api/weekly-reports/queue',
+            f'/api/weekly-reports/{report.id}',
+            f'/api/weekly-reports/{report.id}/transactions?search=test',
+            f'/api/weekly-reports/{report.id}/daily-closings',
+            f'/api/weekly-reports/{report.id}/expenses',
+            f'/api/weekly-reports/{report.id}/audit',
+            f'/api/weekly-reports/{report.id}/evidence',
+            f'/api/weekly-reports/{report.id}/export?format=pdf',
+            f'/api/weekly-reports/{report.id}/export?format=xlsx',
+        ]
+        for path in paths:
+            assert client.get(path, headers=secretary).status_code == 403, path
+        writes = [
+            client.post('/api/weekly-reports/generate', headers=secretary,
+                        json={'employee_id': _agent().id,
+                              'week_start': _future_week().isoformat()}),
+            client.post(f'/api/weekly-reports/{report.id}/review', headers=secretary,
+                        json={'action': 'approve'}),
+            client.post(f'/api/weekly-reports/{report.id}/momo', headers=secretary,
+                        json={'reference': 'WKM-SECRETARY', 'amount': 10}),
+            client.post(f'/api/weekly-reports/{report.id}/override', headers=secretary,
+                        json={'reason': 'Not allowed'}),
+            client.post(f'/api/weekly-reports/{report.id}/adjustments', headers=secretary,
+                        json={'kind': 'authorized_receipt', 'reason': 'Not allowed',
+                              'original_amount': 0, 'adjusted_amount': 10}),
+        ]
+        assert all(r.status_code == 403 for r in writes)
+
+        secretary_id = _user('secretary@afritech.dev').id
+        assert ns.notify(secretary_id, 'weekly_report_submitted',
+                         'Secretary must never receive this') is None
+        assert Notification.query.filter_by(
+            recipient_id=secretary_id, type='weekly_report_submitted').count() == 0
+
+    def test_agent_cannot_use_reviewer_or_adjust_endpoints(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        forbidden = [
+            client.post(f'/api/weekly-reports/{report.id}/review', headers=agent_hdr,
+                        json={'action': 'approve'}),
+            client.post(f'/api/weekly-reports/{report.id}/adjustments', headers=agent_hdr,
+                        json={'kind': 'authorized_receipt', 'adjusted_amount': 10,
+                              'reason': 'should be forbidden'}),
+            client.post(f'/api/weekly-reports/{report.id}/override', headers=agent_hdr,
+                        json={'reason': 'should be forbidden'}),
+            client.post(f'/api/weekly-reports/{report.id}/missing-closings/override',
+                        headers=agent_hdr, json={'reason': 'should be forbidden'}),
+        ]
+        assert all(r.status_code == 403 for r in forbidden)
+        assert client.post(f'/api/weekly-reports/{report.id}/submit',
+                           headers=_hdr(client, 'accountant@afritech.dev'), json={}).status_code == 403
+
+    def test_unknown_and_cross_branch_reports_do_not_leak(self, client, admin_hdr, agent_hdr):
+        other = _generate(client, admin_hdr, _agent2())
+        missing = client.get('/api/weekly-reports/999999', headers=admin_hdr)
+        assert missing.status_code == 404
+        denied = client.get(f'/api/weekly-reports/{other.id}', headers=agent_hdr)
+        assert denied.status_code == 403
+        assert other.report_number not in denied.get_data(as_text=True)
+        assert client.get(f'/api/weekly-reports/{other.id}').status_code in (401, 403)
+
+    def test_phone_numbers_masked_in_all_calculation_views(self, client, admin_hdr, agent_hdr,
+                                                            accountant_hdr):
+        report = _generate(client, admin_hdr)
+        _momo(client, agent_hdr, report.id)
+        body = _detail(client, accountant_hdr, report.id)
+        raw = json.dumps(body)
+        assert '+250788123456' not in raw and '+250788654321' not in raw
+        assert body['momo_submissions'][0]['sender_phone'] == '+250******456'
+        assert body['calculation']['momo_submissions'][0]['recipient_phone'] == '+250******321'
+
+
+class TestNotificationsAudit:
+    def test_generation_notifies_owner_and_creates_audit(self, client, admin_hdr, accountant_hdr,
+                                                          no_email):
+        report = _generate(client, admin_hdr)
+        agent_id = _user('agent@afritech.dev').id
+        notification = Notification.query.filter_by(
+            type='weekly_report_generated', related_type='weekly_report',
+            related_id=report.id, recipient_id=agent_id).first()
+        assert notification is not None
+        assert report.period_label in notification.message
+        assert notification.created_by_rule == 'weekly-report-generation'
+        assert AuditLog.query.filter_by(action='weekly_report_generated',
+                                        entity_id=str(report.id)).first() is not None
+        audit_items = _assert_ok(client.get(f'/api/weekly-reports/{report.id}/audit',
+                                            headers=accountant_hdr))['items']
+        assert any(row['action'] == 'weekly_report_generated' for row in audit_items)
+
+    def test_submission_notifies_reviewers_on_shortage_and_acknowledges_agent(
+            self, client, admin_hdr, agent_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr,
+                        data={'shortage_reason_category': 'cash_count_error',
+                              'shortage_explanation': 'Cash counted twice',
+                              'expected_resolution_date': (week + timedelta(days=9)).isoformat(),
+                              'evidence': (io.BytesIO(b'%PDF-1.4\nshortage'), 'proof.pdf')},
+                        content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        by_user = {}
+        for row in Notification.query.filter_by(related_type='weekly_report',
+                                                related_id=report.id).all():
+            by_user.setdefault(row.recipient_id, set()).add(row.type)
+        agent_id = _user('agent@afritech.dev').id
+        manager_id = _user('manager@afritech.dev').id
+        admin_id = _user('admin@afritech.dev').id
+        accountant_id = _user('accountant@afritech.dev').id
+        secretary_id = _user('secretary@afritech.dev').id
+        assert 'weekly_report_submitted_ack' in by_user[agent_id]
+        # The seeded Manager is in another branch, so branch scoping suppresses
+        # both the submission and the shortage amount from that notification.
+        assert manager_id not in by_user
+        assert 'weekly_report_submitted' in by_user[admin_id]
+        assert 'weekly_report_shortage' in by_user[admin_id]
+        assert 'weekly_report_submitted' in by_user[accountant_id]
+        assert 'weekly_report_shortage' in by_user[accountant_id]
+        assert secretary_id not in by_user
+        shortage = Notification.query.filter_by(
+            type='weekly_report_shortage', related_id=report.id,
+            recipient_id=accountant_id).first()
+        assert shortage.severity == 'critical'
+
+    def test_review_decisions_notify_agent_and_are_audited(self, client, admin_hdr, agent_hdr,
+                                                           accountant_hdr, no_email):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'request_correction',
+                    reason='Attach the supporting receipt')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'approve', reason='matched')
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        agent_id = _user('agent@afritech.dev').id
+        types = {row.type for row in Notification.query.filter_by(
+            recipient_id=agent_id, related_type='weekly_report', related_id=report.id).all()}
+        assert {'weekly_report_returned', 'weekly_report_approved'} <= types
+        actions = {row.action for row in AuditLog.query.filter_by(
+            entity='weekly_report', entity_id=str(report.id)).all()}
+        assert {'weekly_report_submitted', 'weekly_report_returned_for_correction',
+                'weekly_report_approved'} <= actions
+
+        rejected = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, rejected.id).status_code == 200
+        r = _review(client, accountant_hdr, rejected.id, 'reject', reason='duplicate transfer')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        rejection = Notification.query.filter_by(
+            type='weekly_report_rejected', recipient_id=agent_id,
+            related_id=rejected.id).first()
+        assert rejection is not None and rejection.severity == 'critical'
+
+    def test_automation_due_and_late_alerts(self, client, admin_hdr, no_email):
+        saturday = week_bounds(date(2031, 1, 15))[0]
+        assert saturday.weekday() == 5
+        report = _generate(client, admin_hdr, _agent(), saturday)
+        assert automation_service.weekly_report_due_alert(saturday) >= 1
+        db.session.commit()
+        due = Notification.query.filter_by(type='weekly_report_due',
+                                           related_id=report.id).first()
+        assert due is not None and '17:00' in due.message
+        assert automation_service.weekly_report_due_alert(saturday) == 0
+
+        past = _generate(client, admin_hdr, _agent(), _past_week())
+        # Generation already flags historical weeks; put it back in draft so
+        # the automation rule is the component under test here.
+        past.status = 'draft'
+        past.is_late = False
+        db.session.commit()
+        assert automation_service.weekly_report_late_alert(date.today()) >= 1
+        db.session.commit()
+        db.session.refresh(past)
+        assert past.status == 'late' and past.is_late is True
+        assert Notification.query.filter_by(type='weekly_report_late',
+                                            related_id=past.id).first() is not None
+        assert AuditLog.query.filter_by(action='weekly_report_marked_late',
+                                        entity_id=str(past.id)).first() is not None
+
+    def test_audit_endpoint_includes_momo_events_and_is_access_scoped(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        active = _generate(client, admin_hdr)
+        other = _generate(client, admin_hdr, _agent2())
+        _momo(client, agent_hdr, active.id, reference='WKM-AUDIT', amount=100)
+        assert _submit(client, agent_hdr, active.id).status_code == 200
+        items = _assert_ok(client.get(f'/api/weekly-reports/{active.id}/audit',
+                                      headers=accountant_hdr))['items']
+        actions = {row['action'] for row in items}
+        assert {'weekly_report_generated', 'weekly_momo_submitted',
+                'weekly_report_submitted'} <= actions
+        assert all(row.get('entity_id') != str(other.id) for row in items)
+        assert client.get(f'/api/weekly-reports/{other.id}/audit',
+                          headers=agent_hdr).status_code == 403
+
+
+class TestExports:
+    def test_pdf_export_is_attachment_with_pdf_mime(self, client, admin_hdr, agent_hdr,
+                                                    accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = client.get(f'/api/weekly-reports/{report.id}/export?format=pdf',
+                       headers=accountant_hdr)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.content_type == 'application/pdf'
+        assert r.data.startswith(b'%PDF')
+        assert 'attachment' in r.headers['Content-Disposition']
+        assert report.report_number in r.headers['Content-Disposition']
+
+    def test_xlsx_export_contains_21_statement_rows_and_localised_labels(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        from openpyxl import load_workbook
+
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = client.get(f'/api/weekly-reports/{report.id}/export?format=xlsx&lang=rw',
+                       headers=accountant_hdr)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.content_type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        wb = load_workbook(io.BytesIO(r.data), read_only=True, data_only=True)
+        assert wb.sheetnames[0] == 'Weekly Report'
+        statement = [row for row in wb.worksheets[0].iter_rows(values_only=True)
+                     if isinstance(row[0], int)]
+        assert [row[0] for row in statement] == list(range(1, 22))
+        assert any('raporo' in str(row[1]).lower() for row in statement)
+        components = [str(row[0]) for row in wb.worksheets[1].iter_rows(values_only=True)]
+        assert 'expected_remittance' in components and 'shortage_amount' in components
+
+    def test_export_permissions_and_validation(self, client, admin_hdr, agent_hdr, accountant_hdr):
+        mine = _generate(client, admin_hdr)
+        other = _generate(client, admin_hdr, _agent2())
+        base = f'/api/weekly-reports/{mine.id}/export'
+        assert client.get(base, headers=agent_hdr).status_code == 200
+        assert client.get(base, headers=accountant_hdr).status_code == 200
+        assert client.get(f'/api/weekly-reports/{other.id}/export',
+                          headers=agent_hdr).status_code == 403
+        assert client.get(base).status_code in (401, 403)
+        invalid = client.get(base + '?format=csv', headers=accountant_hdr)
+        assert invalid.status_code == 400
+        fallback = client.get(base + '?format=xlsx&lang=xx', headers=accountant_hdr)
+        assert fallback.status_code == 200
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(fallback.data), read_only=True, data_only=True)
+        assert wb.worksheets[0]['A1'].value == 'Weekly Service Agent Financial Report'
+
+
+class TestPolicyI18n:
+    def test_policy_endpoint_exposes_document_defaults(self, client, agent_hdr):
+        body = _assert_ok(client.get('/api/weekly-reports/policy', headers=agent_hdr))
+        assert set(DEFAULTS) <= set(body['policy'])
+        assert body['policy']['timezone'] == 'Africa/Kigali'
+        assert body['policy']['late_policy'] == 'allow_flagged'
+        assert body['policy']['deduct_verified_service_costs'] is True
+        assert body['policy']['commission_retained'] is False
+        assert body['statuses'] == WEEKLY_REPORT_STATUSES
+        assert body['shortage_reason_categories'] == SHORTAGE_REASON_CATEGORIES
+        assert body['momo_providers'] == MOMO_PROVIDERS
+        assert body['languages'] == ['en', 'rw']
+        assert body['current_week'] == [d.isoformat() for d in week_bounds()]
+
+    def test_settings_override_changes_week_deadline_and_expense_eligibility(
+            self, client, admin_hdr, policy_override):
+        policy_override('week_start_weekday', '0')
+        policy_override('deadline_time', '09:30')
+        policy_override('collection_funded_payment_methods', 'cash,momo')
+        policy = get_policy()
+        assert policy['week_start_weekday'] == 0
+        assert policy['deadline_time'] == '09:30'
+        assert policy['collection_funded_payment_methods'] == ['cash', 'momo']
+
+        start, end = week_bounds(date(2031, 1, 15))
+        assert start == date(2031, 1, 13) and end == start + timedelta(days=6)
+        due = submission_deadline(start)
+        assert (due.hour, due.minute) == (7, 30)  # Africa/Kigali is UTC+2
+
+        emp = _agent()
+        day = start + timedelta(days=1)
+        _txn(emp, day, price=1000, cost=400)
+        _expense(day, amount=250, code='momo', description='WKE-momo-funded')
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, start)
+        assert report.due_at.replace(tzinfo=None) == due.replace(tzinfo=None)
+        c = svc.build_calculation(WeeklyReport.query.get(report.id))['components']
+        assert c['approved_collection_expenses'] == '250.00'
+
+    def test_weeks_endpoint_lists_current_previous_and_history(self, client, admin_hdr, agent_hdr):
+        current = week_bounds(date.today())[0]
+        report = _generate(client, admin_hdr, _agent(), current)
+        weeks = _assert_ok(client.get('/api/weekly-reports/weeks', headers=agent_hdr))['weeks']
+        assert len(weeks) == 13
+        assert [row['week_start'] for row in weeks] == [
+            (current - timedelta(weeks=i)).isoformat() for i in range(13)]
+        assert weeks[0]['report_count'] == 1
+        assert sum(weeks[0]['status_counts'].values()) == 1
+        assert weeks[0]['status_counts'][report.status] == 1
+        assert weeks[1]['report_count'] == 0
+        assert _assert_ok(client.get('/api/weekly-reports/weeks',
+                                     headers=agent_hdr))['current']['week_start'] == current.isoformat()
+
+    def test_statement_labels_are_bilingual_but_user_text_is_not_translated(
+            self, client, admin_hdr):
+        assert SUPPORTED_LANGUAGES == ('en', 'rw')
+        assert normalize_language('fr') == 'en'
+        assert t('status.submitted', 'rw') != t('status.submitted', 'en')
+        message = bilingual('notification.submitted', period='2031-01-10', agent='Tester')
+        assert ' / ' in message and 'Tester' in message
+
+        report = _generate(client, admin_hdr)
+        report.shortage_explanation = 'Cash counted twice'
+        db.session.commit()
+        svc.refresh(WeeklyReport.query.get(report.id))
+        en_rows, _ = svc.statement_rows(WeeklyReport.query.get(report.id), 'en')
+        rw_rows, _ = svc.statement_rows(WeeklyReport.query.get(report.id), 'rw')
+        assert len(en_rows) == len(rw_rows) == 21
+        assert [row['item'] for row in en_rows] == list(range(1, 22))
+        assert [row['label'] for row in en_rows] != [row['label'] for row in rw_rows]
+        assert all(row['label'] for row in en_rows + rw_rows)
+        assert 'Cash counted twice' in en_rows[16]['value']
+        assert 'Cash counted twice' in rw_rows[16]['value']
+
+    def test_pdf_and_xlsx_carry_all_21_bilingual_statement_rows(
+            self, client, admin_hdr, no_email, monkeypatch):
+        from app.services import weekly_exports
+        import reportlab.platypus as platypus
+        from openpyxl import load_workbook
+
+        report = _generate(client, admin_hdr)
+        report.shortage_explanation = 'Counted twice'
+        db.session.commit()
+        fresh = WeeklyReport.query.get(report.id)
+        svc.refresh(fresh)
+        fresh = WeeklyReport.query.get(report.id)
+
+        original_paragraph = platypus.Paragraph
+        seen = []
+
+        class RecordingParagraph(original_paragraph):
+            def __init__(self, text, *args, **kwargs):
+                seen.append(str(text))
+                super().__init__(text, *args, **kwargs)
+
+        monkeypatch.setattr(platypus, 'Paragraph', RecordingParagraph)
+
+        for lang in ('en', 'rw'):
+            rows, calc = svc.statement_rows(fresh, lang)
+            assert len(rows) == 21
+
+            seen.clear()
+            pdf, mimetype = weekly_exports.export_pdf(fresh, rows, calc, lang)
+            assert mimetype == 'application/pdf'
+            assert pdf.getvalue().startswith(b'%PDF')
+            assert t('export.title', lang) in ' '.join(seen)
+            for row in rows:
+                assert weekly_exports._p(row['label']) in seen, (lang, row['item'])
+                assert weekly_exports._p(row['value']) in seen, (lang, row['item'])
+
+            xlsx, mimetype = weekly_exports.export_xlsx(fresh, rows, calc, lang)
+            assert mimetype.endswith('spreadsheetml.sheet')
+            workbook = load_workbook(io.BytesIO(xlsx.getvalue()))
+            texts = {str(cell.value) for sheet in workbook
+                     for line in sheet.iter_rows()
+                     for cell in line if cell.value is not None}
+            assert t('export.title', lang) in texts
+            for row in rows:
+                assert row['label'] in texts, (lang, row['item'])
+                assert str(row['value']) in texts, (lang, row['item'])
+
+
+class TestReviewFindings:
+    """Regression tests for the independent review fixes."""
+
+    def test_pdf_export_escapes_user_authored_text(self, client, admin_hdr):
+        from app.services import weekly_exports
+
+        assert weekly_exports._p('<b>&') == '&lt;b&gt;&amp;'
+        report = _generate(client, admin_hdr)
+        report.employee.first_name = '<script>alert(1)</script>'
+        report.employee.last_name = 'Agent'
+        db.session.flush()
+        rows, calc = svc.statement_rows(report, 'en')
+        output, mimetype = weekly_exports.export_pdf(report, rows, calc, 'en')
+        assert mimetype == 'application/pdf'
+        assert output.getvalue().startswith(b'%PDF')
+
+    def test_generation_rule_runs_inside_scheduler_savepoint(self, client, no_email):
+        saturday = week_bounds(date(2031, 1, 15))[0]
+        outcomes = dict(automation_service.run_all(saturday))
+        generated = outcomes['weekly_report_generation_alert']
+        assert not str(generated).startswith('error:'), generated
+        assert generated >= 1
+        assert WeeklyReport.query.filter_by(week_start=saturday).count() >= 1
+
+    def test_overrides_are_rejected_once_report_is_locked(self, client, admin_hdr,
+                                                          agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        with pytest.raises(WeeklyReportError) as exc:
+            svc.authorize_shortage_override(
+                WeeklyReport.query.get(report.id), 'Too late',
+                _user('accountant@afritech.dev'))
+        assert exc.value.status == 409
+        for url in (f'/api/weekly-reports/{report.id}/override',
+                    f'/api/weekly-reports/{report.id}/missing-closings/override'):
+            r = client.post(url, headers=accountant_hdr, json={'reason': 'Too late'})
+            assert r.status_code == 409, r.get_data(as_text=True)
+
+    def test_rejected_submission_does_not_store_evidence(self, client, admin_hdr,
+                                                         agent_hdr, tmp_path, monkeypatch):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr,
+                        data={'evidence': (io.BytesIO(b'%PDF-1.4\nshortage'), 'proof.pdf')},
+                        content_type='multipart/form-data')
+        assert r.status_code == 400, r.get_data(as_text=True)
+        folder = tmp_path / 'weekly_reports' / str(report.id)
+        assert not folder.exists() or not any(folder.iterdir())
+
+    def test_deleted_transfer_disappears_from_locked_statement(self, client, admin_hdr,
+                                                               agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        sub = _momo(client, agent_hdr, report.id, amount=100)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'request_correction',
+                    reason='Please rescan the receipt')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        r = client.delete(f'/api/weekly-reports/{report.id}/momo/{sub["id"]}',
+                          headers=agent_hdr)
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = _detail(client, agent_hdr, report.id)
+        assert all(row['id'] != sub['id'] for row in body['momo_submissions'])
+        assert body['calculation']['components']['verified_submitted'] == '0.00'
+        assert sub['reference'] not in json.dumps(body)
+
+    def test_read_detail_does_not_mutate_persisted_calculation(self, client, admin_hdr,
+                                                              agent_hdr):
+        report = _generate(client, admin_hdr)
+        before = WeeklyReport.query.get(report.id).eligible_collections
+        _txn(_agent(), report.week_start + timedelta(days=1), price=700, cost=200)
+        db.session.commit()
+        body = _detail(client, agent_hdr, report.id)
+        assert Decimal(body['calculation']['components']['eligible_collections']) > before
+        db.session.expire_all()
+        assert WeeklyReport.query.get(report.id).eligible_collections == before
+
+    def test_adjustment_amounts_are_deltas(self, client, admin_hdr, agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
+                        headers=accountant_hdr,
+                        json={'kind': 'authorized_receipt', 'original_amount': 100,
+                              'adjusted_amount': 125, 'reason': 'Bank statement correction'})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        assert _components(client, accountant_hdr, report.id)['authorized_receipts'] == '25.00'
+        assert WeeklyReport.query.get(report.id).authorized_receipts == Decimal('25.00')
+
+    def test_verification_notification_is_bilingual(self, client, admin_hdr, agent_hdr,
+                                                    accountant_hdr, no_email):
+        report = _generate(client, admin_hdr)
+        sub = _momo(client, agent_hdr, report.id)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'verify_momo', momo_id=sub['id'])
+        assert r.status_code == 200, r.get_data(as_text=True)
+        note = Notification.query.filter_by(type='weekly_momo_verified',
+                                            related_type='weekly_report',
+                                            related_id=report.id).first()
+        assert note is not None
+        assert 'Verified' in note.message and 'Yemejwe' in note.message
+
+    def test_short_phone_numbers_are_masked(self):
+        assert MoMoSubmission.mask_phone('123') == '***'
+        assert MoMoSubmission.mask_phone('788123') == '***123'
+        assert MoMoSubmission.mask_phone('+250788123456') == '+250******456'
+
+    def test_momo_date_must_fall_inside_report_period(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        week = report.week_start
+        payload = {'provider': 'momo', 'reference': 'WKM-BAD-DATE',
+                   'amount': 50, 'submitted_at': (week - timedelta(days=1)).isoformat()}
+        bad = client.post(f'/api/weekly-reports/{report.id}/momo',
+                          headers=agent_hdr, json=payload)
+        assert bad.status_code == 400, bad.get_data(as_text=True)
+        good = _momo(client, agent_hdr, report.id, reference='WKM-GOOD-DATE',
+                     submitted_at=(week + timedelta(days=1)).isoformat())
+        assert good['reference'] == 'WKM-GOOD-DATE'

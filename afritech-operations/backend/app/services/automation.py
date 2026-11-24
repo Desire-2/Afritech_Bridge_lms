@@ -28,12 +28,15 @@ from ..extensions import db
 from ..models import (
     DailyClosing, Expense, Task, WeeklyPlan, Assignment,
     Instructor, Employee, User, Setting,
-    Meeting, Announcement, AdminRequest, Activity, Attendance,
+    Meeting, Announcement, AdminRequest, Activity, Attendance, WeeklyReport,
 )
 from ..auth.scope import can_access_service_agents, is_service_agent_employee
 from ..utils.datetime_utils import as_utc
 from .audience import recipient_employee_ids
-from .notifications import notify
+from .notifications import notify, notify_weekly_reviewers
+from .weekly_policy import get_policy, is_late, week_bounds
+from .weekly_i18n import bilingual
+from .weekly_report_service import WeeklyReportService
 
 
 def _setting_float(key, default):
@@ -127,6 +130,9 @@ def _notify_coordinators(notification_type, message, employees, severity, relate
 def run_all(scope_date=None):
     scope_date = scope_date or date.today()
     triggers = [
+        weekly_report_generation_alert,
+        weekly_report_due_alert,
+        weekly_report_late_alert,
         cash_shortage_alert,
         closing_approval_alert,
         expense_approval_alert,
@@ -170,6 +176,60 @@ def run_all(scope_date=None):
     # re-sent the same e-mail. Committing an empty session is a no-op.
     db.session.commit()
     return run
+
+
+def weekly_report_generation_alert(scope_date):
+    """Idempotently create one report per Service Agent on submission day."""
+    policy = get_policy()
+    if scope_date.weekday() != policy['submission_weekday']:
+        return 0
+    result = WeeklyReportService().generate_for_all_agents(scope_date)
+    return result['created']
+
+
+def weekly_report_due_alert(scope_date):
+    policy = get_policy()
+    if scope_date.weekday() != policy['submission_weekday']:
+        return 0
+    week_start, _ = week_bounds(scope_date, policy)
+    reports = WeeklyReport.query.filter(
+        WeeklyReport.week_start == week_start,
+        WeeklyReport.status.in_(['draft', 'ready_for_submission']),
+    ).all()
+    count = 0
+    for report in reports:
+        if report.employee and report.employee.user_id:
+            if notify(report.employee.user_id, 'weekly_report_due',
+                      bilingual('notification.due', period=report.period_label,
+                                time=policy['deadline_time']),
+                      related_type='weekly_report', related_id=report.id,
+                      rule='weekly-report-due'):
+                count += 1
+    return count
+
+
+def weekly_report_late_alert(scope_date):
+    """Flag unsubmitted reports after the configured deadline, with audit."""
+    count = 0
+    reports = WeeklyReport.query.filter(
+        WeeklyReport.status.in_(['draft', 'ready_for_submission']),
+    ).all()
+    service = WeeklyReportService()
+    for report in reports:
+        if not is_late(report.week_start):
+            continue
+        service.transition(report, 'late',
+                           audit_action='weekly_report_marked_late')
+        message = bilingual('notification.late', period=report.period_label)
+        if report.employee and report.employee.user_id:
+            notify(report.employee.user_id, 'weekly_report_late', message,
+                   related_type='weekly_report', related_id=report.id,
+                   rule='weekly-report-late')
+        notify_weekly_reviewers(
+            report, 'weekly_report_late', message,
+            related_id=report.id, rule='weekly-report-late-review')
+        count += 1
+    return count
 
 
 def cash_shortage_alert(scope_date):

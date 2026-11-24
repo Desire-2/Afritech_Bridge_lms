@@ -38,6 +38,9 @@ adapter (`/api/integrations/lms/*`) can sync courses, cohorts, and learners.
   - `audit.py` — activity log writer
   - `notifications.py` — per-user + per-role notifications on key events
   - `automation.py` — scheduled watermarks (expense/period reminders etc.)
+  - `weekly_policy.py`, `weekly_i18n.py`, `weekly_report_service.py`,
+    `weekly_exports.py` — weekly financial reconciliation, EN/RW labels and
+    exports (see [WEEKLY_FINANCIAL_REPORTING.md](./WEEKLY_FINANCIAL_REPORTING.md))
   - `integrations.py` — LMS sync client (courses/cohorts/mapping)
 - `app/auth/`
   - `auth.py` — `current_user`, `current_employee`, permission decorators

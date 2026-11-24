@@ -24,7 +24,7 @@ export function Loading({ label = 'Loading…' }: { label?: string }) {
   );
 }
 
-export function ErrorAlert({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorAlert({ message, onRetry, retryLabel = 'Retry' }: { message: string; onRetry?: () => void; retryLabel?: string }) {
   return (
     <div className="alert alert-danger d-flex justify-content-between align-items-center" role="alert">
       <span>
@@ -33,7 +33,7 @@ export function ErrorAlert({ message, onRetry }: { message: string; onRetry?: ()
       </span>
       {onRetry && (
         <button className="btn btn-sm btn-outline-danger" onClick={onRetry}>
-          Retry
+          {retryLabel}
         </button>
       )}
     </div>
@@ -85,7 +85,7 @@ export function StatCard({ label, value, sub, tone = 'primary', icon }: { label:
   );
 }
 
-export function Badge({ status }: { status: string }) {
+export function Badge({ status, label }: { status: string; label?: string }) {
   const map: Record<string, string> = {
     completed: 'bg-success-subtle text-success border-success-subtle',
     active: 'bg-success-subtle text-success border-success-subtle',
@@ -150,7 +150,7 @@ export function Badge({ status }: { status: string }) {
   };
   const cls = map[status] || 'bg-light-subtle text-body border-light-subtle';
   return (
-    <span className={`badge border ${cls}`}>{status.replace(/_/g, ' ')}</span>
+    <span className={`badge border ${cls}`}>{label ?? status.replace(/_/g, ' ')}</span>
   );
 }
 
@@ -176,7 +176,14 @@ export function RiskBadge({ risk }: { risk: string }) {
   return <span className={`badge border ${cls}`}>{risk.replace(/_/g, ' ')}</span>;
 }
 
-export function Pagination({ page, pages, onPage, total }: { page: number; pages: number; onPage: (p: number) => void; total?: number }) {
+export function Pagination({ page, pages, onPage, total, recordsLabel = 'records', pageLabel }: {
+  page: number;
+  pages: number;
+  onPage: (p: number) => void;
+  total?: number;
+  recordsLabel?: string;
+  pageLabel?: (page: number, pages: number) => string;
+}) {
   if (pages <= 1) return null;
   const go = (p: number) => {
     if (p >= 1 && p <= pages) onPage(p);
@@ -189,8 +196,8 @@ export function Pagination({ page, pages, onPage, total }: { page: number; pages
   return (
     <nav aria-label="Pagination" className="d-flex align-items-center justify-content-between flex-wrap gap-2 mt-3">
       <span className="small text-muted">
-        {total !== undefined ? `${total.toLocaleString()} records` : ''}
-        {total !== undefined && ` · Page ${page} of ${pages}`}
+        {total !== undefined ? `${total.toLocaleString()} ${recordsLabel}` : ''}
+        {total !== undefined && ` · ${pageLabel ? pageLabel(page, pages) : `Page ${page} of ${pages}`}`}
       </span>
       <div className="d-flex align-items-center gap-1">
         <button className="btn btn-sm btn-outline-secondary" disabled={page <= 1} onClick={() => go(page - 1)} aria-label="Previous page">
@@ -223,6 +230,7 @@ export function Modal({
   children,
   footer,
   size = 'lg',
+  closeLabel = 'Close',
 }: {
   show: boolean;
   title: string;
@@ -230,6 +238,7 @@ export function Modal({
   children: React.ReactNode;
   footer?: React.ReactNode;
   size?: 'sm' | 'lg' | 'xl';
+  closeLabel?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -261,7 +270,7 @@ export function Modal({
         <div className="modal-content">
           <div className="modal-header py-2">
             <h5 className="modal-title">{title}</h5>
-            <button type="button" className="btn-close" aria-label="Close" onClick={onClose} />
+            <button type="button" className="btn-close" aria-label={closeLabel} onClick={onClose} />
           </div>
           <div className="modal-body">{children}</div>
           {footer && <div className="modal-footer">{footer}</div>}

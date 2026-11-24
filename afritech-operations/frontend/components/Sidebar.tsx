@@ -5,12 +5,14 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { logout } from '@/lib/api';
 import { navGroupsFor, roleLabel } from '@/lib/permissions';
+import { useWeeklyI18n } from '@/lib/weekly-i18n';
 import { useEffect } from 'react';
 
 export default function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user } = useAuth();
+  const { t } = useWeeklyI18n();
   const groups = navGroupsFor(user);
 
   useEffect(() => {
@@ -42,7 +44,7 @@ export default function Sidebar({ open = false, onClose }: { open?: boolean; onC
                 return (
                   <Link key={item.href} href={item.href} className={`sidebar-link d-flex align-items-center gap-2 ${active ? 'active' : ''}`}>
                     <i className={`bi ${item.icon} sidebar-icon`} />
-                    <span className="sidebar-label">{item.label}</span>
+                    <span className="sidebar-label">{item.i18nKey ? t(item.i18nKey) : item.label}</span>
                   </Link>
                 );
               })}
