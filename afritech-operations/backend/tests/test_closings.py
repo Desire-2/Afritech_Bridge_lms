@@ -12,6 +12,11 @@ def _manager_token(client):
     return r.get_json()['access_token']
 
 
+def _admin_token(client):
+    r = client.post('/api/auth/login', json={'email': 'admin@afritech.dev', 'password': 'Password123!'})
+    return r.get_json()['access_token']
+
+
 def _hdr(token):
     return {'Authorization': f'Bearer {token}'}
 
@@ -180,6 +185,91 @@ class TestClosingFlow:
         r = client.post('/api/closings/submit', headers=_hdr(agent),
                         json={'closing_date': '2026-09-09'})
         assert r.status_code == 400
+
+
+class TestAdminClosingOverride:
+    """An approval entered by mistake can be undone, but only by a super admin
+    and only with a recorded reason. Managers never break the approval lock."""
+
+    def _approved_closing(self, client, closing_date):
+        agent = _agent_token(client)
+        r = client.post('/api/closings/submit', headers=_hdr(agent),
+                        json={'closing_date': closing_date, 'actual_cash': 5000})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        closing_id = r.get_json()['closing']['id']
+        r = client.post(f'/api/closings/{closing_id}/review',
+                        headers=_hdr(_manager_token(client)),
+                        json={'decision': 'approved', 'note': 'ok'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        return agent, closing_id
+
+    def test_admin_reopens_and_agent_can_resubmit(self, client):
+        from app.models import AuditLog
+
+        # A date outside the seeded window keeps the three cases independent.
+        closing_day = (date.today() - timedelta(days=40)).isoformat()
+        agent, closing_id = self._approved_closing(client, closing_day)
+        r = client.post(f'/api/closings/{closing_id}/review',
+                        headers=_hdr(_admin_token(client)),
+                        json={'decision': 'correction_requested',
+                              'note': 'Approved the wrong date'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['closing']
+        assert body['status'] == 'correction_requested'
+        assert body['is_locked'] is False
+        assert body['review_note'] == 'Approved the wrong date'
+
+        log = AuditLog.query.filter_by(
+            action='closing_admin_status_override', entity='daily_closing',
+            entity_id=str(closing_id)).first()
+        assert log is not None
+        assert 'Approved the wrong date' in (log.reason or '')
+
+        # The reopened day is editable again and can be submitted afresh.
+        r = client.post('/api/closings/submit', headers=_hdr(agent),
+                        json={'closing_date': closing_day, 'actual_cash': 5200})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        reopened = r.get_json()['closing']
+        assert reopened['status'] == 'submitted'
+        assert reopened['is_locked'] is False
+        assert reopened['actual_cash'] == 5200
+
+    def test_manager_cannot_unlock_and_admin_must_explain(self, client):
+        closing_day = (date.today() - timedelta(days=41)).isoformat()
+        _, closing_id = self._approved_closing(client, closing_day)
+
+        r = client.post(f'/api/closings/{closing_id}/review',
+                        headers=_hdr(_manager_token(client)),
+                        json={'decision': 'correction_requested', 'note': 'oops'})
+        assert r.status_code == 400
+        assert 'locked' in r.get_json()['error'].lower()
+
+        admin = _hdr(_admin_token(client))
+        r = client.post(f'/api/closings/{closing_id}/review', headers=admin,
+                        json={'decision': 'correction_requested'})
+        assert r.status_code == 400
+        assert 'reason' in r.get_json()['error'].lower()
+
+        r = client.post(f'/api/closings/{closing_id}/review', headers=admin,
+                        json={'decision': 'approved', 'note': 'trying again'})
+        assert r.status_code == 400
+        assert 'already approved' in r.get_json()['error'].lower()
+
+        r = client.get(f'/api/closings/{closing_id}', headers=admin)
+        assert r.get_json()['closing']['status'] == 'approved'
+        assert r.get_json()['closing']['is_locked'] is True
+
+    def test_admin_can_reject_an_approved_closing(self, client):
+        closing_day = (date.today() - timedelta(days=42)).isoformat()
+        _, closing_id = self._approved_closing(client, closing_day)
+        r = client.post(f'/api/closings/{closing_id}/review',
+                        headers=_hdr(_admin_token(client)),
+                        json={'decision': 'rejected', 'note': 'Wrong employee'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['closing']
+        assert body['status'] == 'rejected'
+        assert body['is_locked'] is False
+
 
 class TestClosingDateValidation:
     """Bad date input must be a 400, never a ValueError-turned-500, and the

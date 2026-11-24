@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate, can } from '@/lib/api';
+import { api, fmtMoney, fmtDate, can, isSuperAdmin } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
@@ -28,10 +28,13 @@ export default function ClosingsPage() {
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState<any | null>(null);
   const [reviewNote, setReviewNote] = useState('');
+  const [overrideMode, setOverrideMode] = useState(false);
+  const [overrideDecision, setOverrideDecision] = useState('correction_requested');
   const [reRunning, setReRunning] = useState<any | null>(null);
   const [error2, setError2] = useState('');
 
   const canApprove = can(user, 'closings.approve');
+  const isAdmin = isSuperAdmin(user);
   const canView = can(user, 'closings.view') || can(user, 'closings.submit') || canApprove;
   const dateValid = ISO_DATE.test(date);
   const selectedEmployeeId = totalsEmployeeId ?? user?.employee_id ?? null;
@@ -153,13 +156,18 @@ export default function ClosingsPage() {
     }
   }
 
-  async function review(decision: string) {
+  async function review(decision: string, override = false) {
+    if (override && !reviewNote.trim()) {
+      setError2('Give a reason for changing an approved closing.');
+      return;
+    }
     setBusy(true);
     setError2('');
     try {
       await api(`/api/closings/${reviewing.id}/review`, { method: 'POST', body: { decision, note: reviewNote || undefined } });
       setReviewing(null);
       setReviewNote('');
+      setOverrideMode(false);
       reload();
     } catch (err: any) {
       setError2(err.message);
@@ -168,8 +176,12 @@ export default function ClosingsPage() {
     }
   }
 
-  function openReview(c: any) {
-    setReviewNote(c.review_note || '');
+  function openReview(c: any, override = false) {
+    // An admin fixing an approval starts with an empty reason: the old review
+    // note belongs to the original decision, not to this correction.
+    setReviewNote(override ? '' : (c.review_note || ''));
+    setOverrideMode(override);
+    setOverrideDecision('correction_requested');
     setError2('');
     setReviewing(c);
   }
@@ -296,6 +308,11 @@ export default function ClosingsPage() {
                   <div className="d-flex align-items-center gap-2">
                     <Badge status={c.reconciliation_class} />
                     <Badge status={c.status} />
+                    {c.status === 'approved' && isAdmin && (
+                      <button className="btn btn-sm btn-outline-danger" onClick={() => openReview(c, true)}>
+                        <i className="bi bi-unlock me-1" />Fix status
+                      </button>
+                    )}
                     {c.status === 'submitted' && canApprove && (
                       <button className="btn btn-sm btn-outline-primary" onClick={() => openReview(c)}>Review</button>
                     )}
@@ -361,12 +378,17 @@ export default function ClosingsPage() {
         </Field>
       </Modal>
 
-      <Modal show={!!reviewing} title={`Review closing — ${reviewing ? fmtDate(reviewing.closing_date) : ''}`}
-        onClose={() => { setReviewing(null); setError2(''); }}
+      <Modal show={!!reviewing}
+        title={`${overrideMode ? 'Correct approved closing' : 'Review closing'} — ${reviewing ? fmtDate(reviewing.closing_date) : ''}`}
+        onClose={() => { setReviewing(null); setOverrideMode(false); setError2(''); }}
         footer={
           <>
-            <button className="btn btn-outline-secondary" onClick={() => setReviewing(null)}>Close</button>
-            {canApprove && (
+            <button className="btn btn-outline-secondary"
+              onClick={() => { setReviewing(null); setOverrideMode(false); }}>Close</button>
+            {overrideMode && isAdmin ? (
+              <button className="btn btn-danger" disabled={busy || !reviewNote.trim()}
+                onClick={() => review(overrideDecision, true)}>Change status</button>
+            ) : canApprove && (
               <>
                 <button className="btn btn-outline-warning" disabled={busy} onClick={() => review('correction_requested')}>Request correction</button>
                 <button className="btn btn-outline-danger" disabled={busy} onClick={() => review('rejected')}>Reject</button>
@@ -377,11 +399,27 @@ export default function ClosingsPage() {
         }
       >
         {error2 && <div className="alert alert-danger py-2 small">{error2}</div>}
+        {overrideMode && (
+          <div className="alert alert-warning py-2 small">
+            This closing was approved by mistake. Changing its status unlocks it so the agent can
+            correct the day and re-submit. The reason below is stored in the audit log.
+          </div>
+        )}
         <div className="alert alert-secondary small">
           Expected cash <strong>{fmtMoney(reviewing?.expected_cash)}</strong> vs actual <strong>{fmtMoney(reviewing?.actual_cash)}</strong> — difference <strong>{fmtMoney(reviewing?.cash_difference)}</strong>. Submitter note: {reviewing?.notes || '—'}
         </div>
-        <Field label="Review note">
-          <TextArea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} />
+        {overrideMode && isAdmin && (
+          <Field label="New status" required>
+            <select className="form-select" value={overrideDecision}
+              onChange={(e) => setOverrideDecision(e.target.value)}>
+              <option value="correction_requested">Correction requested (reopen for edits)</option>
+              <option value="rejected">Rejected</option>
+              <option value="submitted">Submitted (back to review queue)</option>
+            </select>
+          </Field>
+        )}
+        <Field label={overrideMode ? 'Reason for change' : 'Review note'} required={overrideMode}>
+          <TextArea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} required={overrideMode} />
         </Field>
       </Modal>
     </div>

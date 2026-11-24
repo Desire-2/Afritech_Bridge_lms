@@ -90,6 +90,10 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 - `GET /api/closings?status=&start=&end=&employee_id=`
 - `GET /api/closings/{id}` · `POST /api/closings/{id}/review` — `{decision, note}`
   decision: `approved` (locks) | `rejected` | `correction_requested`
+- Super-admin override: a locked/approved closing can be changed by an
+  `is_super_admin` user only, with a non-empty `note`. Valid decisions then are
+  `submitted`, `rejected` or `correction_requested`; the lock is released and the
+  change is audited as `closing_admin_status_override`. Managers still get 400.
 
 ## Finance
 

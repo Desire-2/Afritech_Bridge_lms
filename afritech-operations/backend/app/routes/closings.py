@@ -226,6 +226,7 @@ def submit_closing():
     closing.reviewed_at = None
     closing.review_note = None
     closing.is_locked = False
+    closing.locked_at = None
 
     db.session.commit()
 
@@ -299,29 +300,59 @@ def review_closing(closing_id):
     closing = DailyClosing.query.get(closing_id)
     if not closing:
         return json_error('Closing not found', 404)
-    if closing.is_locked:
-        return json_error('This closing is locked and cannot be modified', 400)
-    decision = data.get('decision')
-    if decision not in ('approved', 'rejected', 'correction_requested'):
-        return json_error('Decision must be approved, rejected or correction_requested')
-    previous_status = closing.status
 
-    closing.status = 'approved' if decision == 'approved' else decision
-    closing.reviewed_by = current_user().id
+    user = current_user()
+    # Only a super admin may reopen an approval that was entered by mistake.
+    # Managers keep the normal approve/reject powers but never break a lock.
+    was_locked = bool(closing.is_locked)
+    admin_override = was_locked and bool(getattr(user, 'is_super_admin', False))
+    if was_locked and not admin_override:
+        return json_error('This closing is locked and cannot be modified', 400)
+
+    decision = data.get('decision')
+    valid = ('approved', 'rejected', 'correction_requested')
+    if was_locked:
+        if decision == 'approved':
+            return json_error('This closing is already approved; choose a different status to reopen it', 400)
+        valid = ('submitted', 'rejected', 'correction_requested')
+    if decision not in valid:
+        return json_error(f'Decision must be one of: {", ".join(valid)}')
+
+    note = data.get('note')
+    if note is not None:
+        note = str(note)
+        if len(note) > 500:
+            return json_error('note must be 500 characters or fewer', 400)
+    if admin_override and (not note or not note.strip()):
+        return json_error('A reason is required to change an approved closing', 400)
+
+    previous_status = closing.status
+    previous_locked_at = closing.locked_at
+    closing.status = decision
+    closing.reviewed_by = user.id
     closing.reviewed_at = datetime.now(timezone.utc)
-    closing.review_note = data.get('note')
-    if closing.status == 'approved':
+    closing.review_note = note
+    if decision == 'approved':
         closing.is_locked = True
         closing.locked_at = datetime.now(timezone.utc)
+    else:
+        # Reopening (or rejecting) releases the lock so the agent can correct
+        # the underlying day and re-submit. Approving again re-locks it.
+        closing.is_locked = False
+        closing.locked_at = None
 
     db.session.commit()
-    audit(f'closing_{decision}', 'daily_closing', closing.id,
-          previous_value={'status': previous_status}, new_value=closing.to_dict())
+    audit('closing_admin_status_override' if admin_override else f'closing_{decision}',
+          'daily_closing', closing.id,
+          previous_value={'status': previous_status, 'is_locked': was_locked,
+                          'locked_at': previous_locked_at},
+          new_value=closing.to_dict(), reason=note if admin_override else None)
 
     agent = Employee.query.get(closing.employee_id)
     if agent and agent.user_id:
+        suffix = ' by an administrator.' if admin_override else '.'
         notify(agent.user_id, 'closing_reviewed',
-               f'Your daily closing for {closing.closing_date} was {decision}.',
+               f'Your daily closing for {closing.closing_date} was {decision}{suffix}',
                severity='info', related_type='daily_closing', related_id=closing.id)
         if closing.reconciliation_class == 'shortage':
             # Route through the central gate (authorization, dedupe, e-mail)

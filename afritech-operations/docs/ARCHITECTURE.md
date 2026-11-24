@@ -70,7 +70,10 @@ adapter (`/api/integrations/lms/*`) can sync courses, cohorts, and learners.
    preview or from another day. The reconciliation class comes from
    `cash_difference` (shortage/overtun/balanced); managers are notified on shortage.
 4. `POST /api/closings/{id}/review` (approve/reject) locks the record and audits
-   the actual previous status.
+   the actual previous status. A super admin can undo a mistaken approval: the
+   same endpoint accepts `correction_requested`, `rejected` or `submitted` with a
+   mandatory reason, releases the lock, notifies the agent and writes a dedicated
+   `closing_admin_status_override` audit entry. Managers cannot break the lock.
 
 ### Payroll
 1. `POST /api/payroll/periods` builds a `PayrollItem` per active employee
