@@ -16,9 +16,10 @@ from .administration import (
     AUDIENCES, FOLLOWUP_STATUSES, ESCALATION_STATUSES, ACTION_ITEM_STATUSES,
 )
 from .weekly_reports import (
-    WeeklyReport, MoMoSubmission, WeeklyReportAdjustment, WeeklyReportExpense,
-    OutstandingAllocation, WEEKLY_REPORT_STATUSES, WEEKLY_REPORT_TRANSITIONS,
-    MOMO_PROVIDERS, MOMO_VERIFICATION_STATUSES, SHORTAGE_REASON_CATEGORIES,
+    WeeklyReport, MoMoSubmission, OfficialCostPayment, WeeklyReportAdjustment,
+    WeeklyReportExpense, OutstandingAllocation, WEEKLY_REPORT_STATUSES,
+    WEEKLY_REPORT_TRANSITIONS, MOMO_PROVIDERS, MOMO_VERIFICATION_STATUSES,
+    COST_PAYMENT_VERIFICATION_STATUSES, SHORTAGE_REASON_CATEGORIES,
     ADJUSTMENT_KINDS,
 )
 from .shop import (
@@ -77,8 +78,9 @@ __all__ = [
     'ShopCustomer', 'ShopSale', 'ShopSaleItem', 'ShopPayment', 'ShopReturn',
     'ShopReturnItem', 'ShopWarrantyRegistration', 'ShopWarrantyCase',
     'ShopPromotion', 'ShopPromotionItem', 'ShopShift', 'ShopDailyClosing',
-    'WeeklyReport', 'MoMoSubmission', 'WeeklyReportAdjustment', 'WeeklyReportExpense',
-    'OutstandingAllocation', 'WEEKLY_REPORT_STATUSES', 'WEEKLY_REPORT_TRANSITIONS',
-    'MOMO_PROVIDERS', 'MOMO_VERIFICATION_STATUSES', 'SHORTAGE_REASON_CATEGORIES',
+    'WeeklyReport', 'MoMoSubmission', 'OfficialCostPayment', 'WeeklyReportAdjustment',
+    'WeeklyReportExpense', 'OutstandingAllocation', 'WEEKLY_REPORT_STATUSES',
+    'WEEKLY_REPORT_TRANSITIONS', 'MOMO_PROVIDERS', 'MOMO_VERIFICATION_STATUSES',
+    'COST_PAYMENT_VERIFICATION_STATUSES', 'SHORTAGE_REASON_CATEGORIES',
     'ADJUSTMENT_KINDS',
 ]

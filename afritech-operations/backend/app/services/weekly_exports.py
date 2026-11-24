@@ -1,7 +1,7 @@
 """PDF/XLSX exports generated from the locked verified weekly calculation."""
 import io
 from datetime import datetime, timezone
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 from .weekly_i18n import t
 from ..services.weekly_report_service import WeeklyReportError
@@ -21,6 +21,58 @@ def _header(report, lang):
         (t('field.status', lang), t(f'status.{report.status}', lang)),
         (t('export.generatedAt', lang), datetime.now(timezone.utc).isoformat()),
     ]
+
+
+def _official_cost_rows(calc, lang):
+    """Escaped detail for every official cost, including claim evidence.
+
+    Only a verified, personally paid claim exposes a non-zero deductible
+    amount. The server-side evidence path is never exported; the sender phone
+    is already masked by the claim serializer before it reaches this helper.
+    """
+    claims = {}
+    for claim in calc.get('official_cost_payments', []):
+        if claim.get('transaction_id') is not None:
+            claims[claim['transaction_id']] = claim
+    rows = [[
+        _p(t('export.transaction', lang)),
+        _p(t('export.customerPayment', lang)),
+        _p(t('field.serviceCosts', lang)),
+        _p(t('field.personalPayment', lang)),
+        _p(f"{t('field.provider', lang)} / {t('field.reference', lang)}"),
+        _p(f"{t('field.paidAt', lang)} / {t('field.senderPhone', lang)}"),
+        _p(f"{t('field.evidence', lang)} / {t('field.notes', lang)}"),
+        _p(t('field.verification', lang)),
+        _p(t('export.deductibleAmount', lang)),
+    ]]
+    for row in calc.get('transactions', []):
+        claim = claims.get(row.get('id')) or {}
+        verified = (claim.get('personal_payment') is True
+                    and claim.get('verification_status') == 'verified')
+        personal = claim.get('personal_payment')
+        if personal is None:
+            personal_label = t('status.not_claimed', lang)
+        else:
+            label = t('status.yes' if personal else 'status.no', lang)
+            if claim.get('is_partial'):
+                label = f"{label} ({t('status.partial', lang)})"
+            personal_label = f"{label}: {claim.get('amount', '0.00')}"
+        decision = t(f"status.{claim.get('verification_status', 'not_claimed')}", lang)
+        if claim.get('verification_note'):
+            decision = f"{decision}: {claim['verification_note']}"
+        joined = lambda *values: _p(' / '.join(str(v) for v in values if v) or '—')
+        rows.append([
+            _p(row.get('transaction_number')),
+            _p(t(f"status.{row.get('payment_status')}", lang)),
+            _p(row.get('official_cost')),
+            _p(personal_label),
+            joined(claim.get('provider'), claim.get('reference')),
+            joined(claim.get('paid_at'), claim.get('sender_phone')),
+            joined(claim.get('evidence_name'), claim.get('notes')),
+            _p(decision),
+            _p(claim.get('amount', '0.00') if verified else '0.00'),
+        ])
+    return rows
 
 
 def export_pdf(report, rows, calc, lang='en'):
@@ -72,6 +124,24 @@ def export_pdf(report, rows, calc, lang='en'):
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
     ]))
     story.append(table)
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph(_p(t('export.officialCosts', lang)), title_style))
+    cost_data = [
+        [Paragraph(f'<b>{cell}</b>', small) if i == 0 else Paragraph(cell, small)
+         for i, cell in enumerate(row)]
+        for row in _official_cost_rows(calc, lang)
+    ]
+    cost_table = Table(cost_data,
+                       colWidths=[24 * mm, 16 * mm, 12 * mm, 26 * mm, 24 * mm,
+                                  24 * mm, 24 * mm, 16 * mm, 12 * mm],
+                       repeatRows=1)
+    cost_table.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#CBD5E1')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A5F')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    story.append(cost_table)
     doc.build(story)
     output.seek(0)
     return output, 'application/pdf'
@@ -126,6 +196,16 @@ def export_xlsx(report, rows, calc, lang='en'):
     details.column_dimensions['B'].width = 24
     details.column_dimensions['C'].width = 20
     details.column_dimensions['D'].width = 20
+
+    costs = wb.create_sheet(t('export.officialCosts', lang))
+    for row in _official_cost_rows(calc, lang):
+        # The helper escapes for XML/markup; Excel receives plain text.
+        costs.append([unescape(cell) for cell in row])
+    for cell in costs[1]:
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='1E3A5F')
+    for letter, width in zip('ABCDEFGHI', (34, 20, 16, 26, 28, 30, 30, 24, 26)):
+        costs.column_dimensions[letter].width = width
 
     output = io.BytesIO()
     wb.save(output)

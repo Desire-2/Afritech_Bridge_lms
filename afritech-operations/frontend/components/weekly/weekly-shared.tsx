@@ -21,6 +21,7 @@ export const WEEKLY_TABS = [
   { key: 'transactions', label: 'ui.tab.transactions', icon: 'bi-receipt' },
   { key: 'closings', label: 'ui.tab.closings', icon: 'bi-calendar-check' },
   { key: 'expenses', label: 'ui.tab.expenses', icon: 'bi-receipt-cutoff' },
+  { key: 'officialCosts', label: 'ui.tab.officialCosts', icon: 'bi-cash-coin' },
   { key: 'momo', label: 'ui.tab.momo', icon: 'bi-phone' },
   { key: 'shortage', label: 'ui.tab.shortage', icon: 'bi-exclamation-triangle' },
   { key: 'review', label: 'ui.tab.review', icon: 'bi-clipboard-check' },
@@ -50,6 +51,18 @@ export function weeklyErrorMessage(err: any, t: (key: string) => string): string
     'weekly_report.override_reason_required': 'ui.error.required',
     'weekly_report.override_disabled': 'ui.error.overrideDisabled',
     'weekly_report.invalid_evidence': 'ui.error.evidenceType',
+    'weekly_report.invalid_week': 'error.invalid_week',
+    'weekly_report.claim_duplicate': 'error.claim_duplicate',
+    'weekly_report.claim_invalid_amount': 'error.claim_invalid_amount',
+    'weekly_report.claim_transaction_required': 'ui.error.required',
+    'weekly_report.claim_transaction_invalid': 'ui.error.required',
+    'weekly_report.claim_invalid_provider': 'ui.error.required',
+    'weekly_report.claim_reference_required': 'error.claim_reference_required',
+    'weekly_report.claim_sender_required': 'error.claim_sender_required',
+    'weekly_report.claim_evidence_required': 'error.claim_evidence_required',
+    'weekly_report.claim_invalid_date': 'error.claim_invalid_date',
+    'weekly_report.claim_not_personal': 'error.claim_not_personal',
+    'weekly_report.claim_reason_required': 'ui.error.required',
   };
   if (map[code]) return t(map[code]);
   // A few access-control failures are returned without a machine code.

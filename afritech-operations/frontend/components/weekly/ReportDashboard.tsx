@@ -63,6 +63,11 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const [momoEvidence, setMomoEvidence] = useState<File | null>(null);
   const [momoNote, setMomoNote] = useState<Record<number, string>>({});
 
+  const [claimTxnId, setClaimTxnId] = useState<number | null>(null);
+  const [claimForms, setClaimForms] = useState<Record<number, Record<string, string>>>({});
+  const [claimEvidence, setClaimEvidence] = useState<Record<number, File | null>>({});
+  const [claimReviewNote, setClaimReviewNote] = useState<Record<number, string>>({});
+
   const [shortageForm, setShortageForm] = useState<Record<string, string>>({});
   const [shortageEvidence, setShortageEvidence] = useState<File | null>(null);
   const [submissionNote, setSubmissionNote] = useState('');
@@ -99,6 +104,11 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     tab === 'expenses' && reportId ? `/api/weekly-reports/${reportId}/expenses` : '',
     [tab, reportId]
   );
+  const claims = useFetch<any>(
+    tab === 'officialCosts' && reportId
+      ? `/api/weekly-reports/${reportId}/official-cost-payments` : '',
+    [tab, reportId]
+  );
   const audit = useFetch<any>(
     tab === 'audit' && reportId ? `/api/weekly-reports/${reportId}/audit` : '',
     [tab, reportId]
@@ -114,6 +124,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     });
     setOverrideReason(report.override_reason || '');
     setSubmissionNote('');
+    setClaimTxnId(null);
     setMomoForm((old) => ({ ...old, provider: policy?.momo_providers?.[0] || old.provider || 'momo' }));
     // Reset local declarations only when a different report/version is loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,6 +147,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
       if (tab === 'transactions') tx.reload();
       if (tab === 'closings') closings.reload();
       if (tab === 'expenses') expenses.reload();
+      if (tab === 'officialCosts') claims.reload();
       if (tab === 'audit') audit.reload();
       if (successKey) setNotice(t(successKey));
       onChanged?.();
@@ -243,6 +255,128 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     await run(`/api/weekly-reports/${reportId}/review`, {
       method: 'POST', body: { action, momo_id: id, note: momoNote[id] || undefined },
     }, 'ui.label.reviewRecorded');
+  }
+
+  function claimFormValue(txnId: number, key: string): string {
+    const fallback: Record<string, string> = {
+      personal_payment: 'yes',
+      provider: policy?.momo_providers?.[0] || 'momo',
+    };
+    return claimForms[txnId]?.[key] ?? fallback[key] ?? '';
+  }
+
+  function patchClaimForm(txnId: number, key: string, value: string) {
+    setClaimForms((old) => ({
+      ...old,
+      [txnId]: { ...(old[txnId] || {}), [key]: value },
+    }));
+  }
+
+  function openClaimForm(txnId: number) {
+    if (!claimForms[txnId]) {
+      setClaimForms((old) => ({
+        ...old,
+        [txnId]: {
+          personal_payment: 'yes',
+          provider: policy?.momo_providers?.[0] || 'momo',
+        },
+      }));
+    }
+    setClaimTxnId(txnId);
+  }
+
+  async function submitCostClaim(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editable || !claimTxnId) return;
+    const personal = claimFormValue(claimTxnId, 'personal_payment') !== 'no';
+    const amount = Number(claimFormValue(claimTxnId, 'amount'));
+    const reference = (claimFormValue(claimTxnId, 'reference') || '').trim();
+    const senderPhone = (claimFormValue(claimTxnId, 'sender_phone') || '').trim();
+    const source = (calc.transactions || []).find((row: any) => row.id === claimTxnId);
+    if (personal) {
+      if (!Number.isFinite(amount) || amount <= 0
+        || (source && Number(source.official_cost) > 0 && amount > Number(source.official_cost))) {
+        setActionError(t('error.claim_invalid_amount'));
+        return;
+      }
+      if (reference.length < 4) {
+        setActionError(t('error.claim_reference_required'));
+        return;
+      }
+      if (!senderPhone) {
+        setActionError(t('error.claim_sender_required'));
+        return;
+      }
+      const evidence = claimEvidence[claimTxnId];
+      if (!evidence) {
+        setActionError(t('error.claim_evidence_required'));
+        return;
+      }
+      const ext = evidence.name.split('.').pop()?.toLowerCase() || '';
+      if (!EVIDENCE_TYPES.includes(ext)) {
+        setActionError(t('ui.error.evidenceType'));
+        return;
+      }
+      if (evidence.size > 10 * 1024 * 1024) {
+        setActionError(t('ui.error.evidenceSize'));
+        return;
+      }
+    }
+    const data = new FormData();
+    data.set('transaction_id', String(claimTxnId));
+    data.set('personal_payment', personal ? 'true' : 'false');
+    data.set('notes', claimFormValue(claimTxnId, 'notes'));
+    if (personal) {
+      data.set('amount', String(amount));
+      data.set('provider', claimFormValue(claimTxnId, 'provider'));
+      data.set('reference', reference);
+      data.set('sender_phone', senderPhone);
+      data.set('paid_at', claimFormValue(claimTxnId, 'paid_at'));
+      const evidence = claimEvidence[claimTxnId];
+      if (evidence) data.set('evidence', evidence);
+    }
+    const result = await run(`/api/weekly-reports/${reportId}/official-cost-payments`,
+      { method: 'POST', formData: data }, 'ui.label.costPaymentRecorded');
+    if (result) {
+      const id = claimTxnId;
+      setClaimForms((old) => {
+        const next = { ...old };
+        delete next[id];
+        return next;
+      });
+      setClaimEvidence((old) => {
+        const next = { ...old };
+        delete next[id];
+        return next;
+      });
+      setClaimTxnId(null);
+    }
+  }
+
+  async function removeCostClaim(id: number) {
+    await run(`/api/weekly-reports/${reportId}/official-cost-payments/${id}`,
+      { method: 'DELETE' }, 'ui.label.costPaymentRemoved');
+  }
+
+  async function reviewClaim(id: number, action: 'verify_cost_payment' | 'reject_cost_payment') {
+    if (action === 'reject_cost_payment' && !(claimReviewNote[id] || '').trim()) {
+      setActionError(t('ui.error.required'));
+      return;
+    }
+    await run(`/api/weekly-reports/${reportId}/review`, {
+      method: 'POST', body: { action, claim_id: id, note: claimReviewNote[id] || undefined },
+    }, 'ui.label.reviewRecorded');
+  }
+
+  async function downloadCostEvidence(claim: any) {
+    try {
+      await downloadFile(
+        `/api/weekly-reports/${reportId}/official-cost-payments/${claim.id}/evidence`,
+        claim.evidence_name || 'evidence'
+      );
+    } catch (e: any) {
+      setActionError(weeklyErrorMessage(e, t));
+    }
   }
 
   async function reviewAction(action: 'request_correction' | 'approve' | 'reject') {
@@ -732,6 +866,240 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     );
   }
 
+  function renderOfficialCosts() {
+    const items: any[] = claims.data?.items || [];
+    const claimByTxn = new Map<number, any>(items.map((item) => [Number(item.transaction_id), item]));
+    const transactions: any[] = (calc.transactions || [])
+      .filter((row: any) => Number(row.official_cost) > 0);
+    const unclaimed = transactions.filter((row: any) => !claimByTxn.has(Number(row.id)));
+    const isPersonal = claimTxnId !== null && claimFormValue(claimTxnId, 'personal_payment') !== 'no';
+    return (
+      <div>
+        <div className="alert alert-info py-2 small">
+          <i className="bi bi-info-circle me-2" />{t('ui.label.costPaymentNote')}
+        </div>
+        <SectionState loading={claims.loading} error={claims.error} onRetry={claims.reload} />
+        {feedback()}
+        {editable && unclaimed.length > 0 && (
+          <div className="card mb-3">
+            <div className="card-header py-2 small fw-semibold">{t('action.addCostPayment')}</div>
+            <div className="card-body">
+              <div className="row g-3">
+                <div className="col-12">
+                  <Field label={t('ui.label.transaction')} required>
+                    <SelectInput value={claimTxnId ?? ''}
+                      onChange={(e) => e.target.value
+                        ? openClaimForm(Number(e.target.value)) : setClaimTxnId(null)}>
+                      <option value="">{t('ui.label.selectCostTransaction')}</option>
+                      {unclaimed.map((row: any) => (
+                        <option key={row.id} value={row.id}>
+                          {row.transaction_number} · {fmtMoney(row.official_cost)}
+                          {row.client_name ? ` · ${row.client_name}` : ''}
+                        </option>
+                      ))}
+                    </SelectInput>
+                  </Field>
+                </div>
+                {claimTxnId !== null && (
+                  <>
+                    <div className="col-md-6">
+                      <Field label={t('field.personalPayment')} required>
+                        <SelectInput value={claimFormValue(claimTxnId, 'personal_payment')}
+                          onChange={(e) => patchClaimForm(claimTxnId, 'personal_payment', e.target.value)}>
+                          <option value="yes">{t('ui.label.personalPaymentYes')}</option>
+                          <option value="no">{t('ui.label.personalPaymentNo')}</option>
+                        </SelectInput>
+                      </Field>
+                    </div>
+                    {isPersonal && (
+                      <>
+                        <div className="col-md-3">
+                          <Field label={t('field.paymentProvider')} required>
+                            <SelectInput value={claimFormValue(claimTxnId, 'provider')}
+                              onChange={(e) => patchClaimForm(claimTxnId, 'provider', e.target.value)}>
+                              {(policy?.momo_providers || ['momo', 'bank_transfer', 'cash_deposit']).map((p: string) => (
+                                <option key={p} value={p}>
+                                  {t(`ui.provider.${p}`) !== `ui.provider.${p}` ? t(`ui.provider.${p}`) : p}
+                                </option>
+                              ))}
+                            </SelectInput>
+                          </Field>
+                        </div>
+                        <div className="col-md-3">
+                          <Field label={t('field.personalPaidAmount')} required>
+                            <TextInput type="number" step="0.01" min="0.01"
+                              value={claimFormValue(claimTxnId, 'amount')}
+                              onChange={(e) => patchClaimForm(claimTxnId, 'amount', e.target.value)} />
+                          </Field>
+                        </div>
+                        <div className="col-md-3">
+                          <Field label={t('field.reference')} required>
+                            <TextInput value={claimFormValue(claimTxnId, 'reference')}
+                              onChange={(e) => patchClaimForm(claimTxnId, 'reference', e.target.value)} />
+                          </Field>
+                        </div>
+                        <div className="col-md-3">
+                          <Field label={t('field.paidAt')}>
+                            <TextInput type="datetime-local" value={claimFormValue(claimTxnId, 'paid_at')}
+                              onChange={(e) => patchClaimForm(claimTxnId, 'paid_at', e.target.value)} />
+                          </Field>
+                        </div>
+                        <div className="col-md-4">
+                          <Field label={t('field.senderPhone')} required>
+                            <TextInput value={claimFormValue(claimTxnId, 'sender_phone')}
+                              onChange={(e) => patchClaimForm(claimTxnId, 'sender_phone', e.target.value)} />
+                          </Field>
+                        </div>
+                        <div className="col-md-8">
+                          <Field label={t('field.evidence')} hint={t('ui.label.evidenceHelp')} required>
+                            <TextInput type="file" accept=".pdf,.png,.jpg,.jpeg,.webp"
+                              onChange={(e) => setClaimEvidence((old) => ({
+                                ...old, [claimTxnId as number]: e.target.files?.[0] || null,
+                              }))} />
+                          </Field>
+                        </div>
+                      </>
+                    )}
+                    <div className="col-12">
+                      <Field label={t('field.notes')}>
+                        <TextArea value={claimFormValue(claimTxnId, 'notes')}
+                          onChange={(e) => patchClaimForm(claimTxnId, 'notes', e.target.value)} />
+                      </Field>
+                    </div>
+                    <div className="col-12 d-flex gap-2">
+                      <button type="button" className="btn btn-sm btn-primary" disabled={busy}
+                        onClick={submitCostClaim}>{t('action.addCostPayment')}</button>
+                      <button type="button" className="btn btn-sm btn-outline-secondary"
+                        onClick={() => setClaimTxnId(null)}>{t('ui.label.cancel')}</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        {!claims.loading && !claims.error && transactions.length === 0 && (
+          <EmptyState message={t('ui.list.empty')} />
+        )}
+        {transactions.length > 0 && (
+          <div className="table-responsive">
+            <table className="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>{t('ui.label.transaction')}</th>
+                  <th>{t('ui.label.date')}</th>
+                  <th>{t('field.costPaymentStatus')}</th>
+                  <th className="text-end">{t('ui.label.cost')}</th>
+                  <th>{t('field.personalPayment')}</th>
+                  <th className="text-end">{t('field.personalPaidAmount')}</th>
+                  <th>{t('field.officialCostPaymentStatus')}</th>
+                  <th>{t('ui.label.costPaymentSummary')}</th>
+                  <th className="text-end">{t('ui.label.deductibleAmount')}</th>
+                  <th>{t('ui.label.actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((row: any) => {
+                  const claim = claimByTxn.get(Number(row.id));
+                  const verified = !!claim && claim.personal_payment
+                    && claim.verification_status === 'verified';
+                  return (
+                    <tr key={row.id}>
+                      <td className="small fw-semibold">{row.transaction_number || row.id}</td>
+                      <td className="small">{fmtDate(row.date)}</td>
+                      <td><WeeklyBadge status={row.payment_status} /></td>
+                      <td className="text-end small">{fmtMoney(row.official_cost)}</td>
+                      <td className="small">
+                        {!claim ? t('status.not_claimed')
+                          : claim.personal_payment ? t('ui.label.personalPaymentYes')
+                            : t('ui.label.personalPaymentNo')}
+                      </td>
+                      <td className="text-end small">
+                        {!claim ? '—'
+                          : claim.personal_payment ? fmtMoney(claim.amount)
+                            : t('status.not_applicable')}
+                      </td>
+                      <td><WeeklyBadge status={claim?.verification_status || 'not_claimed'} /></td>
+                      <td className="small">
+                        {!claim ? <span className="text-muted">{t('ui.label.none')}</span> : (
+                          <div>
+                            <div>{t(`ui.provider.${claim.provider}`) !== `ui.provider.${claim.provider}`
+                              ? t(`ui.provider.${claim.provider}`) : claim.provider}</div>
+                            <div className="fw-semibold">{claim.reference}</div>
+                            <div>{claim.sender_phone || t('ui.label.none')} · {fmtDateTime(claim.paid_at)}</div>
+                            {claim.is_partial && <div>{t('ui.label.partialPayment')}</div>}
+                            {claim.evidence_path && (
+                              <button type="button" className="btn btn-link btn-sm p-0"
+                                onClick={() => downloadCostEvidence(claim)}
+                                title={claim.evidence_name || ''}>
+                                <i className="bi bi-paperclip me-1" />{t('ui.label.download')}
+                              </button>
+                            )}
+                            {claim.notes && <div className="text-muted">{claim.notes}</div>}
+                            {claim.verification_note && (
+                              <div className="text-muted">
+                                <strong>{t('ui.label.costVerificationNote')}:</strong> {claim.verification_note}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="text-end small">{fmtMoney(verified ? claim.amount : 0)}</td>
+                      <td className="small">
+                        <div className="d-flex flex-wrap gap-1">
+                          {editable && !claim && (
+                            <button type="button" className="btn btn-sm btn-outline-primary"
+                              disabled={busy} onClick={() => openClaimForm(Number(row.id))}>
+                              {t('action.addCostPayment')}
+                            </button>
+                          )}
+                          {editable && claim && (
+                            <button type="button" className="btn btn-sm btn-outline-danger"
+                              disabled={busy} onClick={() => removeCostClaim(claim.id)}>
+                              {t('ui.label.remove')}
+                            </button>
+                          )}
+                          {canReview && reviewable && claim && (
+                            <div className="w-100 mt-1">
+                              <TextInput aria-label={t('ui.label.costVerificationNote')}
+                                className="form-control-sm mb-1"
+                                value={claimReviewNote[claim.id] || ''}
+                                placeholder={t('field.notes')}
+                                onChange={(e) => setClaimReviewNote({
+                                  ...claimReviewNote, [claim.id]: e.target.value,
+                                })} />
+                              <div className="d-flex gap-1">
+                                <button type="button" className="btn btn-sm btn-outline-success"
+                                  disabled={busy || !claim.personal_payment}
+                                  onClick={() => reviewClaim(claim.id, 'verify_cost_payment')}>
+                                  {t('action.verifyCost')}
+                                </button>
+                                <button type="button" className="btn btn-sm btn-outline-danger"
+                                  disabled={busy}
+                                  onClick={() => reviewClaim(claim.id, 'reject_cost_payment')}>
+                                  {t('action.rejectCost')}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="alert alert-secondary py-2 small mt-3 mb-0">
+          {t('ui.label.costPaymentSummary')}: <strong>{items.length}</strong> ·{' '}
+          {t('field.personalPaidAmount')}: <strong>{fmtMoney(claims.data?.verified_total)}</strong>.{' '}
+          {t('ui.label.verifiedTotal')}
+        </div>
+      </div>
+    );
+  }
+
   function renderMomo() {
     const submissions = report?.momo_submissions || report?.calculation?.momo_submissions || [];
     return (
@@ -1145,6 +1513,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     transactions: renderTransactions,
     closings: renderClosings,
     expenses: renderExpenses,
+    officialCosts: renderOfficialCosts,
     momo: renderMomo,
     shortage: renderShortage,
     review: renderReview,

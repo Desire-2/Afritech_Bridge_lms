@@ -232,6 +232,11 @@ TRANSACTION_FINANCIAL_FIELDS = (
     'official_cost', 'customer_price', 'commission_rate_used', 'commission_source',
     'gross_profit', 'commission_amount', 'company_profit',
     'payment_method_id', 'is_cash', 'payments',
+    # Weekly personal official-cost claim fields are money data too: a viewer
+    # with only operational transaction access must never receive them.
+    'cost_payment_claim_id', 'official_cost_payment_status', 'personal_payment',
+    'personal_payment_amount', 'personal_payment_reference',
+    'personal_payment_evidence_name', 'personal_payment_note',
 )
 
 # Fields of ``Service.to_dict()`` that carry cost, price or commission rate.

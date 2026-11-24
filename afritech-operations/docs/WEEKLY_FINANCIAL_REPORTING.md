@@ -19,6 +19,7 @@ existing operational records:
 | prior approved `WeeklyReport` | opening outstanding / carry-forward |
 | `WeeklyReportAdjustment` | authorised receipts, provider payments, refunds, outflows, retained commission, outstanding corrections/waivers |
 | `MoMoSubmission` | agent-reported and reviewer-verified money transfers |
+| `OfficialCostPayment` | claims that an official cost was personally paid by the agent from her own MoMo/phone |
 
 `triage_daily_totals()` from `app/routes/closings.py` is reused for daily
 transaction/collection/cost arithmetic so the weekly report and daily-closing
@@ -32,21 +33,23 @@ the ineligible list (`cancelled`, `failed`, `refunded`, `reversed`, `unpaid`,
 ## 2. Week, deadline and late policy
 
 All date logic is centralised in `app/services/weekly_policy.py`; no route or
-service computes a week boundary inline.
+service computes a week boundary inline. The legal period is fixed to
+**Sunday 00:00:00 through Saturday 23:59:59.999 in `Africa/Kigali`**. The
+`week_start_weekday`, `week_end_weekday` and `submission_weekday` settings are
+read for backwards compatibility but forced by the service to `6` (Sunday),
+`5` (Saturday) and `6` (Sunday after the close), so a stale settings row cannot
+move the period back to the old Saturday–Friday rule.
 
-Default settings (overridable through the `settings` table with the
-`weekly_reporting.` prefix):
-
-| Setting | Default | Meaning |
+| Setting | Effective value | Meaning |
 | --- | --- | --- |
-| `week_start_weekday` | `5` (Saturday) | Reporting week start |
-| `week_end_weekday` | `4` (Friday) | Reporting week end |
-| `submission_weekday` | `5` | Deadline day after week end |
-| `deadline_time` | `17:00` | Local deadline time |
+| `week_start_weekday` | `6` (Sunday) | Fixed reporting week start |
+| `week_end_weekday` | `5` (Saturday) | Fixed reporting week end |
+| `submission_weekday` | `6` (Sunday) | Fixed submission/generation day after the close |
+| `deadline_time` | `17:00` | Local deadline time on the Sunday after the week closes |
 | `timezone` | `Africa/Kigali` | Business timezone; falls back to global `timezone` setting |
 | `late_policy` | `allow_flagged` | `allow_flagged` or `block` |
 | `allow_override` | `true` | Whether shortage/missing-closing overrides are accepted |
-| `deduct_verified_service_costs` | `true` | Fully paid service costs reduce remittance |
+| `deduct_verified_service_costs` | `true` | Verified agent-funded service costs reduce remittance |
 | `commission_retained` | `false` | Commission reduces cash due only when explicitly configured |
 | `collection_funded_payment_methods` | `cash` | Expense payment methods that reduce remittance |
 | `eligible_transaction_statuses` | `completed` | Transaction statuses that count |
@@ -54,8 +57,12 @@ Default settings (overridable through the `settings` table with the
 | `shortage_requires_evidence` | `true` | Evidence mandatory for explained shortages |
 | `statement_items` | `21` | Number of statement lines in exports |
 
-The deadline is stored as an aware UTC `due_at` on each report while the report
-keeps its business `timezone_name`. Historical weeks are available through
+`require_week_start()` rejects any report whose `week_start` is not a Sunday;
+`week_window()` and `in_week()` are the only boundary helpers used by services
+and schedulers. The deadline is stored as an aware UTC `due_at` on each report
+while the report keeps its business `timezone_name`. A scheduler run on Sunday
+creates and reminds for the **completed** Sunday–Saturday week, not the week that
+has just begun. Historical weeks are available through
 `GET /api/weekly-reports/weeks` (current, previous and 11 older weeks by default).
 
 ## 3. Reconciliation formula
@@ -80,9 +87,15 @@ Important rules:
 - `commission_earned` is always calculated as the existing 20% × gross profit
   rule and displayed separately. It is **not** cash due unless
   `commission_retained` is explicitly enabled.
-- Service costs are shown with payment status. They are deducted as verified
-  provider payments only when fully paid and `deduct_verified_service_costs`
-  is enabled; an audited `provider_payment` adjustment can add others.
+- Official service costs are always shown in full. A cost reduces remittance
+  only when a dedicated `OfficialCostPayment` claim says the agent paid it from
+  her own MoMo/phone **and** a reviewer marks that claim `verified`. Customer
+  payment status is never evidence of this: `paid`, `partially_paid` and unpaid
+  costs all contribute zero unless they have a verified personal claim. Company
+  paid, other-source, unverified and rejected claims contribute zero. Partial
+  personal payments deduct only the verified amount, never the full cost.
+  An audited `provider_payment` adjustment remains a separate, explicit way to
+  record other provider payments.
 - Only `approved`/`paid` expenses whose payment method is collection-funded are
   deducted. Each expense is linked once through `WeeklyReportExpense`; the
   unique constraint `uq_weekly_expense_once` prevents double deduction in
@@ -96,13 +109,16 @@ Important rules:
   so it is never added twice.
 
 The frozen submission stores both the full payload (`snapshot`) and the active
-overlay (`calculation`). Reviewer verification and adjustments are reapplied to
-the snapshot base exactly once, so source-table edits after submission cannot
-silently rewrite a locked report. An adjustment's `original_amount →
-adjusted_amount` is treated as a **delta**, never as a second absolute amount
-added on top of a source total. `GET /{id}` and both export formats are
-read-only: they derive the response from the snapshot plus current overlays
-without writing the recalculated values back to the database.
+overlay (`calculation`). Source collection/cost facts stay frozen; reviewer
+verification, rejection notes, MoMo verification, official-cost claims and
+adjustments are reapplied to the snapshot base exactly once. The separate
+`pre_personal_cost_expected` component preserves the source base so a cost claim
+verified after submission can change the expected remittance without rewriting
+the frozen source rows or silently re-approving the report. An adjustment's
+`original_amount → adjusted_amount` is treated as a **delta**, never as a second
+absolute amount added on top of a source total. `GET /{id}` and both export
+formats are read-only: they derive the response from the snapshot plus current
+overlays without writing the recalculated values back to the database.
 
 ## 4. Daily closings, expenses and shortage declarations
 
@@ -123,6 +139,38 @@ client-supplied MoMo `submitted_at` must fall inside the reported week or before
 its stored deadline; short phone numbers are masked down to the last three
 digits (or completely when three digits or fewer) in every serialized response.
 
+### 4.1 Official cost personal-payment claims
+
+An `OfficialCostPayment` is a separate claim record; it is never written into a
+customer `Payment` row and never into a report-level `MoMoSubmission`. The
+Service Agent submits one claim per in-week service transaction through
+`POST /{id}/official-cost-payments` while the report is editable. Each claim
+captures:
+
+- the source customer payment status (informational only), official cost and
+  transaction link;
+- `personal_payment` yes/no;
+- when yes: the amount personally paid (`0 < amount ≤ official_cost`),
+  `is_partial`, provider (`momo`, `bank_transfer`, `cash_deposit`), reference,
+  payment date/time within the Sunday–Saturday window, sender phone, evidence
+  file and notes;
+- when no: a zero-amount audit record with no evidence requirement and no
+  possible deduction;
+- reviewer `pending`/`verified`/`rejected` status, verifier, timestamp and note.
+
+Evidence is mandatory for a personal claim and is validated for type/size by the
+existing upload helper. The raw sender phone is never serialized: responses
+contain only a masked value. A unique `(report_id, transaction_id)` constraint
+prevents two claims for one cost, and a unique
+`provider:reference:sender` `reference_key` prevents the same transfer being
+reused. Claims can be deleted only while editable; the evidence download route
+is audited and respects report ownership/branch scope.
+
+After submission, a reviewer uses `POST /{id}/review` with
+`verify_cost_payment` or `reject_cost_payment`. A rejection needs a reason, and
+a negative personal-payment answer cannot be verified for deduction. Both
+decisions write audit rows and notify the agent; submission notifies reviewers.
+
 ## 5. Workflow and state machine
 
 States: `draft`, `ready_for_submission`, `submitted`,
@@ -140,6 +188,9 @@ Review actions (`POST /api/weekly-reports/{id}/review`):
 - `verify_momo` / `reject_momo` — moves `submitted` to `under_financial_review`,
   records verifier, note and timestamp; only verified transfers count as money
   submitted.
+- `verify_cost_payment` / `reject_cost_payment` — records verifier, note and
+  timestamp for an official-cost claim. Only verified personal claims reduce
+  expected remittance; rejection requires a reason.
 - `request_correction` — returns the report with a mandatory reason.
 - `approve` — computes the final carry-forward and approval audit.
 - `reject` — requires a reason.
@@ -163,8 +214,10 @@ New restricted permission family (never granted to `company_secretary`):
 | `weekly_reports.export` | ✓ | ✓ | ✓ | ✓ |
 | `weekly_reports.manage` | — | ✓ | — | ✓ |
 
-- Service Agents see only their own reports; every detail/update/submit/MoMo
-  route rechecks ownership server-side.
+- Service Agents see only their own reports; every detail/update/submit/MoMo/
+  official-cost route rechecks ownership server-side. Only the report owner may
+  add or delete a cost claim; reviewers may read claims and evidence and decide
+  verification.
 - Managers are branch-scoped on lists, queue, detail, generation, overrides and
   reviewer notifications; a Manager in another branch is not told about the
   report (including its shortage amount). Accountants and Super Admins are
@@ -195,6 +248,10 @@ Base path: `/api/weekly-reports`
 | GET | `/{id}/transactions` | Filtered, paginated underlying transactions |
 | GET | `/{id}/daily-closings` | Per-day rows, missing list, override |
 | GET | `/{id}/expenses` | Eligible expense rows |
+| GET | `/{id}/official-cost-payments` | Claim list with verified total |
+| POST | `/{id}/official-cost-payments` | Add a personal official-cost claim with evidence |
+| DELETE | `/{id}/official-cost-payments/{claim_id}` | Remove a claim while editable |
+| GET | `/{id}/official-cost-payments/{claim_id}/evidence` | Download claim evidence (audited) |
 | POST | `/{id}/momo` | Add transfer with optional evidence |
 | DELETE | `/{id}/momo/{submission_id}` | Remove transfer while editable |
 | GET | `/{id}/evidence` | Download shortage evidence (audited) |
@@ -202,7 +259,7 @@ Base path: `/api/weekly-reports`
 | POST | `/{id}/missing-closings/override` | Acknowledge missing closings |
 | POST | `/{id}/review` | Verify/reject/return/approve/reject |
 | POST | `/{id}/adjustments` | Audited adjustment + allocation |
-| GET | `/{id}/audit` | Report and MoMo audit history |
+| GET | `/{id}/audit` | Report, MoMo, official-cost claim and adjustment audit history |
 | GET | `/{id}/export?format=pdf\|xlsx&lang=en\|rw` | Bilingual export |
 
 ## 8. Exports
@@ -214,9 +271,9 @@ locked `calculation` used on screen:
 2. Opening outstanding balance brought forward
 3. Eligible transaction count
 4. Customer collections from eligible transactions
-5. Official service costs and payment status
+5. Official service costs with customer payment status and personal-cost claim status
 6. Authorized receipts during the week
-7. Verified service/provider payments
+7. Verified agent-funded service/provider payments (verified personal claims only)
 8. Approved collection-funded expenses
 9. Authorized refunds
 10. Other approved cash outflows
@@ -232,6 +289,11 @@ locked `calculation` used on screen:
 20. Outstanding balance carried forward with allocation history
 21. Workflow state, approvals, adjustments and audit trail
 
+Both PDF and XLSX also include an official-cost detail table with the source
+customer status, personal-payment answer, verified amount, provider, reference,
+payment date/time, evidence name and reviewer note. Only the verified deductible
+amount is treated as money; user-authored text is XML/PDF escaped.
+
 `lang=en|rw` translates report headers, statement labels, statuses and table
 headings. User-authored text is copied verbatim and never translated.
 
@@ -240,14 +302,18 @@ headings. User-authored text is copied verbatim and never translated.
 Weekly notification types are registered in `app/services/notifications.py`
 with severity, UI label and permission gate: generated, due, late, submitted,
 submission acknowledgement, returned, approved, rejected, shortage, MoMo
-verified and override requested. Where a user locale is not stored, messages
-are sent in both English and Kinyarwanda (`weekly_i18n.bilingual()`).
+verified, cost-payment submitted, cost-payment verified and override requested.
+The two cost-payment events are permission-gated like every other weekly event,
+so Company Secretary never receives claim amounts or references. Where a user
+locale is not stored, messages are sent in both English and Kinyarwanda
+(`weekly_i18n.bilingual()`).
 
 `app/services/automation.py` adds three rules:
 
 - `weekly_report_generation_alert` — idempotently creates one report per service
-  agent on the configured submission day.
-- `weekly_report_due_alert` — reminds agents before the deadline.
+  agent on the Sunday submission day for the **completed** Sunday–Saturday week.
+- `weekly_report_due_alert` — reminds agents for that same completed week before
+  the Sunday 17:00 deadline.
 - `weekly_report_late_alert` — transitions overdue drafts to `late` through the
   audited workflow and notifies the agent and reviewers.
 
@@ -278,7 +344,17 @@ Migration `f7c9a4d2e8b1` (`down_revision = a1c9d47e52f6`) is additive:
   is deliberately absent; re-running the seed is a no-op, and downgrade removes
   only this weekly family and its links.
 
-No existing table or row is dropped or rewritten during upgrade.
+Migration `c2f8a7d41b90` (`down_revision = f7c9a4d2e8b1`) adds the
+`weekly_official_cost_payments` table and its unique/reference indexes, forces
+the Sunday–Saturday settings, and repairs **only editable** periods: a legacy
+Saturday start moves to the following Sunday so the same working days stay in
+scope, its deadline moves to Sunday 17:00, and its cached calculation is cleared
+for recalculation. Already-submitted and approved reports keep their frozen
+periods, calculations and snapshots. Every repair writes an audit row. Downgrade
+drops only the claim table and its indexes.
+
+No existing table or row is dropped during upgrade; historical snapshots are
+never silently rewritten.
 
 ## 12. Verification
 
@@ -286,12 +362,19 @@ Recommended checks:
 
 ```bash
 cd backend
-python3 -m pytest -q tests/test_weekly_reports.py \
-  tests/test_weekly_permissions_migration.py tests/test_roles_permissions.py \
-  tests/test_notifications.py tests/test_closings.py
-python3 -m pytest -q tests
-python3 -m compileall -q app migrations/versions/f7c9a4d2e8b1_weekly_financial_reports.py
-cd ../frontend && npm run build
+venv/bin/python -m pytest -q tests/test_weekly_reports.py \
+  tests/test_weekly_permissions_migration.py
+venv/bin/python -m pytest -q tests
+venv/bin/python -m compileall -q app \
+  migrations/versions/f7c9a4d2e8b1_weekly_financial_reports.py \
+  migrations/versions/c2f8a7d41b90_sunday_week_and_personal_cost_payments.py
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db upgrade
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db downgrade f7c9a4d2e8b1
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db upgrade c2f8a7d41b90
+cd ../frontend && npm run build && npx tsc --noEmit
 ```
 
 The focused weekly test module covers generation idempotency, calculation
@@ -300,7 +383,14 @@ auditing, RBAC/Company Secretary denial, notifications, bilingual exports and
 the review fixes (PDF escaping, savepoint-safe generation, branch-scoped
 reviewer alerts, locked-report overrides, evidence orphan prevention, deleted
 transfer overlays, read-only GETs, delta adjustments, MoMo date validation and
-all 21 bilingual rows in both PDF and XLSX exports).
+all 21 bilingual rows in both PDF and XLSX exports). It also proves the
+Sunday–Saturday boundaries/deadline helper, the scheduler's completed-week
+selection, that only verified own-funds claims (including partial amounts)
+reduce remittance, duplicate and evidence validation, bilingual export of the
+claim/reference/provider/date/evidence/reviewer fields with masked phone
+numbers, and a continuous generate → claim → submit → verify cost → verify MoMo
+→ approve → export flow that preserves the approved snapshot and audit trail.
 `tests/test_weekly_permissions_migration.py` proves an existing installation
-gains the restricted permission family on upgrade and loses only that family on
-downgrade.
+gains the restricted permission family, repairs only draft/deadline periods and
+preserves submitted/approved snapshots on upgrade, and loses only the weekly
+permission family and claim table on downgrade.

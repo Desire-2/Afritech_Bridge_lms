@@ -7,13 +7,15 @@ from flask import Blueprint, request, jsonify, current_app, send_file
 
 from ..extensions import db
 from ..models import (
-    AuditLog, Employee, MoMoSubmission, Setting, User, WeeklyReport,
-    MOMO_PROVIDERS, SHORTAGE_REASON_CATEGORIES, WEEKLY_REPORT_STATUSES,
+    AuditLog, Employee, MoMoSubmission, OfficialCostPayment, Setting, User,
+    WeeklyReport, MOMO_PROVIDERS, SHORTAGE_REASON_CATEGORIES,
+    WEEKLY_REPORT_STATUSES,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
 from ..services.weekly_policy import (
-    available_weeks, business_timezone, get_policy, week_bounds,
+    WeekPolicyError, available_weeks, business_timezone, get_policy,
+    require_week_start, week_bounds, week_end_for,
 )
 from ..services.weekly_report_service import WeeklyReportService, WeeklyReportError
 from ..services.weekly_i18n import SUPPORTED_LANGUAGES, t
@@ -89,11 +91,12 @@ def policy():
 @bp.get('/weeks')
 @require_any_permission(*VIEW_ANY)
 def weeks():
+    policy = get_policy()
     policy_rows = []
-    for start in available_weeks():
+    for start in available_weeks(policy=policy):
         item = {
             'week_start': start.isoformat(),
-            'week_end': (start + timedelta(days=6)).isoformat(),
+            'week_end': week_end_for(start, policy).isoformat(),
         }
         q = WeeklyReport.query.filter_by(week_start=start)
         user = current_user()
@@ -164,6 +167,11 @@ def generate():
     week_start, err = parse_date(data.get('week_start'), 'week_start')
     if err:
         return err
+    if week_start:
+        try:
+            week_start = require_week_start(week_start)
+        except WeekPolicyError as exc:
+            return json_error(str(exc), 400, 'weekly_report.invalid_week')
     kwargs = {}
     if employee_id:
         try:
@@ -310,6 +318,92 @@ def report_expenses(report_id):
         return err
     calc = service.detail(report, user)['calculation']
     return jsonify({'items': calc.get('expenses', [])})
+
+
+@bp.get('/<int:report_id>/official-cost-payments')
+@require_permission('weekly_reports.view')
+def report_cost_payments(report_id):
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    claims = [c.to_dict() for c in report.cost_payment_claims]
+    verified_total = sum(
+        (Decimal(str(c['amount'])) for c in claims
+         if c['personal_payment'] and c['verification_status'] == 'verified'),
+        Decimal('0'),
+    )
+    return jsonify({
+        'items': claims,
+        'total': len(claims),
+        # Keep the same two-decimal money format as every other report amount.
+        'verified_total': str(verified_total.quantize(Decimal('0.01'))),
+    })
+
+
+@bp.post('/<int:report_id>/official-cost-payments')
+@require_permission('weekly_reports.submit')
+def add_cost_payment(report_id):
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    emp = current_employee()
+    if not emp or report.employee_id != emp.id:
+        return json_error('You can only add cost evidence to your own report', 403)
+    try:
+        claim = service.add_cost_payment(
+            report, request.form.to_dict() or parse_json(), user,
+            evidence=request.files.get('evidence'))
+        db.session.commit()
+    except WeeklyReportError as exc:
+        db.session.rollback()
+        return _error(exc)
+    return jsonify({'message': 'Official cost payment recorded',
+                    'claim': claim.to_dict(), 'report': service.detail(report, user)}), 201
+
+
+@bp.delete('/<int:report_id>/official-cost-payments/<int:claim_id>')
+@require_permission('weekly_reports.submit')
+def delete_cost_payment(report_id, claim_id):
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    emp = current_employee()
+    if not emp or report.employee_id != emp.id:
+        return json_error('You can only change your own report', 403)
+    claim = OfficialCostPayment.query.filter_by(id=claim_id, report_id=report.id).first()
+    if not claim:
+        return json_error('Official cost payment not found', 404)
+    try:
+        service.delete_cost_payment(report, claim, user)
+        db.session.commit()
+    except WeeklyReportError as exc:
+        db.session.rollback()
+        return _error(exc)
+    return jsonify({'message': 'Official cost payment removed'})
+
+
+@bp.get('/<int:report_id>/official-cost-payments/<int:claim_id>/evidence')
+@require_permission('weekly_reports.view')
+def download_cost_payment_evidence(report_id, claim_id):
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    claim = OfficialCostPayment.query.filter_by(id=claim_id, report_id=report.id).first()
+    if not claim or not claim.evidence_path:
+        return json_error('No cost payment evidence was uploaded', 404)
+    path = os.path.join(current_app.config['UPLOAD_FOLDER'],
+                        claim.evidence_path.replace('/uploads/', ''))
+    if not os.path.isfile(path):
+        return json_error('Evidence file is missing', 410)
+    audit('weekly_cost_payment_evidence_downloaded',
+          'weekly_official_cost_payment', claim.id,
+          new_value={'file': claim.evidence_name}, user=user)
+    return send_file(path, as_attachment=True,
+                     download_name=claim.evidence_name or 'evidence')
 
 
 @bp.post('/<int:report_id>/momo')
@@ -509,6 +603,15 @@ def review(report_id):
             service.verify_momo(report, submission,
                                 'verified' if action == 'verify_momo' else 'rejected',
                                 user, data.get('note'))
+        elif action in ('verify_cost_payment', 'reject_cost_payment'):
+            claim = OfficialCostPayment.query.filter_by(
+                id=data.get('claim_id'), report_id=report.id).first()
+            if not claim:
+                return json_error('Official cost payment not found', 404)
+            service.verify_cost_payment(
+                report, claim,
+                'verified' if action == 'verify_cost_payment' else 'rejected',
+                user, data.get('note'))
         elif action == 'request_correction':
             if not (data.get('reason') or '').strip():
                 return json_error('A correction reason is required', 400,
@@ -551,12 +654,15 @@ def audit_history(report_id):
     if err:
         return err
     momo_ids = [m.id for m in report.momo_submissions]
+    claim_ids = [c.id for c in report.cost_payment_claims]
     adjustment_ids = [a.id for a in report.adjustments]
     rows = (AuditLog.query
             .filter(db.or_(
                 db.and_(AuditLog.entity == 'weekly_report', AuditLog.entity_id == str(report.id)),
                 db.and_(AuditLog.entity == 'weekly_momo_submission',
                         AuditLog.entity_id.in_([str(i) for i in momo_ids] or ['-1'])),
+                db.and_(AuditLog.entity == 'weekly_official_cost_payment',
+                        AuditLog.entity_id.in_([str(i) for i in claim_ids] or ['-1'])),
                 db.and_(AuditLog.entity == 'weekly_report_adjustment',
                         AuditLog.entity_id.in_([str(i) for i in adjustment_ids] or ['-1'])),
             ))

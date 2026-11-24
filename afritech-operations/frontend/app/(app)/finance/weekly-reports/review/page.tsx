@@ -4,7 +4,8 @@
  * reconciliation dashboard with verification/decision controls. */
 import { useState } from 'react';
 import Link from 'next/link';
-import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/api';
+import { can, fmtDate, fmtDateTime, fmtMoney } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useFetch } from '@/lib/use-fetch';
 import { P } from '@/lib/permissions';
 import { EmptyState, ErrorAlert, Loading, PageHeader, Pagination } from '@/components/ui';
@@ -16,6 +17,7 @@ import { WeeklyBadge, weeklyErrorMessage, weeklyPaginationLabels } from '@/compo
 const REVIEW_STATUSES = ['submitted', 'under_financial_review', 'returned_for_correction'];
 
 export default function WeeklyReportsReviewPage() {
+  const { user, loading } = useAuth();
   const { t, statusLabel } = useWeeklyI18n();
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
@@ -27,6 +29,11 @@ export default function WeeklyReportsReviewPage() {
     page,
     per_page: 20,
   });
+
+  if (loading) return <Loading label={t('ui.label.loading')} />;
+  if (!can(user, P.weeklyReportsReview)) {
+    return <EmptyState message={t('ui.error.accessDenied')} icon="bi-shield-lock" />;
+  }
 
   return (
     <div>

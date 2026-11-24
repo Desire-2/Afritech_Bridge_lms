@@ -1,6 +1,7 @@
 """Backend-authoritative weekly financial reconciliation workflow."""
 import copy
 import json
+import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -9,16 +10,18 @@ from flask import current_app
 
 from ..extensions import db
 from ..models import (
-    DailyClosing, Employee, Expense, MoMoSubmission, OutstandingAllocation,
-    Payment, PaymentMethod, ServiceTransaction, User, WeeklyReport,
-    WeeklyReportAdjustment, WeeklyReportExpense,
+    DailyClosing, Employee, Expense, MoMoSubmission, OfficialCostPayment,
+    OutstandingAllocation, Payment, PaymentMethod, ServiceTransaction, User,
+    WeeklyReport, WeeklyReportAdjustment, WeeklyReportExpense,
     WEEKLY_REPORT_TRANSITIONS, ADJUSTMENT_KINDS, SHORTAGE_REASON_CATEGORIES,
+    COST_PAYMENT_VERIFICATION_STATUSES, MOMO_PROVIDERS,
 )
 from ..auth.scope import service_agent_employee_ids
 from .audit import audit
 from .weekly_policy import (
     get_policy, period_label, submission_deadline, is_late, money,
-    week_bounds,
+    week_bounds, week_end_for, require_week_start, is_valid_week_start,
+    week_window, in_week, business_timezone,
 )
 from .weekly_i18n import bilingual, t
 
@@ -78,9 +81,9 @@ class WeeklyReportService:
         """Idempotently create the single report for an agent/week."""
         if employee is None:
             raise WeeklyReportError('Employee not found', 'weekly_report.employee_not_found', 404)
-        week_start = week_start or week_bounds()[0]
         policy = get_policy()
-        week_end = week_start + timedelta(days=6)
+        week_start = require_week_start(week_start or week_bounds()[0], policy)
+        week_end = week_end_for(week_start, policy)
 
         existing = WeeklyReport.query.filter_by(
             employee_id=employee.id, week_start=week_start).first()
@@ -191,6 +194,42 @@ class WeeklyReportService:
             Decimal('0'),
         )
 
+    @staticmethod
+    def _cost_claim_view(claim):
+        """Data-only claim view. Phone numbers are masked at the boundary."""
+        if claim is None:
+            return {
+                'id': None, 'personal_payment': None, 'amount': '0.00',
+                'is_partial': False, 'provider': None, 'reference': None,
+                'paid_at': None, 'sender_phone': None, 'evidence_name': None,
+                'notes': None, 'verification_status': 'not_claimed',
+                'verification_note': None,
+            }
+        data = claim.to_dict(include_sensitive=True)
+        return {
+            'id': data['id'],
+            'personal_payment': data['personal_payment'],
+            'amount': _str(data['amount']),
+            'is_partial': data['is_partial'],
+            'provider': data['provider'],
+            'reference': data['reference'],
+            'paid_at': data['paid_at'],
+            'sender_phone': data['sender_phone'],
+            'evidence_name': data['evidence_name'],
+            'notes': data['notes'],
+            'verification_status': data['verification_status'],
+            'verification_note': data['verification_note'],
+        }
+
+    @classmethod
+    def _verified_cost_credit(cls, claim):
+        """Only a personally paid, verified claim can reduce remittance."""
+        if claim is None or not claim.personal_payment:
+            return Decimal('0')
+        if claim.verification_status != 'verified':
+            return Decimal('0')
+        return max(Decimal('0'), _dec(claim.amount))
+
     def build_calculation(self, report):
         """Recompute from source records only. Never called on locked reports."""
         policy = get_policy()
@@ -205,6 +244,12 @@ class WeeklyReportService:
                           ServiceTransaction.transaction_number)
                 .all())
 
+        claims = OfficialCostPayment.query.filter_by(report_id=report.id).all()
+        claims_by_txn = {}
+        for claim in claims:
+            claims_by_txn.setdefault(claim.transaction_id, []).append(claim)
+        claim_rows = [claim.to_dict() for claim in claims]
+
         txn_rows = []
         eligible = []
         collections = Decimal('0')
@@ -214,10 +259,14 @@ class WeeklyReportService:
 
         for txn in txns:
             payment_total = sum((_dec(p.amount) for p in txn.payments), Decimal('0'))
+            # This is the CUSTOMER's payment status. It never proves that the
+            # official cost was paid by the agent from her own phone.
             payment_status = _payment_status(txn, payment_total)
             is_eligible = (txn.status in eligible_statuses
                            and txn.status not in ineligible_statuses
                            and payment_status in ('paid', 'partially_paid'))
+            cost_claim = (claims_by_txn.get(txn.id) or [None])[0]
+            claim_view = self._cost_claim_view(cost_claim)
             row = {
                 'id': txn.id,
                 'transaction_number': txn.transaction_number,
@@ -233,6 +282,13 @@ class WeeklyReportService:
                 'commission_amount': _str(txn.commission_amount),
                 'payment_method': (txn.payment_method.name if txn.payment_method else None),
                 'is_eligible': is_eligible,
+                'cost_payment_claim_id': claim_view['id'],
+                'official_cost_payment_status': claim_view['verification_status'],
+                'personal_payment': claim_view['personal_payment'],
+                'personal_payment_amount': claim_view['amount'],
+                'personal_payment_reference': claim_view['reference'],
+                'personal_payment_evidence_name': claim_view['evidence_name'],
+                'personal_payment_note': claim_view['verification_note'],
             }
             txn_rows.append(row)
             if is_eligible:
@@ -240,8 +296,9 @@ class WeeklyReportService:
                 collections += payment_total
                 service_costs += _dec(txn.official_cost)
                 commission += _dec(txn.commission_amount)
-                if policy['deduct_verified_service_costs'] and payment_status == 'paid':
-                    verified_cost_amount += _dec(txn.official_cost)
+                if policy['deduct_verified_service_costs']:
+                    for claim in claims_by_txn.get(txn.id, []):
+                        verified_cost_amount += self._verified_cost_credit(claim)
 
         # Daily closings: use the existing triage helper rather than a second
         # implementation of daily arithmetic. Missing closings stay `None`.
@@ -339,9 +396,12 @@ class WeeklyReportService:
 
         # Base is deliberately stored so reviewer adjustments can be applied to
         # a locked snapshot without re-reading mutable source tables or being
-        # added twice.
-        base_expected = (_dec(report.opening_outstanding) + collections
-                         - verified_cost_amount - expense_total)
+        # added twice. Personal cost credits are stored separately so a reviewer
+        # can verify/reject them after submission without freezing an incorrect
+        # expected remittance.
+        pre_cost_expected = (_dec(report.opening_outstanding) + collections
+                             - expense_total)
+        base_expected = pre_cost_expected - verified_cost_amount
         expected = (base_expected
                     + adjustment_totals['authorized_receipt']
                     - adjustment_totals['provider_payment']
@@ -374,6 +434,7 @@ class WeeklyReportService:
                 'service_costs': _str(service_costs),
                 'verified_service_costs': _str(verified_cost_amount),
                 'eligible_expense_total': _str(expense_total),
+                'pre_personal_cost_expected': _str(pre_cost_expected),
                 'base_expected_remittance': _str(base_expected),
                 'authorized_receipts': _str(adjustment_totals['authorized_receipt']),
                 'verified_provider_payments': _str(provider_payments),
@@ -402,6 +463,7 @@ class WeeklyReportService:
             },
             'expenses': expense_rows,
             'momo_submissions': momo_rows,
+            'official_cost_payments': claim_rows,
             'adjustments': adjustments,
             'allocations': allocation_rows,
             'declaration': {
@@ -449,13 +511,19 @@ class WeeklyReportService:
         status = (payload['status']['name'] if isinstance(payload.get('status'), dict)
                   else payload.get('status') or workflow.get('status') or '')
 
+        claim_count = len(payload.get('official_cost_payments') or [])
+        verified_claims = sum(
+            1 for row in (payload.get('official_cost_payments') or [])
+            if row.get('personal_payment') and row.get('verification_status') == 'verified'
+        )
         values = [
             _joined(payload['period'].get('label'), payload['agent'].get('name')),
             c['opening_outstanding'],
             str(payload['eligible_transaction_count']),
             c['eligible_collections'],
             _joined(c['service_costs'],
-                    'verified' if _dec(c['verified_service_costs']) > 0 else 'unverified'),
+                    f'agent-paid verified={_str(c["verified_service_costs"])}',
+                    f'claims={verified_claims}/{claim_count}'),
             c['authorized_receipts'],
             c['verified_provider_payments'],
             c['approved_collection_expenses'],
@@ -517,6 +585,49 @@ class WeeklyReportService:
         """Reapply reviewer verification/adjustments to the frozen snapshot."""
         payload = copy.deepcopy(snapshot)
         momo_by_id = {m.id: m for m in report.momo_submissions}
+        claim_by_id = {c.id: c for c in report.cost_payment_claims}
+        verified_cost_amount = Decimal('0')
+
+        # Cost amounts and source payment facts stay frozen in the snapshot;
+        # only the reviewer's verification decision and note are live overlays,
+        # exactly as for MoMo transfers.
+        claim_rows = []
+        claim_ids = set()
+        for row in payload.get('official_cost_payments', []):
+            claim = claim_by_id.get(row.get('id'))
+            if claim is None:
+                continue
+            row['verification_status'] = claim.verification_status
+            row['verified_by'] = claim.verified_by
+            row['verified_at'] = claim.verified_at.isoformat() if claim.verified_at else None
+            row['verification_note'] = claim.verification_note
+            claim_rows.append(row)
+            claim_ids.add(claim.id)
+            verified_cost_amount += self._verified_cost_credit(claim)
+        for extra in report.cost_payment_claims:
+            if extra.id in claim_ids:
+                continue
+            row = extra.to_dict()
+            claim_rows.append(row)
+            claim_ids.add(extra.id)
+            verified_cost_amount += self._verified_cost_credit(extra)
+        payload['official_cost_payments'] = claim_rows
+        claim_by_txn = {}
+        for row in claim_rows:
+            claim_by_txn.setdefault(row.get('transaction_id'), row)
+        for txn_row in payload.get('transactions', []):
+            claim_row = claim_by_txn.get(txn_row.get('id'))
+            view = self._cost_claim_view(
+                next((c for c in report.cost_payment_claims
+                      if claim_row and c.id == claim_row.get('id')), None))
+            txn_row['cost_payment_claim_id'] = view['id']
+            txn_row['official_cost_payment_status'] = view['verification_status']
+            txn_row['personal_payment'] = view['personal_payment']
+            txn_row['personal_payment_amount'] = view['amount']
+            txn_row['personal_payment_reference'] = view['reference']
+            txn_row['personal_payment_evidence_name'] = view['evidence_name']
+            txn_row['personal_payment_note'] = view['verification_note']
+
         momo_reported = Decimal('0')
         momo_verified = Decimal('0')
         live_rows = []
@@ -583,21 +694,32 @@ class WeeklyReportService:
         totals = self._adjustment_totals(payload['adjustments'])
         c = payload.setdefault('components', {})
         policy = payload.get('policy') or get_policy()
-        # Snapshot stores the source-only base; current adjustments are added
-        # once here even if they were recorded after submission.
-        base_expected = _dec(c.get('base_expected_remittance'))
-        if not c.get('base_expected_remittance'):
+        # Snapshot stores source totals before reviewer adjustments. Personal
+        # official-cost credits are a live overlay so verification decisions
+        # recorded after submission are reflected without rewriting source rows.
+        base_expenses = _dec(c.get('eligible_expense_total',
+                                   c.get('approved_collection_expenses')))
+        pre_cost_expected = c.get('pre_personal_cost_expected')
+        if pre_cost_expected is None:
             base_expected = (_dec(c.get('expected_remittance'))
                              - _dec(c.get('authorized_receipts'))
                              + _dec(c.get('verified_provider_payments'))
-                             + _dec(c.get('approved_collection_expenses'))
+                             - _dec(c.get('eligible_expense_total',
+                                          c.get('approved_collection_expenses')))
                              + _dec(c.get('authorized_refunds'))
                              + _dec(c.get('other_outflows'))
                              + _dec(c.get('commission_retained')))
-        base_verified_costs = _dec(c.get('verified_service_costs'))
-        base_expenses = _dec(c.get('eligible_expense_total',
-                                   c.get('approved_collection_expenses')))
-        provider_payments = base_verified_costs + totals['provider_payment']
+            # Older snapshots embedded the old payment-status-derived cost in
+            # `base_expected_remittance`; remove it to recover the source base.
+            if c.get('base_expected_remittance'):
+                base_expected = _dec(c['base_expected_remittance'])
+            pre_cost_expected = base_expected + _dec(c.get('verified_service_costs'))
+        pre_cost_expected = _dec(pre_cost_expected)
+        verified_costs = (verified_cost_amount
+                          if policy.get('deduct_verified_service_costs', True)
+                          else Decimal('0'))
+        base_expected = pre_cost_expected - verified_costs
+        provider_payments = verified_costs + totals['provider_payment']
         collection_expenses = base_expenses + totals['collection_expense']
         commission_retained = (_dec(c.get('commission_earned'))
                                if policy.get('commission_retained')
@@ -613,9 +735,10 @@ class WeeklyReportService:
             Decimal('0'),
             expected - momo_verified + self._outstanding_adjustment_total(report),
         )
+        c['pre_personal_cost_expected'] = _str(pre_cost_expected)
         c['base_expected_remittance'] = _str(base_expected)
         c['eligible_expense_total'] = _str(base_expenses)
-        c['verified_service_costs'] = _str(base_verified_costs)
+        c['verified_service_costs'] = _str(verified_costs)
         c['authorized_receipts'] = _str(totals['authorized_receipt'])
         c['verified_provider_payments'] = _str(provider_payments)
         c['approved_collection_expenses'] = _str(collection_expenses)
@@ -912,6 +1035,188 @@ class WeeklyReportService:
         self.refresh(report, actor)
         return submission
 
+    def add_cost_payment(self, report, data, actor, evidence=None):
+        """Record who actually funded an official service cost.
+
+        A ``False`` personal-payment answer is kept for audit but carries zero
+        credit. A ``True`` answer only becomes deductible after a reviewer has
+        verified the claim, its reference and its evidence.
+        """
+        self._require_editable(report)
+        try:
+            txn_id = int(data.get('transaction_id'))
+        except (TypeError, ValueError):
+            raise WeeklyReportError('A transaction is required',
+                                    'weekly_report.claim_transaction_required', 400)
+        txn = (ServiceTransaction.query
+               .filter_by(id=txn_id, employee_id=report.employee_id).first())
+        if txn is None or not in_week(txn.transaction_date, report.week_start):
+            raise WeeklyReportError('Transaction not found in this reporting week',
+                                    'weekly_report.claim_transaction_invalid', 404)
+        if OfficialCostPayment.query.filter_by(report_id=report.id,
+                                               transaction_id=txn.id).first():
+            raise WeeklyReportError('This official cost already has a payment claim',
+                                    'weekly_report.claim_duplicate', 409)
+
+        calc = self.calculation_view(report)
+        source_row = next((r for r in calc.get('transactions', []) if r.get('id') == txn.id), None)
+        customer_status = source_row.get('payment_status') if source_row else 'unknown'
+        official_cost = _dec(txn.official_cost)
+        raw_personal = data.get('personal_payment')
+        if isinstance(raw_personal, bool):
+            personal = raw_personal
+        else:
+            personal = str(raw_personal or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+        now = datetime.now(timezone.utc)
+        if not personal:
+            # Capture the negative answer without creating any deductible money.
+            amount = Decimal('0')
+            provider = 'not_applicable'
+            reference = f'NA-{txn.id}'
+            sender_phone = None
+            paid_at = now
+            reference_key = f'not-applicable:{txn.id}:{uuid.uuid4().hex[:8]}'
+            evidence_path = evidence_name = content_type = None
+            size_bytes = None
+        else:
+            try:
+                amount = _dec(data.get('amount'))
+            except Exception:
+                raise WeeklyReportError('A valid personally paid amount is required',
+                                        'weekly_report.claim_invalid_amount', 400)
+            if amount <= 0 or amount > official_cost:
+                raise WeeklyReportError(
+                    f'Personal payment must be greater than zero and at most {official_cost:.2f}',
+                    'weekly_report.claim_invalid_amount', 400)
+            provider = (data.get('provider') or '').strip().lower()
+            if provider not in MOMO_PROVIDERS:
+                raise WeeklyReportError('Invalid personal payment provider',
+                                        'weekly_report.claim_invalid_provider', 400)
+            reference = (data.get('reference') or '').strip().upper()
+            if len(reference) < 4:
+                raise WeeklyReportError('A payment reference is required',
+                                        'weekly_report.claim_reference_required', 400)
+            sender_phone = (data.get('sender_phone') or '').strip() or None
+            if not sender_phone:
+                raise WeeklyReportError('The sender phone used to pay the cost is required',
+                                        'weekly_report.claim_sender_required', 400)
+            paid_raw = data.get('paid_at')
+            try:
+                if paid_raw:
+                    paid_at = datetime.fromisoformat(str(paid_raw).replace('Z', '+00:00'))
+                    if paid_at.tzinfo is None:
+                        paid_at = paid_at.replace(
+                            tzinfo=business_timezone(report.timezone_name)).astimezone(timezone.utc)
+                else:
+                    paid_at = now
+            except ValueError:
+                raise WeeklyReportError('Invalid payment date/time',
+                                        'weekly_report.claim_invalid_date', 400)
+            if not in_week(paid_at, report.week_start, get_policy()):
+                raise WeeklyReportError(
+                    'Personal payment date must fall within the Sunday–Saturday reporting week',
+                    'weekly_report.claim_invalid_date', 400)
+            normalized_sender = ''.join(ch for ch in sender_phone if ch.isdigit() or ch == '+')
+            reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
+            if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
+                raise WeeklyReportError('That personal payment reference already exists',
+                                        'weekly_report.claim_duplicate', 409)
+            if evidence is None or not getattr(evidence, 'filename', None):
+                raise WeeklyReportError('Evidence is required for a personal cost payment',
+                                        'weekly_report.claim_evidence_required', 400)
+            evidence_path = self._store_evidence(evidence, report, 'official_cost')
+            evidence_name = evidence.filename[:255]
+            content_type = evidence.mimetype
+            size_bytes = os.path.getsize(
+                os.path.join(current_app.config['UPLOAD_FOLDER'],
+                             evidence_path.replace('/uploads/', '')))
+
+        claim = OfficialCostPayment(
+            report_id=report.id, transaction_id=txn.id, employee_id=report.employee_id,
+            reference_key=reference_key, official_cost=official_cost,
+            customer_payment_status=customer_status, personal_payment=personal,
+            amount=amount, is_partial=bool(personal and amount < official_cost),
+            provider=provider, reference=reference, paid_at=paid_at,
+            sender_phone=sender_phone, evidence_path=evidence_path,
+            evidence_name=evidence_name, content_type=content_type,
+            size_bytes=size_bytes, notes=data.get('notes'),
+            verification_status='pending', created_by=actor.id)
+        db.session.add(claim)
+        try:
+            db.session.flush()
+        except Exception:
+            db.session.rollback()
+            # A concurrent duplicate can fail only after the file was written;
+            # do not leave an unreferenced evidence file behind.
+            if evidence_path:
+                try:
+                    os.remove(os.path.join(current_app.config['UPLOAD_FOLDER'],
+                                           evidence_path.replace('/uploads/', '')))
+                except OSError:
+                    pass
+            raise WeeklyReportError('Duplicate or invalid official cost payment claim',
+                                    'weekly_report.claim_duplicate', 409)
+        audit('weekly_cost_payment_submitted', 'weekly_official_cost_payment', claim.id,
+              new_value={'transaction_id': txn.id, 'amount': _str(amount),
+                         'personal_payment': personal}, user=actor)
+        if personal:
+            from .notifications import notify_weekly_reviewers
+            notify_weekly_reviewers(
+                report, 'weekly_cost_payment_submitted',
+                bilingual('notification.cost_payment_submitted',
+                          reference=reference, period=report.period_label),
+                related_id=report.id, rule='weekly-report-cost-payment')
+        self.refresh(report, actor)
+        return claim
+
+    def delete_cost_payment(self, report, claim, actor):
+        self._require_editable(report)
+        previous = claim.to_dict()
+        audit('weekly_cost_payment_deleted', 'weekly_official_cost_payment', claim.id,
+              previous_value=previous, user=actor)
+        db.session.delete(claim)
+        self.refresh(report, actor)
+        return claim
+
+    def verify_cost_payment(self, report, claim, decision, actor, note=None):
+        if report.status not in ('submitted', 'under_financial_review',
+                                 'returned_for_correction'):
+            raise WeeklyReportError('Cost payments can only be reviewed after submission',
+                                    'weekly_report.locked', 409)
+        if decision not in COST_PAYMENT_VERIFICATION_STATUSES:
+            raise WeeklyReportError('Invalid cost payment decision',
+                                    'weekly_report.invalid_decision', 400)
+        if decision == 'verified' and not claim.personal_payment:
+            raise WeeklyReportError(
+                'A cost not paid from the agent’s own funds cannot be verified for deduction',
+                'weekly_report.claim_not_personal', 409)
+        if decision == 'rejected' and not (note or '').strip():
+            raise WeeklyReportError('A rejection reason is required',
+                                    'weekly_report.claim_reason_required', 400)
+        if report.status == 'submitted':
+            self.transition(report, 'under_financial_review', actor,
+                            audit_action='weekly_report_review_started')
+        previous = {'status': claim.verification_status, 'note': claim.verification_note}
+        claim.verification_status = decision
+        claim.verification_note = note
+        claim.verified_by = actor.id
+        claim.verified_at = datetime.now(timezone.utc)
+        audit(f'weekly_cost_payment_{decision}', 'weekly_official_cost_payment', claim.id,
+              previous_value=previous,
+              new_value={'status': decision, 'note': note}, user=actor, reason=note)
+        if report.employee and report.employee.user_id:
+            from .notifications import notify
+            notify(report.employee.user_id, 'weekly_cost_payment_verified',
+                   ' / '.join((
+                       t('notification.cost_payment_verified', 'en',
+                         reference=claim.reference, status=t(f'status.{decision}', 'en')),
+                       t('notification.cost_payment_verified', 'rw',
+                         reference=claim.reference, status=t(f'status.{decision}', 'rw')),
+                   )), related_type='weekly_report', related_id=report.id)
+        self.refresh(report, actor)
+        return claim
+
     def add_adjustment(self, report, data, actor):
         if report.status not in ('submitted', 'under_financial_review',
                                  'returned_for_correction'):
@@ -1037,6 +1342,7 @@ class WeeklyReportService:
                 payload[key] = float(_dec(components[key]))
         payload['calculation'] = calc
         payload['momo_submissions'] = [m.to_dict() for m in report.momo_submissions]
+        payload['cost_payment_claims'] = [c.to_dict() for c in report.cost_payment_claims]
         payload['adjustments'] = [a.to_dict() for a in report.adjustments]
         payload['allocations'] = [a.to_dict() for a in report.allocations]
         payload['allowed_transitions'] = WEEKLY_REPORT_TRANSITIONS.get(report.status, [])

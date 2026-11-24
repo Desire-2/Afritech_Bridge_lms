@@ -17,7 +17,7 @@ import {
 } from '@/components/weekly/weekly-shared';
 
 export default function WeeklyReportsPage() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const { t, statusLabel } = useWeeklyI18n();
   const [weekStart, setWeekStart] = useState('');
   const [status, setStatus] = useState('');
@@ -47,6 +47,11 @@ export default function WeeklyReportsPage() {
       setWeekStart(weeksData.data.current.week_start);
     }
   }, [weeksData.data, weekStart]);
+
+  if (loading) return <Loading label={t('ui.label.loading')} />;
+  if (!can(user, P.weeklyReportsView)) {
+    return <EmptyState message={t('ui.error.accessDenied')} icon="bi-shield-lock" />;
+  }
 
   async function generate() {
     setBusy(true);

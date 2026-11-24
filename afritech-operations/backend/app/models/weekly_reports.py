@@ -34,6 +34,9 @@ WEEKLY_REPORT_TRANSITIONS = {
 
 MOMO_PROVIDERS = ['momo', 'bank_transfer', 'cash_deposit']
 MOMO_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
+# A personal payment of an official service cost has its own verification
+# lifecycle. It is never a customer Payment and never a remittance MoMo row.
+COST_PAYMENT_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
 SHORTAGE_REASON_CATEGORIES = [
     'cash_count_error', 'unrecorded_collection', 'unapproved_expense',
     'provider_payment_timing', 'bank_delay', 'documentation_error', 'other',
@@ -126,6 +129,8 @@ class WeeklyReport(TimestampMixin, db.Model):
     override_authorizer = db.relationship('User', foreign_keys=[override_authorized_by])
     missing_closing_authorizer = db.relationship('User', foreign_keys=[missing_closing_override_by])
     momo_submissions = db.relationship('MoMoSubmission', backref='report', cascade='all, delete-orphan')
+    cost_payment_claims = db.relationship(
+        'OfficialCostPayment', backref='report', cascade='all, delete-orphan')
     adjustments = db.relationship('WeeklyReportAdjustment', backref='report', cascade='all, delete-orphan')
     expense_links = db.relationship('WeeklyReportExpense', backref='report', cascade='all, delete-orphan')
 
@@ -258,6 +263,94 @@ class MoMoSubmission(TimestampMixin, db.Model):
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class OfficialCostPayment(TimestampMixin, db.Model):
+    """A claim that an official service cost was paid from agent's own funds.
+
+    This is additive: customer ``Payment`` rows remain the source of all money
+    collected from customers, and ``MoMoSubmission`` rows remain remittances to
+    the company. Only a *verified* row here reduces expected remittance, and a
+    ``personal_payment`` answer of ``False`` never qualifies.
+    """
+
+    __tablename__ = 'weekly_official_cost_payments'
+    __table_args__ = (
+        db.UniqueConstraint('reference_key', name='uq_weekly_cost_payment_reference'),
+        db.UniqueConstraint('report_id', 'transaction_id', name='uq_weekly_cost_payment_transaction'),
+        db.Index('ix_weekly_cost_payment_report_status', 'report_id', 'verification_status'),
+        db.Index('ix_weekly_cost_payment_employee', 'employee_id', 'paid_at'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey('weekly_reports.id', ondelete='CASCADE'),
+                          nullable=False, index=True)
+    transaction_id = db.Column(db.Integer, db.ForeignKey('service_transactions.id'),
+                               nullable=False, index=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'),
+                            nullable=False, index=True)
+    reference_key = db.Column(db.String(180), nullable=False)
+
+    # Source facts captured at claim time. ``customer_payment_status`` is the
+    # customer's payment status, never the status of this personal payment.
+    official_cost = db.Column(db.Numeric(16, 2), nullable=False)
+    customer_payment_status = db.Column(db.String(32), nullable=False)
+    personal_payment = db.Column(db.Boolean, nullable=False, default=False)
+    amount = db.Column(db.Numeric(16, 2), nullable=False)
+    is_partial = db.Column(db.Boolean, nullable=False, default=False)
+    provider = db.Column(db.String(32), nullable=False)
+    reference = db.Column(db.String(128), nullable=False, index=True)
+    paid_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    sender_phone = db.Column(db.String(32))
+
+    evidence_path = db.Column(db.String(500))
+    evidence_name = db.Column(db.String(255))
+    content_type = db.Column(db.String(128))
+    size_bytes = db.Column(db.Integer)
+    notes = db.Column(db.Text)
+
+    verification_status = db.Column(db.String(32), nullable=False,
+                                    default='pending', index=True)
+    verified_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    verified_at = db.Column(db.DateTime(timezone=True))
+    verification_note = db.Column(db.Text)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    transaction = db.relationship('ServiceTransaction')
+    employee = db.relationship('Employee')
+    verifier = db.relationship('User', foreign_keys=[verified_by])
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+    def to_dict(self, include_sensitive=True):
+        payload = {
+            'id': self.id,
+            'report_id': self.report_id,
+            'transaction_id': self.transaction_id,
+            'transaction_number': self.transaction.transaction_number if self.transaction else None,
+            'employee_id': self.employee_id,
+            'official_cost': float(self.official_cost or 0),
+            'customer_payment_status': self.customer_payment_status,
+            'personal_payment': bool(self.personal_payment),
+            'amount': float(self.amount or 0),
+            'is_partial': bool(self.is_partial),
+            'provider': self.provider,
+            'reference': self.reference,
+            'paid_at': self.paid_at.isoformat() if self.paid_at else None,
+            'evidence_path': self.evidence_path,
+            'evidence_name': self.evidence_name,
+            'content_type': self.content_type,
+            'size_bytes': self.size_bytes,
+            'notes': self.notes,
+            'verification_status': self.verification_status,
+            'verified_by': self.verified_by,
+            'verified_at': self.verified_at.isoformat() if self.verified_at else None,
+            'verification_note': self.verification_note,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+        if include_sensitive:
+            payload['sender_phone'] = MoMoSubmission.mask_phone(self.sender_phone)
+        return payload
 
 
 class WeeklyReportAdjustment(TimestampMixin, db.Model):

@@ -34,7 +34,7 @@ from ..auth.scope import can_access_service_agents, is_service_agent_employee
 from ..utils.datetime_utils import as_utc
 from .audience import recipient_employee_ids
 from .notifications import notify, notify_weekly_reviewers
-from .weekly_policy import get_policy, is_late, week_bounds
+from .weekly_policy import get_policy, is_late, week_for_submission
 from .weekly_i18n import bilingual
 from .weekly_report_service import WeeklyReportService
 
@@ -181,17 +181,19 @@ def run_all(scope_date=None):
 def weekly_report_generation_alert(scope_date):
     """Idempotently create one report per Service Agent on submission day."""
     policy = get_policy()
-    if scope_date.weekday() != policy['submission_weekday']:
+    period = week_for_submission(scope_date, policy)
+    if period is None:
         return 0
-    result = WeeklyReportService().generate_for_all_agents(scope_date)
+    result = WeeklyReportService().generate_for_all_agents(period[0])
     return result['created']
 
 
 def weekly_report_due_alert(scope_date):
     policy = get_policy()
-    if scope_date.weekday() != policy['submission_weekday']:
+    period = week_for_submission(scope_date, policy)
+    if period is None:
         return 0
-    week_start, _ = week_bounds(scope_date, policy)
+    week_start, _ = period
     reports = WeeklyReport.query.filter(
         WeeklyReport.week_start == week_start,
         WeeklyReport.status.in_(['draft', 'ready_for_submission']),

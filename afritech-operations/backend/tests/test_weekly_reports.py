@@ -20,17 +20,19 @@ from sqlalchemy.exc import IntegrityError
 from app.extensions import db
 from app.models import (
     AuditLog, Client, DailyClosing, Employee, Expense, MoMoSubmission,
-    MOMO_PROVIDERS, Notification, OutstandingAllocation, Payment, PaymentMethod,
-    SHORTAGE_REASON_CATEGORIES, Service, ServiceTransaction, Setting, User,
-    WEEKLY_REPORT_STATUSES, WeeklyReport, WeeklyReportAdjustment,
-    WeeklyReportExpense, generate_transaction_number,
+    MOMO_PROVIDERS, Notification, OfficialCostPayment, OutstandingAllocation,
+    Payment, PaymentMethod, SHORTAGE_REASON_CATEGORIES, Service,
+    ServiceTransaction, Setting, User, WEEKLY_REPORT_STATUSES, WeeklyReport,
+    WeeklyReportAdjustment, WeeklyReportExpense, generate_transaction_number,
 )
 from app.services import automation as automation_service
 from app.services import notifications as ns
 from app.services.weekly_i18n import SUPPORTED_LANGUAGES, bilingual, normalize_language, t
 from app.services.weekly_policy import (
-    DEFAULTS, available_weeks, business_timezone, get_policy, is_late,
-    submission_deadline, week_bounds,
+    DEFAULTS, WeekPolicyError, available_weeks, business_timezone, get_policy,
+    in_week, is_late, is_valid_week_start, require_week_start,
+    submission_deadline, week_bounds, week_end_for, week_for_submission,
+    week_window,
 )
 from app.services.weekly_report_service import WeeklyReportError, WeeklyReportService
 
@@ -170,6 +172,52 @@ def _review(client, hdr, report_id, action, **payload):
                        json={'action': action, **payload})
 
 
+def _claim_row(report, txn, amount=None, personal=True, verified=False, reference=None,
+               paid_at=None, customer_status='paid'):
+    """Seed a cost claim directly for backend-authoritative calculation tests."""
+    cost = Decimal(str(txn.official_cost))
+    value = cost if amount is None else Decimal(str(amount)) if personal else Decimal('0')
+    stamp = paid_at or datetime.combine(txn.transaction_date, datetime.min.time(),
+                                        tzinfo=timezone.utc)
+    claim = OfficialCostPayment(
+        report_id=report.id, transaction_id=txn.id, employee_id=report.employee_id,
+        reference_key=f'test:{uuid.uuid4().hex}', official_cost=cost,
+        customer_payment_status=customer_status, personal_payment=personal,
+        amount=value, is_partial=bool(personal and value < cost),
+        provider='momo' if personal else 'not_applicable',
+        reference=(reference or f'WKP-{uuid.uuid4().hex[:10]}').upper(), paid_at=stamp,
+        sender_phone='+250788111222' if personal else None,
+        evidence_path='weekly_reports/test/proof.pdf' if personal else None,
+        evidence_name='proof.pdf' if personal else None,
+        content_type='application/pdf' if personal else None,
+        size_bytes=4 if personal else None,
+        verification_status='verified' if verified else 'pending',
+        created_by=_user('agent@afritech.dev').id)
+    db.session.add(claim)
+    db.session.flush()
+    return claim
+
+
+def _claim_api(client, hdr, report, txn, amount=None, personal=True, reference=None,
+               paid_at=None, provider='momo', sender_phone='+250788111222'):
+    data = {
+        'transaction_id': str(txn.id),
+        'personal_payment': 'true' if personal else 'false',
+        'notes': 'Official cost settlement evidence',
+    }
+    if personal:
+        data.update({
+            'amount': str(amount if amount is not None else txn.official_cost),
+            'provider': provider,
+            'reference': (reference or f'WKP-{uuid.uuid4().hex[:10]}').upper(),
+            'sender_phone': sender_phone,
+            'paid_at': paid_at or txn.transaction_date.isoformat(),
+            'evidence': (io.BytesIO(b'%PDF-1.4\ncost proof'), 'cost-proof.pdf'),
+        })
+    return client.post(f'/api/weekly-reports/{report.id}/official-cost-payments',
+                       headers=hdr, data=data, content_type='multipart/form-data')
+
+
 @pytest.fixture(autouse=True)
 def _cleanup():
     yield
@@ -185,9 +233,12 @@ def _cleanup():
     _TRACKED_REPORT_IDS.clear()
     if ids:
         refs = [m.id for m in MoMoSubmission.query.filter(MoMoSubmission.report_id.in_(ids)).all()]
+        claims = [c.id for c in OfficialCostPayment.query.filter(
+            OfficialCostPayment.report_id.in_(ids)).all()]
         adjs = [a.id for a in WeeklyReportAdjustment.query.filter(WeeklyReportAdjustment.report_id.in_(ids)).all()]
         for model, column, values in (
             (MoMoSubmission, MoMoSubmission.id, refs),
+            (OfficialCostPayment, OfficialCostPayment.id, claims),
             (WeeklyReportAdjustment, WeeklyReportAdjustment.id, adjs),
             (WeeklyReportExpense, WeeklyReportExpense.report_id, ids),
             (OutstandingAllocation, OutstandingAllocation.report_id, ids),
@@ -198,9 +249,10 @@ def _cleanup():
         if refs:
             Notification.query.filter(Notification.related_type == 'weekly_report',
                                       Notification.related_id.in_(refs)).delete(synchronize_session=False)
-        entity_ids = [str(i) for i in ids + refs + adjs]
+        entity_ids = [str(i) for i in ids + refs + claims + adjs]
         AuditLog.query.filter(AuditLog.entity.in_(
-            ('weekly_report', 'weekly_momo_submission', 'weekly_report_adjustment')),
+            ('weekly_report', 'weekly_momo_submission', 'weekly_official_cost_payment',
+             'weekly_report_adjustment')),
             AuditLog.entity_id.in_(entity_ids)).delete(synchronize_session=False)
         Notification.query.filter(Notification.related_type == 'weekly_report',
                                   Notification.related_id.in_(ids)).delete(synchronize_session=False)
@@ -341,27 +393,36 @@ class TestCalculation:
         emp = _agent()
         week = _future_week()
         day = week + timedelta(days=1)
-        _txn(emp, day, price=1000, cost=400)                       # fully paid cash
-        _txn(emp, day, price=500, cost=100, cash=False)            # fully paid momo
+        cash = _txn(emp, day, price=1000, cost=400)                # fully paid cash
+        momo = _txn(emp, day, price=500, cost=100, cash=False)     # fully paid momo
         partial = _txn(emp, day, price=800, cost=200, paid=False)  # part payment
         db.session.add(Payment(transaction_id=partial.id, amount=400,
                                payment_method_id=PaymentMethod.query.filter_by(code='cash').first().id))
-        _txn(emp, day, price=600, cost=300, paid=False)            # unpaid
+        unpaid = _txn(emp, day, price=600, cost=300, paid=False)   # unpaid
         _txn(emp, day, price=700, cost=200, status='cancelled')    # ineligible status
         _txn(emp, day, price=900, cost=300, status='refunded')     # ineligible status
         db.session.commit()
 
         report = _generate(client, admin_hdr, emp, week)
+        # Customer payment status alone must never produce a deduction.
+        assert svc.build_calculation(report)['components']['verified_service_costs'] == '0.00'
+        _claim_row(report, cash, verified=True)
+        _claim_row(report, momo, verified=True)
+        partial_claim = _claim_row(report, partial, amount=100, verified=True)
+        _claim_row(report, unpaid, personal=False)   # company-paid: never deductible
+        db.session.commit()
         calc = svc.build_calculation(report)
         c = calc['components']
         assert calc['eligible_transaction_count'] == 3
         assert c['eligible_collections'] == '1900.00'  # 1000 + 500 + 400 part payment
         assert c['service_costs'] == '700.00'          # all eligible official costs (display)
-        assert c['verified_service_costs'] == '500.00'  # only fully paid
-        assert c['verified_provider_payments'] == '500.00'
+        # 400 cash + 100 momo + only 100 of the 200 part-paid cost.
+        assert c['verified_service_costs'] == '600.00'
+        assert c['verified_provider_payments'] == '600.00'
+        assert partial_claim.is_partial is True
         assert c['commission_earned'] == '320.00'      # 20% of 1600 gross profit, shown separately
         assert c['commission_retained'] == '0.00'      # only retained when configured
-        assert c['expected_remittance'] == '1400.00'   # 0 + 1900 - 500
+        assert c['expected_remittance'] == '1300.00'   # 0 + 1900 - 600
         statuses = {row['payment_status']: row for row in calc['transactions']}
         assert statuses['paid']['is_eligible'] is True
         assert statuses['partially_paid']['is_eligible'] is True
@@ -371,7 +432,7 @@ class TestCalculation:
         emp = _agent()
         week = _future_week()
         day = week + timedelta(days=1)
-        _txn(emp, day, price=1000, cost=400)
+        txn = _txn(emp, day, price=1000, cost=400)
         closing = DailyClosing(employee_id=emp.id, branch_id=emp.branch_id,
                                closing_date=day, transaction_count=1, actual_cash=9999,
                                notes='WKC-manual large cash', status='submitted')
@@ -379,6 +440,8 @@ class TestCalculation:
         db.session.commit()
 
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)
+        db.session.commit()
         calc = svc.build_calculation(report)
         assert calc['components']['eligible_collections'] == '1000.00'
         assert calc['components']['expected_remittance'] == '600.00'
@@ -401,7 +464,9 @@ class TestCalculation:
         report = _generate(client, admin_hdr, emp, week)
         calc = svc.build_calculation(report)
         assert calc['components']['approved_collection_expenses'] == '350.00'
-        assert calc['components']['expected_remittance'] == '250.00'
+        # The unclaimed 400 official cost is not deducted from collections.
+        assert calc['components']['verified_service_costs'] == '0.00'
+        assert calc['components']['expected_remittance'] == '650.00'
         assert len(calc['expenses']) == 2
 
     def test_expense_linked_to_one_report_only(self, client, admin_hdr):
@@ -435,9 +500,10 @@ class TestCalculation:
         emp = _agent()
         week = _future_week()
         day = week + timedelta(days=1)
-        _txn(emp, day, price=1000, cost=400)
+        txn = _txn(emp, day, price=1000, cost=400)
         db.session.commit()
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)
         for kind, amount in (('authorized_receipt', 500), ('provider_payment', 120),
                             ('authorized_refund', 50), ('other_outflow', 30)):
             db.session.add(WeeklyReportAdjustment(
@@ -606,6 +672,169 @@ class TestWorkflow:
             'under_financial_review', 'returned_for_correction'}
 
 
+class TestOfficialCostPayments:
+    def test_verified_personal_claim_is_the_only_remittance_credit(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        txn = _txn(_agent(), _future_week() + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, txn.employee, txn.transaction_date - timedelta(days=1))
+
+        response = _claim_api(client, agent_hdr, report, txn, reference='WKP-VERIFIED')
+        assert response.status_code == 201, response.get_data(as_text=True)
+        claim = response.get_json()['claim']
+        assert claim['personal_payment'] is True
+        assert claim['amount'] == 400.0
+        assert claim['is_partial'] is False
+        assert claim['verification_status'] == 'pending'
+        assert claim['sender_phone'] == '+250******222'
+        before = response.get_json()['report']['calculation']['components']
+        assert before['verified_service_costs'] == '0.00'
+        assert before['expected_remittance'] == '1000.00'
+        listing = _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/official-cost-payments', headers=agent_hdr))
+        assert listing['total'] == 1 and listing['verified_total'] == '0.00'
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '1000.00'
+        r = _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                    claim_id=claim['id'], note='Provider receipt matched')
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        c = _components(client, accountant_hdr, report.id)
+        assert c['verified_service_costs'] == '400.00'
+        assert c['verified_provider_payments'] == '400.00'
+        assert c['expected_remittance'] == '600.00'
+        actions = {row['action'] for row in _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/audit', headers=accountant_hdr))['items']}
+        assert {'weekly_cost_payment_submitted', 'weekly_cost_payment_verified'} <= actions
+        types = {row.type for row in Notification.query.filter_by(
+            related_type='weekly_report', related_id=report.id).all()}
+        assert {'weekly_cost_payment_submitted', 'weekly_cost_payment_verified'} <= types
+
+    def test_company_paid_unverified_and_rejected_claims_never_deduct(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        emp = _agent()
+        txns = [_txn(emp, week + timedelta(days=1), price=1000, cost=400) for _ in range(3)]
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        company_paid = _claim_api(client, agent_hdr, report, txns[0], personal=False)
+        assert company_paid.status_code == 201, company_paid.get_data(as_text=True)
+        company_claim = company_paid.get_json()['claim']
+        assert company_claim['personal_payment'] is False
+        assert company_claim['amount'] == 0.0 and company_claim['evidence_name'] is None
+
+        pending = _claim_api(client, agent_hdr, report, txns[1], reference='WKP-PENDING')
+        assert pending.status_code == 201, pending.get_data(as_text=True)
+        pending_id = pending.get_json()['claim']['id']
+
+        rejected = _claim_api(client, agent_hdr, report, txns[2], reference='WKP-REJECT')
+        assert rejected.status_code == 201, rejected.get_data(as_text=True)
+        rejected_id = rejected.get_json()['claim']['id']
+
+        c = svc.build_calculation(WeeklyReport.query.get(report.id))['components']
+        assert c['verified_service_costs'] == '0.00'
+        assert c['expected_remittance'] == '3000.00'
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        assert _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                       claim_id=company_claim['id']).status_code == 409
+        assert _review(client, accountant_hdr, report.id, 'reject_cost_payment',
+                       claim_id=rejected_id).status_code == 400
+        r = _review(client, accountant_hdr, report.id, 'reject_cost_payment',
+                    claim_id=rejected_id, note='Receipt belongs to another agent')
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        c = _components(client, accountant_hdr, report.id)
+        assert c['verified_service_costs'] == '0.00'
+        assert c['expected_remittance'] == '3000.00'
+        claims = _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/official-cost-payments',
+            headers=accountant_hdr))['items']
+        statuses = {row['id']: row['verification_status'] for row in claims}
+        assert statuses[company_claim['id']] == 'pending'
+        assert statuses[pending_id] == 'pending'
+        assert statuses[rejected_id] == 'rejected'
+
+    def test_partial_claim_and_duplicate_protection(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        emp = _agent()
+        first = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        second = _txn(emp, week + timedelta(days=2), price=800, cost=300)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        partial = _claim_api(client, agent_hdr, report, first, amount=150,
+                             reference='WKP-PARTIAL')
+        assert partial.status_code == 201, partial.get_data(as_text=True)
+        assert partial.get_json()['claim']['is_partial'] is True
+        duplicate_txn = _claim_api(client, agent_hdr, report, first,
+                                   reference='WKP-OTHER', amount=200)
+        assert duplicate_txn.status_code == 409
+        duplicate_ref = _claim_api(client, agent_hdr, report, second,
+                                   reference='WKP-PARTIAL', amount=100)
+        assert duplicate_ref.status_code == 409
+        over_cost = _claim_api(client, agent_hdr, report, second,
+                               reference='WKP-OVER', amount=301)
+        assert over_cost.status_code == 400
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        r = _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                    claim_id=partial.get_json()['claim']['id'], note='Partial provider settlement')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        c = _components(client, accountant_hdr, report.id)
+        assert c['verified_service_costs'] == '150.00'
+        # Collections are 1000 + 800 = 1800; only the verified 150 is credited.
+        assert c['expected_remittance'] == '1650.00'
+
+    def test_claim_validation_and_evidence_permissions(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, manager_hdr,
+            tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        outside = _txn(emp, week - timedelta(days=1), price=500, cost=100)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        no_evidence = client.post(
+            f'/api/weekly-reports/{report.id}/official-cost-payments', headers=agent_hdr,
+            data={'transaction_id': txn.id, 'personal_payment': 'true', 'amount': '400',
+                  'provider': 'momo', 'reference': 'WKP-NOEVID',
+                  'sender_phone': '+250788111222', 'paid_at': week.isoformat()},
+            content_type='multipart/form-data')
+        assert no_evidence.status_code == 400
+        assert no_evidence.get_json()['code'] == 'weekly_report.claim_evidence_required'
+        assert _claim_api(client, agent_hdr, report, txn, amount=401,
+                          reference='WKP-OVER').status_code == 400
+        assert _claim_api(client, agent_hdr, report, txn, reference='WKP-BADPROV',
+                          provider='wire').status_code == 400
+        assert _claim_api(client, agent_hdr, report, txn, reference='WKP-OUTDATE',
+                          paid_at=(week + timedelta(days=7)).isoformat()).status_code == 400
+        assert _claim_api(client, agent_hdr, report, outside,
+                          reference='WKP-OUTSIDE').status_code == 404
+
+        claim = _claim_api(client, agent_hdr, report, txn, reference='WKP-EVIDENCE')
+        assert claim.status_code == 201, claim.get_data(as_text=True)
+        url = (f'/api/weekly-reports/{report.id}/official-cost-payments/'
+               f'{claim.get_json()["claim"]["id"]}/evidence')
+        assert client.get(url, headers=agent_hdr).data.startswith(b'%PDF')
+        assert client.get(url, headers=accountant_hdr).status_code == 200
+        assert client.get(url, headers=manager_hdr).status_code == 403
+        secretary = _hdr(client, 'secretary@afritech.dev')
+        assert client.get(url, headers=secretary).status_code == 403
+        assert client.get(f'/api/weekly-reports/{report.id}/official-cost-payments',
+                          headers=secretary).status_code == 403
+        assert client.post(f'/api/weekly-reports/{report.id}/official-cost-payments',
+                           headers=secretary, json={}).status_code == 403
+
+
 class TestMoMo:
     def test_add_multiple_submissions_and_mask_phones(self, client, admin_hdr, agent_hdr):
         report = _generate(client, admin_hdr)
@@ -696,9 +925,11 @@ class TestShortageSurplus:
         monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
         emp = _agent()
         week = _future_week()
-        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
         db.session.commit()
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)
+        db.session.commit()
         evidence = (io.BytesIO(b'%PDF-1.4\nshortage'), 'proof.pdf')
         r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr,
                         data={'shortage_reason_category': 'unrecorded_collection',
@@ -717,9 +948,11 @@ class TestShortageSurplus:
                                                               agent_hdr, accountant_hdr):
         emp = _agent()
         week = _future_week()
-        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
         db.session.commit()
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)
+        db.session.commit()
         _authorize_override(report, _user('accountant@afritech.dev'))
         r = client.post(f'/api/weekly-reports/{report.id}/submit', headers=agent_hdr, json={})
         assert r.status_code == 200, r.get_data(as_text=True)
@@ -730,9 +963,11 @@ class TestShortageSurplus:
     def test_surplus_after_verification(self, client, admin_hdr, agent_hdr, accountant_hdr):
         emp = _agent()
         week = _future_week()
-        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
         db.session.commit()
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)
+        db.session.commit()
         sub = _momo(client, agent_hdr, report.id, amount=900, reference='WKM-SURPLUS')
         assert _submit(client, agent_hdr, report.id).status_code == 200
         # Unverified submissions do not offset the shortage.
@@ -805,9 +1040,11 @@ class TestAdjustmentsCarryForward:
                                                                agent_hdr, accountant_hdr):
         emp = _agent()
         week = _future_week()
-        _txn(emp, week + timedelta(days=1), price=1000, cost=400)  # expected 600
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
         db.session.commit()
         report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)  # expected remittance 600
+        db.session.commit()
         assert _submit(client, agent_hdr, report.id).status_code == 200
         r = client.post(f'/api/weekly-reports/{report.id}/adjustments',
                         headers=accountant_hdr,
@@ -886,6 +1123,8 @@ class TestRBACSecurity:
             f'/api/weekly-reports/{report.id}/daily-closings',
             f'/api/weekly-reports/{report.id}/expenses',
             f'/api/weekly-reports/{report.id}/audit',
+            f'/api/weekly-reports/{report.id}/official-cost-payments',
+            f'/api/weekly-reports/{report.id}/official-cost-payments/1/evidence',
             f'/api/weekly-reports/{report.id}/evidence',
             f'/api/weekly-reports/{report.id}/export?format=pdf',
             f'/api/weekly-reports/{report.id}/export?format=xlsx',
@@ -905,6 +1144,12 @@ class TestRBACSecurity:
             client.post(f'/api/weekly-reports/{report.id}/adjustments', headers=secretary,
                         json={'kind': 'authorized_receipt', 'reason': 'Not allowed',
                               'original_amount': 0, 'adjusted_amount': 10}),
+            client.post(f'/api/weekly-reports/{report.id}/official-cost-payments',
+                        headers=secretary, json={}),
+            client.delete(f'/api/weekly-reports/{report.id}/official-cost-payments/1',
+                          headers=secretary),
+            client.post(f'/api/weekly-reports/{report.id}/review', headers=secretary,
+                        json={'action': 'verify_cost_payment', 'claim_id': 1}),
         ]
         assert all(r.status_code == 403 for r in writes)
 
@@ -1037,15 +1282,17 @@ class TestNotificationsAudit:
         assert rejection is not None and rejection.severity == 'critical'
 
     def test_automation_due_and_late_alerts(self, client, admin_hdr, no_email):
-        saturday = week_bounds(date(2031, 1, 15))[0]
-        assert saturday.weekday() == 5
-        report = _generate(client, admin_hdr, _agent(), saturday)
-        assert automation_service.weekly_report_due_alert(saturday) >= 1
+        sunday = week_bounds(date(2031, 1, 15))[0]
+        submission_day = sunday + timedelta(days=7)
+        assert sunday.weekday() == 6 and submission_day.weekday() == 6
+        assert week_for_submission(submission_day) == (sunday, sunday + timedelta(days=6))
+        report = _generate(client, admin_hdr, _agent(), sunday)
+        assert automation_service.weekly_report_due_alert(submission_day) >= 1
         db.session.commit()
         due = Notification.query.filter_by(type='weekly_report_due',
                                            related_id=report.id).first()
         assert due is not None and '17:00' in due.message
-        assert automation_service.weekly_report_due_alert(saturday) == 0
+        assert automation_service.weekly_report_due_alert(submission_day) == 0
 
         past = _generate(client, admin_hdr, _agent(), _past_week())
         # Generation already flags historical weeks; put it back in draft so
@@ -1110,6 +1357,52 @@ class TestExports:
         components = [str(row[0]) for row in wb.worksheets[1].iter_rows(values_only=True)]
         assert 'expected_remittance' in components and 'shortage_amount' in components
 
+    def test_exports_carry_bilingual_personal_cost_evidence(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
+        from openpyxl import load_workbook
+        from app.services import weekly_exports
+
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        txn = _txn(_agent(), week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, txn.employee, week)
+        claim = _claim_api(client, agent_hdr, report, txn, amount=150,
+                           reference='WKP-EXPORT')
+        assert claim.status_code == 201, claim.get_data(as_text=True)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        reviewed = _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                           claim_id=claim.get_json()['claim']['id'],
+                           note='Receipt matched <receipt.pdf>')
+        assert reviewed.status_code == 200, reviewed.get_data(as_text=True)
+
+        for lang, expected in (('en', 'Yes (Partial)'), ('rw', 'Yego (Igice)')):
+            response = client.get(f'/api/weekly-reports/{report.id}/export?format=xlsx&lang={lang}',
+                                  headers=accountant_hdr)
+            assert response.status_code == 200, response.get_data(as_text=True)
+            wb = load_workbook(io.BytesIO(response.data), read_only=True, data_only=True)
+            costs = wb.worksheets[2]
+            values = [str(cell) for row in costs.iter_rows(values_only=True) for cell in row
+                      if cell is not None]
+            assert any(expected in value for value in values)
+            assert any('WKP-EXPORT' in value for value in values)
+            assert any('cost-proof.pdf' in value for value in values)
+            assert any('Receipt matched' in value for value in values)
+            assert any('150.0' in value for value in values)
+            # Only the masked phone and the deductible amount are exported.
+            assert not any('+250788111222' in value for value in values)
+            assert not any('weekly_reports/' in value for value in values)
+
+        calc = svc.calculation_view(WeeklyReport.query.get(report.id))
+        rows = weekly_exports._official_cost_rows(calc, 'en')
+        joined = str(rows)
+        assert '&lt;receipt.pdf&gt;' in joined and '<receipt.pdf>' not in joined
+        assert rows[1][-1] == '150.0'
+
+        pdf = client.get(f'/api/weekly-reports/{report.id}/export?format=pdf&lang=rw',
+                         headers=accountant_hdr)
+        assert pdf.status_code == 200 and pdf.data.startswith(b'%PDF')
+
     def test_export_permissions_and_validation(self, client, admin_hdr, agent_hdr, accountant_hdr):
         mine = _generate(client, admin_hdr)
         other = _generate(client, admin_hdr, _agent2())
@@ -1126,6 +1419,125 @@ class TestExports:
         from openpyxl import load_workbook
         wb = load_workbook(io.BytesIO(fallback.data), read_only=True, data_only=True)
         assert wb.worksheets[0]['A1'].value == 'Weekly Service Agent Financial Report'
+
+
+class TestEndToEndWorkflow:
+    def test_generate_claim_submit_review_approve_and_export(
+            self, client, admin_hdr, agent_hdr, accountant_hdr,
+            tmp_path, monkeypatch, no_email):
+        """One continuous agent-to-approval flow through the real HTTP API."""
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=3), price=1000, cost=400)
+        db.session.commit()
+
+        creation = client.post(
+            '/api/weekly-reports/generate', headers=admin_hdr,
+            json={'employee_id': emp.id, 'week_start': week.isoformat()})
+        assert creation.status_code == 201, creation.get_data(as_text=True)
+        generated = creation.get_json()
+        report_id = generated['report']['id']
+        assert date.fromisoformat(generated['report']['week_start']) == week
+        assert date.fromisoformat(generated['report']['week_end']) == week + timedelta(days=6)
+        assert generated['report']['status'] == 'draft'
+        weekdays = [day['date'] for day in generated['report']['calculation']['daily_closings']]
+        assert len(weekdays) == 7
+
+        claim = _claim_api(client, agent_hdr, WeeklyReport.query.get(report_id), txn,
+                           reference='WKP-E2E')
+        assert claim.status_code == 201, claim.get_data(as_text=True)
+        claim_id = claim.get_json()['claim']['id']
+        transfer = _momo(client, agent_hdr, report_id, reference='WKM-E2E', amount=600)
+
+        submitted = _assert_ok(_submit(client, agent_hdr, report_id))
+        assert submitted['report']['status'] == 'submitted'
+        frozen_snapshot = WeeklyReport.query.get(report_id).snapshot
+        assert json.loads(frozen_snapshot)['components']['verified_service_costs'] == '0.00'
+
+        assert _review(client, accountant_hdr, report_id, 'verify_cost_payment',
+                       claim_id=claim_id, note='Own-funds receipt confirmed').status_code == 200
+        assert _review(client, accountant_hdr, report_id, 'verify_momo',
+                       momo_id=transfer['id'], note='Transfer confirmed').status_code == 200
+        approved = _assert_ok(_review(client, accountant_hdr, report_id, 'approve',
+                                      reason='All amounts reconciled'))
+        assert approved['report']['status'] == 'approved'
+
+        components = approved['report']['calculation']['components']
+        assert components['pre_personal_cost_expected'] == '1000.00'
+        assert components['verified_service_costs'] == '400.00'
+        assert components['expected_remittance'] == '600.00'
+        assert components['verified_submitted'] == '600.00'
+        assert components['shortage_amount'] == '0.00'
+        assert components['closing_outstanding'] == '0.00'
+        # Approval records the final carry-forward once; every other source
+        # fact remains exactly as it was frozen at submission.
+        submitted_snapshot = json.loads(frozen_snapshot)
+        approved_snapshot = json.loads(WeeklyReport.query.get(report_id).snapshot)
+        submitted_components = dict(submitted_snapshot.pop('components'))
+        approved_components = dict(approved_snapshot.pop('components'))
+        assert submitted_snapshot == approved_snapshot
+        assert approved_components.pop('closing_outstanding') == '0.00'
+        submitted_components.pop('closing_outstanding')
+        assert approved_components == submitted_components
+        final_snapshot = WeeklyReport.query.get(report_id).snapshot
+
+        detail = _detail(client, accountant_hdr, report_id)
+        assert detail['cost_payment_claims'][0]['verification_status'] == 'verified'
+        audit = _assert_ok(client.get(f'/api/weekly-reports/{report_id}/audit',
+                                      headers=accountant_hdr))['items']
+        assert {row['action'] for row in audit} >= {
+            'weekly_report_generated', 'weekly_cost_payment_submitted',
+            'weekly_cost_payment_verified', 'weekly_momo_verified',
+            'weekly_report_approved',
+        }
+        for fmt in ('pdf', 'xlsx'):
+            exported = client.get(f'/api/weekly-reports/{report_id}/export?format={fmt}',
+                                  headers=accountant_hdr)
+            assert exported.status_code == 200, exported.get_data(as_text=True)
+            assert WeeklyReport.query.get(report_id).snapshot == final_snapshot
+        secretary = _hdr(client, 'secretary@afritech.dev')
+        for path in (f'/api/weekly-reports/{report_id}',
+                     f'/api/weekly-reports/{report_id}/official-cost-payments',
+                     f'/api/weekly-reports/{report_id}/export'):
+            assert client.get(path, headers=secretary).status_code == 403, path
+
+
+class TestSundayWeekPolicy:
+    def test_bounds_window_and_boundary_timestamps(self):
+        local = business_timezone()
+        for day in range(7):
+            date_in_week = date(2031, 1, 12) + timedelta(days=day)
+            assert week_bounds(date_in_week) == (date(2031, 1, 12), date(2031, 1, 18))
+        sunday, saturday = week_bounds(date(2031, 1, 15))
+        assert (sunday.weekday(), saturday.weekday()) == (6, 5)
+        assert week_end_for(sunday) == saturday
+        assert week_window(sunday) == (
+            datetime(2031, 1, 11, 22, tzinfo=timezone.utc),
+            datetime(2031, 1, 18, 22, tzinfo=timezone.utc),
+        )
+        assert in_week(datetime(2031, 1, 18, 23, 59, 59, 999000, tzinfo=local), sunday)
+        assert not in_week(datetime(2031, 1, 19, 0, 0, tzinfo=local), sunday)
+        assert not in_week(datetime(2031, 1, 11, 23, 59, 59, tzinfo=local), sunday)
+        assert in_week(saturday, sunday)
+
+    def test_non_sunday_periods_are_rejected_everywhere(self, client, admin_hdr):
+        monday = date(2031, 1, 13)
+        assert not is_valid_week_start(monday)
+        with pytest.raises(WeekPolicyError):
+            require_week_start(monday)
+        r = client.post('/api/weekly-reports/generate', headers=admin_hdr,
+                        json={'employee_id': _agent().id, 'week_start': monday.isoformat()})
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert r.get_json()['code'] == 'weekly_report.invalid_week'
+
+    def test_weeks_endpoint_returns_sunday_saturday_pairs(self, client, agent_hdr):
+        weeks = _assert_ok(client.get('/api/weekly-reports/weeks', headers=agent_hdr))['weeks']
+        assert len(weeks) == 13
+        assert all(date.fromisoformat(row['week_start']).weekday() == 6 for row in weeks)
+        assert all(date.fromisoformat(row['week_end']).weekday() == 5 for row in weeks)
+        assert all(date.fromisoformat(row['week_end']) ==
+                   date.fromisoformat(row['week_start']) + timedelta(days=6) for row in weeks)
 
 
 class TestPolicyI18n:
@@ -1148,13 +1560,16 @@ class TestPolicyI18n:
         policy_override('deadline_time', '09:30')
         policy_override('collection_funded_payment_methods', 'cash,momo')
         policy = get_policy()
-        assert policy['week_start_weekday'] == 0
+        # The legal Sunday–Saturday window cannot be overridden by settings.
+        assert (policy['week_start_weekday'], policy['week_end_weekday'],
+                policy['submission_weekday']) == (6, 5, 6)
         assert policy['deadline_time'] == '09:30'
         assert policy['collection_funded_payment_methods'] == ['cash', 'momo']
 
         start, end = week_bounds(date(2031, 1, 15))
-        assert start == date(2031, 1, 13) and end == start + timedelta(days=6)
+        assert start == date(2031, 1, 12) and end == start + timedelta(days=6)
         due = submission_deadline(start)
+        assert due.astimezone(business_timezone()).date() == date(2031, 1, 19)
         assert (due.hour, due.minute) == (7, 30)  # Africa/Kigali is UTC+2
 
         emp = _agent()
@@ -1267,12 +1682,15 @@ class TestReviewFindings:
         assert output.getvalue().startswith(b'%PDF')
 
     def test_generation_rule_runs_inside_scheduler_savepoint(self, client, no_email):
-        saturday = week_bounds(date(2031, 1, 15))[0]
-        outcomes = dict(automation_service.run_all(saturday))
+        sunday = week_bounds(date(2031, 1, 15))[0]
+        submission_day = sunday + timedelta(days=7)
+        # Saturday is not a submission day; only Sunday generates reports.
+        assert automation_service.weekly_report_generation_alert(submission_day - timedelta(days=1)) == 0
+        outcomes = dict(automation_service.run_all(submission_day))
         generated = outcomes['weekly_report_generation_alert']
         assert not str(generated).startswith('error:'), generated
         assert generated >= 1
-        assert WeeklyReport.query.filter_by(week_start=saturday).count() >= 1
+        assert WeeklyReport.query.filter_by(week_start=sunday).count() >= 1
 
     def test_overrides_are_rejected_once_report_is_locked(self, client, admin_hdr,
                                                           agent_hdr, accountant_hdr):
