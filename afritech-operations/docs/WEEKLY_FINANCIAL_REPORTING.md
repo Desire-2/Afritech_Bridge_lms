@@ -331,6 +331,12 @@ Kinyarwanda. The frontend uses matching keys in `frontend/lib/weekly-i18n.tsx`
 with a persistent `[ EN ] [ RW ]` switcher. Switching language only changes
 system labels; form data and user-entered text remain untouched.
 
+The Service Agent dashboard links directly to the latest weekly report. When
+that report is still editable, the "Submit weekly report" action opens it on the
+shortage/surplus tab where the declaration and submit controls live. The link
+carries the backend report id; the browser never derives a reporting week or
+recalculates a money figure.
+
 ## 11. Persistence and migration
 
 Migration `f7c9a4d2e8b1` (`down_revision = a1c9d47e52f6`) is additive:

@@ -2,17 +2,26 @@
 
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
-import { api, fmtMoney, fmtDateTime } from '@/lib/api';
+import { api, can, fmtDate, fmtMoney, fmtDateTime } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useFetch } from '@/lib/use-fetch';
+import { P } from '@/lib/permissions';
 import { PageHeader, Loading, ErrorAlert, StatCard, Badge, EmptyState } from '@/components/ui';
+import { WeeklyBadge } from '@/components/weekly/weekly-shared';
+import { useWeeklyI18n } from '@/lib/weekly-i18n';
 
 export default function AgentDashboard() {
   const { user } = useAuth();
+  const { t: weeklyT } = useWeeklyI18n();
   const { data, error, loading, reload } = useFetch('/api/dashboard/me');
   const txn = useFetch('/api/transactions?per_page=5');
   const [busy, setBusy] = useState('');
   const [actionError, setActionError] = useState('');
+
+  // Weekly report shortcut. The report is selected by the backend; the browser
+  // never derives a reporting week or recalculates any money figure.
+  const canWeekly = can(user, P.weeklyReportsView);
+  const weekly = useFetch<any>(canWeekly ? '/api/weekly-reports' : '', [canWeekly], { per_page: 1 });
 
   const act = useCallback(async (kind: 'clock-in' | 'clock-out', label: string) => {
     setActionError('');
@@ -31,6 +40,13 @@ export default function AgentDashboard() {
   if (loading || !data) return <Loading label="Loading your dashboard…" />;
 
   const att = data.today_attendance;
+  const latestReport = weekly.data?.items?.[0] || null;
+  const editableWeeklyStatuses = ['draft', 'ready_for_submission', 'late', 'returned_for_correction'];
+  const canSubmitWeekly = !!latestReport && editableWeeklyStatuses.includes(latestReport.status);
+  const weeklyReportHref = latestReport
+    ? `/finance/weekly-reports?report=${latestReport.id}`
+    : '/finance/weekly-reports';
+  const weeklyHref = canSubmitWeekly ? `${weeklyReportHref}&tab=shortage` : weeklyReportHref;
 
   return (
     <div>
@@ -44,12 +60,50 @@ export default function AgentDashboard() {
               <i className="bi bi-plus-circle me-1" /> New transaction
             </Link>
             <Link href="/closings" className="btn btn-outline-primary">Daily closing</Link>
+            {canWeekly && (
+              <Link href={weeklyHref} className="btn btn-primary">
+                <i className="bi bi-send me-1" />
+                {canSubmitWeekly ? weeklyT('ui.label.submitWeekly') : weeklyT('nav.weeklyReports')}
+              </Link>
+            )}
             <Link href="/earnings" className="btn btn-outline-primary">My earnings</Link>
           </>
         }
       />
 
       {actionError && <ErrorAlert message={actionError} onRetry={() => setActionError('')} />}
+
+      {canWeekly && (
+        <div className="card mb-4">
+          <div className="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+              <div className="small text-muted">{weeklyT('nav.weeklyReports')}</div>
+              {weekly.error ? (
+                <div className="small text-danger">{weekly.error}</div>
+              ) : latestReport ? (
+                <>
+                  <div className="fw-semibold">
+                    {fmtDate(latestReport.week_start)} – {fmtDate(latestReport.week_end)}
+                  </div>
+                  <div className="small text-muted">
+                    {weeklyT('field.status')}: <WeeklyBadge status={latestReport.status} />
+                    {latestReport.is_late && <> · <WeeklyBadge status="late" /></>}
+                    {' · '}{weeklyT('field.due')}: {fmtDateTime(latestReport.due_at)}
+                  </div>
+                </>
+              ) : (
+                <div className="small text-muted">
+                  {weekly.loading ? weeklyT('ui.label.loading') : weeklyT('ui.list.empty')}
+                </div>
+              )}
+            </div>
+            <Link href={weeklyHref} className="btn btn-sm btn-primary">
+              <i className="bi bi-box-arrow-up-right me-1" />
+              {canSubmitWeekly ? weeklyT('ui.label.submitWeekly') : weeklyT('ui.label.openWorkspace')}
+            </Link>
+          </div>
+        </div>
+      )}
 
       <div className="row g-3 mb-4">
         <StatCard label="Transactions today" value={data.my_transactions_today} tone="primary" icon="bi-receipt" />

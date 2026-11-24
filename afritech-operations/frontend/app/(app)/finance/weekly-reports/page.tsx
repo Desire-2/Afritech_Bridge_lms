@@ -13,7 +13,8 @@ import { Field, SelectInput, TextInput } from '@/components/form';
 import { useWeeklyI18n, WeeklyLangSwitcher } from '@/lib/weekly-i18n';
 import ReportDashboard from '@/components/weekly/ReportDashboard';
 import {
-  WeekOption, WeeklyBadge, weekOptionLabel, weeklyErrorMessage, weeklyPaginationLabels,
+  WEEKLY_TABS, WeekOption, WeeklyBadge, WeeklyTab, weekOptionLabel,
+  weeklyErrorMessage, weeklyPaginationLabels,
 } from '@/components/weekly/weekly-shared';
 
 export default function WeeklyReportsPage() {
@@ -27,6 +28,7 @@ export default function WeeklyReportsPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
+  const [deepLink, setDeepLink] = useState<{ report?: number; tab?: WeeklyTab }>({});
 
   const policyData = useFetch<any>('/api/weekly-reports/policy');
   const weeksData = useFetch<any>('/api/weekly-reports/weeks');
@@ -47,6 +49,25 @@ export default function WeeklyReportsPage() {
       setWeekStart(weeksData.data.current.week_start);
     }
   }, [weeksData.data, weekStart]);
+
+  // Dashboard shortcut: ?report=<id>&tab=<key> opens the exact report and tab
+  // where the agent declares shortages and submits. Read after mount so the
+  // client page does not need a Suspense boundary for useSearchParams().
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const report = Number(params.get('report'));
+    const requestedTab = params.get('tab');
+    setDeepLink({
+      report: Number.isInteger(report) && report > 0 ? report : undefined,
+      tab: WEEKLY_TABS.some((item) => item.key === requestedTab)
+        ? requestedTab as WeeklyTab
+        : undefined,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (deepLink.report) setSelectedId(deepLink.report);
+  }, [deepLink.report]);
 
   if (loading) return <Loading label={t('ui.label.loading')} />;
   if (!can(user, P.weeklyReportsView)) {
@@ -104,6 +125,7 @@ export default function WeeklyReportsPage() {
             <i className="bi bi-arrow-left me-1" />{t('ui.label.backToQueue')}
           </button>
           <ReportDashboard reportId={selectedId} policy={policyData.data?.policy}
+            initialTab={deepLink.tab}
             onChanged={() => { list.reload(); weeksData.reload(); }} />
         </>
       ) : (

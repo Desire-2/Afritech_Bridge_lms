@@ -37,10 +37,11 @@ type Props = {
   reportId: number;
   policy?: WeeklyPolicy | null;
   reviewMode?: boolean;
+  initialTab?: WeeklyTab;
   onChanged?: () => void;
 };
 
-export default function ReportDashboard({ reportId, policy, reviewMode = false, onChanged }: Props) {
+export default function ReportDashboard({ reportId, policy, reviewMode = false, initialTab, onChanged }: Props) {
   const { t, statusLabel } = useWeeklyI18n();
   const me = getUserCache();
   const canSubmit = can(me, P.weeklyReportsSubmit);
@@ -48,7 +49,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const canAdjust = can(me, P.weeklyReportsAdjust);
   const canExport = can(me, P.weeklyReportsExport);
 
-  const [tab, setTab] = useState<WeeklyTab>('overview');
+  const [tab, setTab] = useState<WeeklyTab>(
+    initialTab && WEEKLY_TABS.some((item) => item.key === initialTab) ? initialTab : 'overview');
   const [txFilters, setTxFilters] = useState<TxFilters>(EMPTY_TX_FILTERS);
   const [txRow, setTxRow] = useState<any | null>(null);
   const [closingRow, setClosingRow] = useState<any | null>(null);
