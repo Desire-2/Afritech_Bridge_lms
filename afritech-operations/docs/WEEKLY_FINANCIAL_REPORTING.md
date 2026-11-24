@@ -68,6 +68,9 @@ while the report keeps its business `timezone_name`. A scheduler run on Sunday
 creates and reminds for the **completed** Sunday–Saturday week, not the week that
 has just begun. Historical weeks are available through
 `GET /api/weekly-reports/weeks` (current, previous and 11 older weeks by default).
+Service Agents get a **Generate my weekly report** button because `POST /generate`
+now accepts `weekly_reports.submit` and forces the target employee to the
+caller's own row.
 
 ## 3. Reconciliation formula
 
@@ -175,6 +178,28 @@ After submission, a reviewer uses `POST /{id}/review` with
 a negative personal-payment answer cannot be verified for deduction. Both
 decisions write audit rows and notify the agent; submission notifies reviewers.
 
+### 4.2 Service Agent submission card
+
+Service Agents do not have `weekly_reports.manage`, but `POST /generate` also
+accepts `weekly_reports.submit`: without an `employee_id` it creates (or returns)
+the agent's own report for the backend-normalised week. An explicit
+`employee_id` is allowed only when it is the agent's own row, so one agent can
+never generate another agent's report. The UI's **Generate my weekly report**
+button calls this endpoint and opens the returned report id directly.
+
+The agent's declaration card on the shortage/surplus tab records:
+
+- `declared_submitted_amount` — the total amount the agent says she submitted;
+- `submission_funding_source` — `agent_phone`, `company` or `someone_else`.
+
+Both fields are editable through `PATCH /{id}` and accepted by `POST /{id}/submit`;
+they are frozen with the snapshot once the report is submitted. They are a
+declaration only: `agent_reported_submitted` still comes from the MoMo/bank rows
+and `verified_submitted` still counts only reviewer-verified transfers. Selecting
+`agent_phone` never clears a shortage by itself. The per-cost "own funds?"
+answer remains separate, on the **Official costs** tab, where it is tied to one
+verified `OfficialCostPayment` claim.
+
 ## 5. Workflow and state machine
 
 States: `draft`, `ready_for_submission`, `submitted`,
@@ -245,10 +270,10 @@ Base path: `/api/weekly-reports`
 | GET | `/weeks` | Available current/previous/historical weeks with counts |
 | GET | `/queue` | Manager/Accountant review queue |
 | GET | `""` | Permission/branch/agent-scoped list |
-| POST | `/generate` | Idempotent manual generation (admin/manager) |
+| POST | `/generate` | Idempotent generation: admin/manager for any in-scope agent; Service Agent for herself only |
 | GET | `/{id}` | Report, calculation, submissions, adjustments, allocations, transitions |
-| PATCH | `/{id}` | Save editable declaration fields |
-| POST | `/{id}/submit` | Submit/resubmit (JSON or multipart with evidence) |
+| PATCH | `/{id}` | Save editable declaration fields, including weekly submitted amount and funding source |
+| POST | `/{id}/submit` | Submit/resubmit (JSON or multipart with evidence and submission declaration) |
 | GET | `/{id}/transactions` | Filtered, paginated underlying transactions |
 | GET | `/{id}/daily-closings` | Per-day rows, missing list, override |
 | GET | `/{id}/expenses` | Eligible expense rows |
@@ -283,7 +308,7 @@ locked `calculation` used on screen:
 10. Other approved cash outflows
 11. Commission retained (only if configured)
 12. Expected remittance / expected submission
-13. Agent-reported MoMo/bank submissions
+13. Agent-reported MoMo/bank submissions with declared weekly amount and funding source
 14. Reviewer-verified money submissions
 15. Shortage amount
 16. Surplus amount
@@ -363,6 +388,12 @@ for recalculation. Already-submitted and approved reports keep their frozen
 periods, calculations and snapshots. Every repair writes an audit row. Downgrade
 drops only the claim table and its indexes.
 
+Migration `a9d4e7f16c20` (`down_revision = c2f8a7d41b90`) adds the
+`weekly_reports.declared_submitted_amount` and `submission_funding_source`
+columns with defaults (`0` and `agent_phone`). It is additive: existing reports
+keep their submission snapshots and verified totals, and downgrade drops only
+these two columns.
+
 No existing table or row is dropped during upgrade; historical snapshots are
 never silently rewritten.
 
@@ -399,7 +430,11 @@ selection, that only verified own-funds claims (including partial amounts)
 reduce remittance, duplicate and evidence validation, bilingual export of the
 claim/reference/provider/date/evidence/reviewer fields with masked phone
 numbers, and a continuous generate → claim → submit → verify cost → verify MoMo
-→ approve → export flow that preserves the approved snapshot and audit trail.
+→ approve → export flow that preserves the approved snapshot and audit trail. It
+also proves the Service Agent can generate only her own report, that the weekly
+submitted-amount/funding-source declaration saves, validates, submits and freezes
+with the snapshot, and that these declaration fields never replace verified
+transfer totals.
 `tests/test_weekly_permissions_migration.py` proves an existing installation
 gains the restricted permission family, repairs only draft/deadline periods and
 preserves submitted/approved snapshots on upgrade, and loses only the weekly

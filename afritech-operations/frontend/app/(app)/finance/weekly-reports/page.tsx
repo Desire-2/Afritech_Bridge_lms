@@ -42,6 +42,7 @@ export default function WeeklyReportsPage() {
 
   const canReview = can(user, P.weeklyReportsReview);
   const canManage = can(user, P.weeklyReportsManage);
+  const canGenerate = canManage || can(user, P.weeklyReportsSubmit);
   const weeks: WeekOption[] = weeksData.data?.weeks || [];
 
   useEffect(() => {
@@ -79,10 +80,17 @@ export default function WeeklyReportsPage() {
     setActionError('');
     setNotice('');
     try {
-      await api('/api/weekly-reports/generate', {
+      const result = await api<any>('/api/weekly-reports/generate', {
         method: 'POST',
         body: { week_start: weekStart || undefined },
       });
+      // An agent generation returns that agent's own report. Open it straight
+      // away on the declaration tab instead of leaving her to hunt in the list.
+      if (result?.report?.id) {
+        const id = Number(result.report.id);
+        setDeepLink((old) => ({ ...old, report: id, tab: 'shortage' }));
+        setSelectedId(id);
+      }
       setNotice(t('ui.label.generated'));
       list.reload();
       weeksData.reload();
@@ -106,9 +114,9 @@ export default function WeeklyReportsPage() {
                 <i className="bi bi-clipboard-check me-1" />{t('nav.weeklyReview')}
               </Link>
             )}
-            {canManage && (
+            {canGenerate && (
               <button type="button" className="btn btn-primary btn-sm" onClick={generate} disabled={busy}>
-                <i className="bi bi-plus-circle me-1" />{busy ? t('ui.label.generating') : t('action.generate')}
+                <i className="bi bi-plus-circle me-1" />{busy ? t('ui.label.generating') : canManage ? t('action.generate') : t('action.generateMine')}
               </button>
             )}
           </>
@@ -121,7 +129,7 @@ export default function WeeklyReportsPage() {
       {selectedId ? (
         <>
           <button type="button" className="btn btn-sm btn-outline-secondary mb-3"
-            onClick={() => setSelectedId(null)}>
+            onClick={() => { setSelectedId(null); setDeepLink({}); }}>
             <i className="bi bi-arrow-left me-1" />{t('ui.label.backToQueue')}
           </button>
           <ReportDashboard reportId={selectedId} policy={policyData.data?.policy}
@@ -192,7 +200,7 @@ export default function WeeklyReportsPage() {
               {(list.data?.items || []).map((r: any) => (
                 <div key={r.id} className="d-flex justify-content-between align-items-center flex-wrap gap-2 py-2 border-bottom">
                   <button type="button" className="btn btn-link text-start p-0 fw-semibold"
-                    onClick={() => setSelectedId(r.id)}>
+                    onClick={() => { setSelectedId(r.id); setDeepLink({}); }}>
                     {r.report_number}
                     <span className="d-block small text-muted fw-normal">
                       {fmtDate(r.week_start)} – {fmtDate(r.week_end)}
@@ -207,7 +215,7 @@ export default function WeeklyReportsPage() {
                     <span className="small text-muted">{fmtDateTime(r.submitted_at)}</span>
                     <WeeklyBadge status={r.status} />
                     <button type="button" className="btn btn-sm btn-outline-primary"
-                      onClick={() => setSelectedId(r.id)}>{t('ui.label.view')}</button>
+                      onClick={() => { setSelectedId(r.id); setDeepLink({}); }}>{t('ui.label.view')}</button>
                   </div>
                 </div>
               ))}

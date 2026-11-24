@@ -48,6 +48,7 @@ export function weeklyErrorMessage(err: any, t: (key: string) => string): string
     'weekly_report.reason_required': 'ui.error.required',
     'weekly_report.reference_required': 'ui.error.referenceRequired',
     'weekly_report.invalid_amount': 'ui.error.amountRequired',
+    'weekly_report.invalid_submission_source': 'ui.error.required',
     'weekly_report.override_reason_required': 'ui.error.required',
     'weekly_report.override_disabled': 'ui.error.overrideDisabled',
     'weekly_report.invalid_evidence': 'ui.error.evidenceType',

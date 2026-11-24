@@ -117,7 +117,10 @@ workflow, calculation formula, policy settings and bilingual export details.
 
 - `GET /policy` · `GET /weeks`
 - `GET /queue` (reviewers) · `GET /` · `POST /generate`
+  (admin/manager for in-scope agents; Service Agent for herself only)
 - `GET/PATCH /{id}` · `POST /{id}/submit`
+  (agent declaration includes `declared_submitted_amount` and
+  `submission_funding_source`: `agent_phone` | `company` | `someone_else`)
 - `GET /{id}/transactions` · `GET /{id}/daily-closings` · `GET /{id}/expenses`
 - `POST/DELETE /{id}/momo[/…]` · `GET /{id}/evidence`
 - `POST /{id}/override` · `POST /{id}/missing-closings/override`

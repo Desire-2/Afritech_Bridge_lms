@@ -34,6 +34,10 @@ WEEKLY_REPORT_TRANSITIONS = {
 
 MOMO_PROVIDERS = ['momo', 'bank_transfer', 'cash_deposit']
 MOMO_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
+# Who funded the service amount the agent says she submitted for the week.
+# This is an agent declaration, not evidence: the reviewer still verifies the
+# underlying MoMo/bank transfer rows before any amount clears the report.
+WEEKLY_SUBMISSION_SOURCES = ['agent_phone', 'company', 'someone_else']
 # A personal payment of an official service cost has its own verification
 # lifecycle. It is never a customer Payment and never a remittance MoMo row.
 COST_PAYMENT_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
@@ -93,6 +97,11 @@ class WeeklyReport(TimestampMixin, db.Model):
     expected_remittance = db.Column(db.Numeric(16, 2), nullable=False, default=0)
     agent_reported_submitted = db.Column(db.Numeric(16, 2), nullable=False, default=0)
     verified_submitted = db.Column(db.Numeric(16, 2), nullable=False, default=0)
+    # Agent's own declaration of the weekly amount sent and who funded it.
+    # Kept separate from the verified totals so a claim cannot clear a report.
+    declared_submitted_amount = db.Column(db.Numeric(16, 2), nullable=False, default=0)
+    submission_funding_source = db.Column(
+        db.String(32), nullable=False, default='agent_phone')
     shortage_amount = db.Column(db.Numeric(16, 2), nullable=False, default=0)
     surplus_amount = db.Column(db.Numeric(16, 2), nullable=False, default=0)
     commission_earned = db.Column(db.Numeric(16, 2), nullable=False, default=0)
@@ -173,6 +182,8 @@ class WeeklyReport(TimestampMixin, db.Model):
             'expected_remittance': f(self.expected_remittance),
             'agent_reported_submitted': f(self.agent_reported_submitted),
             'verified_submitted': f(self.verified_submitted),
+            'declared_submitted_amount': f(self.declared_submitted_amount),
+            'submission_funding_source': self.submission_funding_source,
             'shortage_amount': f(self.shortage_amount),
             'surplus_amount': f(self.surplus_amount),
             'commission_earned': f(self.commission_earned),

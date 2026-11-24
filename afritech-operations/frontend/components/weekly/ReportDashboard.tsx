@@ -71,6 +71,9 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const [claimReviewNote, setClaimReviewNote] = useState<Record<number, string>>({});
 
   const [shortageForm, setShortageForm] = useState<Record<string, string>>({});
+  const [submissionForm, setSubmissionForm] = useState<Record<string, string>>({
+    declared_submitted_amount: '', submission_funding_source: 'agent_phone',
+  });
   const [shortageEvidence, setShortageEvidence] = useState<File | null>(null);
   const [submissionNote, setSubmissionNote] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -79,6 +82,13 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const [adjustForm, setAdjustForm] = useState<Record<string, string>>({
     kind: ADJUSTMENT_KINDS[0], label: '', original_amount: '0', adjusted_amount: '0', reason: '',
   });
+
+  // The dashboard shortcut and self-generation both request the tab that holds
+  // the declaration/submit controls. React keeps this component mounted when
+  // only the requested tab changes, so honour later requests too.
+  useEffect(() => {
+    if (initialTab && WEEKLY_TABS.some((item) => item.key === initialTab)) setTab(initialTab);
+  }, [initialTab]);
 
   const detail = useFetch<any>(reportId ? `/api/weekly-reports/${reportId}` : '', [reportId]);
   const report: ReportDetail | null = detail.data?.report || null;
@@ -123,6 +133,11 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
       shortage_explanation: report.shortage_explanation || '',
       expected_resolution_date: report.expected_resolution_date || '',
       override_reason: report.override_reason || '',
+    });
+    setSubmissionForm({
+      declared_submitted_amount: report.declared_submitted_amount != null
+        ? String(report.declared_submitted_amount) : '',
+      submission_funding_source: report.submission_funding_source || 'agent_phone',
     });
     setOverrideReason(report.override_reason || '');
     setSubmissionNote('');
@@ -171,6 +186,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
         shortage_reason_category: shortageForm.shortage_reason_category || null,
         shortage_explanation: shortageForm.shortage_explanation || null,
         expected_resolution_date: shortageForm.expected_resolution_date || null,
+        declared_submitted_amount: submissionForm.declared_submitted_amount,
+        submission_funding_source: submissionForm.submission_funding_source,
       },
     }, 'ui.label.saved');
   }
@@ -178,6 +195,18 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   async function submitReport(e: React.FormEvent) {
     e.preventDefault();
     if (!editable) return;
+    const declared = Number(submissionForm.declared_submitted_amount);
+    const sources: string[] = policy?.submission_sources
+      || ['agent_phone', 'company', 'someone_else'];
+    if (submissionForm.declared_submitted_amount === ''
+      || !Number.isFinite(declared) || declared < 0) {
+      setActionError(t('ui.error.amountRequired'));
+      return;
+    }
+    if (!sources.includes(submissionForm.submission_funding_source)) {
+      setActionError(t('ui.error.required'));
+      return;
+    }
     const shortage = Number(c.shortage_amount || 0);
     const explained = !!shortageForm.shortage_reason_category && !!shortageForm.shortage_explanation?.trim();
     const evidenced = !!report?.shortage_evidence_path || !!shortageEvidence
@@ -205,6 +234,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     data.set('expected_resolution_date', shortageForm.expected_resolution_date || '');
     data.set('override_reason', shortageForm.override_reason || '');
     data.set('submission_note', submissionNote || '');
+    data.set('declared_submitted_amount', submissionForm.declared_submitted_amount);
+    data.set('submission_funding_source', submissionForm.submission_funding_source);
     if (shortageEvidence) data.set('evidence', shortageEvidence);
     await run(`/api/weekly-reports/${reportId}/submit`, { method: 'POST', formData: data },
       'ui.label.submitted');
@@ -473,6 +504,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
       ['field.commissionRetained', 'commission_retained'],
       ['field.expectedRemittance', 'expected_remittance'],
       ['field.agentReported', 'agent_reported_submitted'],
+      ['field.declaredSubmitted', 'declared_submitted_amount'],
       ['field.verifiedSubmitted', 'verified_submitted'],
       ['field.shortage', 'shortage_amount'],
       ['field.surplus', 'surplus_amount'],
@@ -489,7 +521,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
             <span className="me-3"><strong>{t('field.week')}:</strong> {fmtDate(report.week_start)} – {fmtDate(report.week_end)}</span>
             <span className="me-3"><strong>{t('field.due')}:</strong> {fmtDateTime(report.due_at)}</span>
             <span className="me-3"><strong>{t('field.status')}:</strong> <WeeklyBadge status={report.status} /></span>
-            <span><strong>{t('field.transactionCount')}:</strong> {calc.transaction_count ?? '—'} ({calc.eligible_transaction_count ?? 0} {t('ui.label.eligible')})</span>
+            <span className="me-3"><strong>{t('field.transactionCount')}:</strong> {calc.transaction_count ?? '—'} ({calc.eligible_transaction_count ?? 0} {t('ui.label.eligible')})</span>
+            <span><strong>{t('field.submissionFundingSource')}:</strong> {t(`ui.source.${report.submission_funding_source || 'agent_phone'}`)}</span>
           </div>
           {report.is_late && <div className="small text-danger mt-2"><WeeklyBadge status="late" /></div>}
         </div>
@@ -1261,6 +1294,45 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     return (
       <div>
         <div className="alert alert-info py-2 small">{t('ui.label.shortageNote')}</div>
+        <div className="card mb-3">
+          <div className="card-header py-2 small fw-semibold">{t('ui.label.weeklySubmission')}</div>
+          <div className="card-body">
+            <div className="alert alert-warning py-2 small mb-3">
+              {t('ui.label.fundingSourceHelp')}
+            </div>
+            <div className="row g-3">
+              <div className="col-md-4">
+                <Field label={t('field.declaredSubmitted')} required>
+                  <TextInput type="number" step="0.01" min="0" disabled={!editable}
+                    value={submissionForm.declared_submitted_amount}
+                    onChange={(e) => setSubmissionForm({
+                      ...submissionForm, declared_submitted_amount: e.target.value,
+                    })} />
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label={t('field.submissionFundingSource')} required>
+                  <SelectInput disabled={!editable}
+                    value={submissionForm.submission_funding_source}
+                    onChange={(e) => setSubmissionForm({
+                      ...submissionForm, submission_funding_source: e.target.value,
+                    })}>
+                    {(policy?.submission_sources || ['agent_phone', 'company', 'someone_else']).map((s: string) => (
+                      <option key={s} value={s}>{t(`ui.source.${s}`)}</option>
+                    ))}
+                  </SelectInput>
+                </Field>
+              </div>
+              <div className="col-md-4">
+                <Field label={t('field.verifiedSubmitted')}>
+                  <div className="form-control-plaintext small fw-semibold">
+                    {fmtMoney(c.verified_submitted)}
+                  </div>
+                </Field>
+              </div>
+            </div>
+          </div>
+        </div>
         <div className="row g-3 mb-3">
           <div className="col-md-4"><StatCard label={t('field.expectedRemittance')} value={fmtMoney(c.expected_remittance)} /></div>
           <div className="col-md-4"><StatCard label={t('field.verifiedSubmitted')} value={fmtMoney(c.verified_submitted)} /></div>

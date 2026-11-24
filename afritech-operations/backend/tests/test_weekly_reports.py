@@ -375,8 +375,15 @@ class TestGeneration:
     def test_manual_generation_permissions(self, client, admin_hdr, agent_hdr, manager_hdr):
         emp = _agent()
         week = _future_week()
-        assert client.post('/api/weekly-reports/generate', headers=agent_hdr,
-                           json={'employee_id': emp.id, 'week_start': week.isoformat()}).status_code == 403
+        own = client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                          json={'employee_id': emp.id, 'week_start': week.isoformat()})
+        assert own.status_code == 201, own.get_data(as_text=True)
+        _TRACKED_REPORT_IDS.add(own.get_json()['report']['id'])
+        # Agents may generate their own report but never one for a colleague.
+        other = client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                            json={'employee_id': _agent2().id,
+                                  'week_start': week.isoformat()})
+        assert other.status_code == 403
         # Managers can generate only for employees in their own branch.
         manager_emp = _user('manager@afritech.dev').employee
         assert _generate(client, manager_hdr, manager_emp, week).employee_id == manager_emp.id
@@ -1795,3 +1802,74 @@ class TestReviewFindings:
         good = _momo(client, agent_hdr, report.id, reference='WKM-GOOD-DATE',
                      submitted_at=(week + timedelta(days=1)).isoformat())
         assert good['reference'] == 'WKM-GOOD-DATE'
+
+
+class TestAgentWeeklySubmissionWorkflow:
+    """The Service Agent can generate, declare, submit and freeze her report."""
+
+    def test_agent_generates_only_her_own_report(self, client, agent_hdr):
+        week = _future_week()
+        r = client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                        json={'week_start': week.isoformat()})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        body = r.get_json()
+        report = WeeklyReport.query.get(body['report']['id'])
+        _TRACKED_REPORT_IDS.add(report.id)
+        assert report.employee_id == _agent().id
+        assert report.week_start == week
+        assert body['created'] is True
+
+        again = client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                            json={'week_start': week.isoformat()})
+        assert again.status_code == 200, again.get_data(as_text=True)
+        assert again.get_json()['created'] is False
+
+        other = client.post('/api/weekly-reports/generate', headers=agent_hdr,
+                            json={'employee_id': _agent2().id,
+                                  'week_start': week.isoformat()})
+        assert other.status_code == 403
+
+    def test_submission_declaration_saves_and_is_frozen(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        r = client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                         json={'declared_submitted_amount': 1250.5,
+                               'submission_funding_source': 'company'})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        detail = _detail(client, agent_hdr, report.id)
+        assert detail['declared_submitted_amount'] == 1250.5
+        assert detail['submission_funding_source'] == 'company'
+
+        for bad in ({'declared_submitted_amount': -1},
+                    {'declared_submitted_amount': 'many'},
+                    {'submission_funding_source': 'unknown'}):
+            invalid = client.patch(f'/api/weekly-reports/{report.id}',
+                                   headers=agent_hdr, json=bad)
+            assert invalid.status_code == 400, invalid.get_data(as_text=True)
+
+        submitted = _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': '1250.50',
+            'submission_funding_source': 'company',
+        })
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+        body = submitted.get_json()['report']
+        assert body['declared_submitted_amount'] == 1250.5
+        assert body['submission_funding_source'] == 'company'
+        components = body['calculation']['components']
+        assert components['declared_submitted_amount'] == '1250.50'
+        assert components['submission_funding_source'] == 'company'
+        assert 'declared=1250.50' in body['calculation']['statement'][12]['value']
+        assert 'funded_by=company' in body['calculation']['statement'][12]['value']
+        assert 'company' in WeeklyReport.query.get(report.id).snapshot
+
+        locked = client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                              json={'declared_submitted_amount': 1})
+        assert locked.status_code == 409
+
+    def test_submit_validates_declaration(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        for bad in ({'declared_submitted_amount': -5},
+                    {'submission_funding_source': 'someone'}):
+            r = _submit(client, agent_hdr, report.id, payload=bad)
+            assert r.status_code == 400, r.get_data(as_text=True)
+            assert WeeklyReport.query.get(report.id).status in (
+                'draft', 'ready_for_submission', 'late')

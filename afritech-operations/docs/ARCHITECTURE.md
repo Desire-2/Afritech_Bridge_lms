@@ -75,6 +75,18 @@ adapter (`/api/integrations/lms/*`) can sync courses, cohorts, and learners.
    mandatory reason, releases the lock, notifies the agent and writes a dedicated
    `closing_admin_status_override` audit entry. Managers cannot break the lock.
 
+### Weekly financial report
+1. The Service Agent generates her own Sunday–Saturday report through
+   `POST /api/weekly-reports/generate`; the endpoint pins the employee to the
+   caller, while managers/admins keep their scoped bulk generation.
+2. On the shortage/surplus tab she declares the weekly amount submitted and who
+   funded it (`agent_phone`, `company` or `someone_else`) alongside any shortage
+   explanation/evidence, then submits through `POST /{id}/submit`.
+3. The declaration is informational and freezes with the snapshot. Shortage and
+   surplus are still driven by reviewer-verified MoMo/bank transfers, and an
+   official cost is deductible only through a verified personal-payment claim
+   recorded on the Official costs tab.
+
 ### Payroll
 1. `POST /api/payroll/periods` builds a `PayrollItem` per active employee
    (`net = base + commission + bonus/deduction/adjustment`).

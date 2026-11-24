@@ -9,7 +9,7 @@ from ..extensions import db
 from ..models import (
     AuditLog, Employee, MoMoSubmission, OfficialCostPayment, Setting, User,
     WeeklyReport, MOMO_PROVIDERS, SHORTAGE_REASON_CATEGORIES,
-    WEEKLY_REPORT_STATUSES,
+    WEEKLY_REPORT_STATUSES, WEEKLY_SUBMISSION_SOURCES,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
@@ -83,6 +83,7 @@ def policy():
         'statuses': WEEKLY_REPORT_STATUSES,
         'shortage_reason_categories': SHORTAGE_REASON_CATEGORIES,
         'momo_providers': MOMO_PROVIDERS,
+        'submission_sources': WEEKLY_SUBMISSION_SOURCES,
         'languages': list(SUPPORTED_LANGUAGES),
         'current_week': [d.isoformat() for d in week_bounds()],
     })
@@ -159,11 +160,23 @@ def list_reports():
 
 
 @bp.post('/generate')
-@require_permission('weekly_reports.manage')
+@require_any_permission('weekly_reports.manage', 'weekly_reports.submit')
 def generate():
     data = parse_json()
     user = current_user()
     employee_id = data.get('employee_id')
+    # Service Agents do not have manage access, but they must be able to create
+    # their own weekly report. Force the target to their own employee row and
+    # ignore any attempt to generate on behalf of a colleague.
+    agent_self_service = (not _is_reviewer(user)
+                          and user.has_permission('weekly_reports.submit'))
+    if agent_self_service:
+        mine = current_employee()
+        if not mine:
+            return json_error('No employee account is linked to this user', 403)
+        if employee_id and str(employee_id) != str(mine.id):
+            return json_error('You can only generate your own weekly report', 403)
+        employee_id = mine.id
     week_start, err = parse_date(data.get('week_start'), 'week_start')
     if err:
         return err

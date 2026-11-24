@@ -4,7 +4,7 @@ import json
 import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from flask import current_app
 
@@ -15,6 +15,7 @@ from ..models import (
     WeeklyReport, WeeklyReportAdjustment, WeeklyReportExpense,
     WEEKLY_REPORT_TRANSITIONS, ADJUSTMENT_KINDS, SHORTAGE_REASON_CATEGORIES,
     COST_PAYMENT_VERIFICATION_STATUSES, MOMO_PROVIDERS,
+    WEEKLY_SUBMISSION_SOURCES,
 )
 from ..auth.scope import service_agent_employee_ids
 from .audit import audit
@@ -446,6 +447,8 @@ class WeeklyReportService:
                 'expected_remittance': _str(expected),
                 'agent_reported_submitted': _str(momo_reported),
                 'verified_submitted': _str(momo_verified),
+                'declared_submitted_amount': _str(report.declared_submitted_amount),
+                'submission_funding_source': report.submission_funding_source,
                 'shortage_amount': _str(shortage),
                 'surplus_amount': _str(surplus),
                 'commission_earned': _str(commission),
@@ -468,6 +471,8 @@ class WeeklyReportService:
             'adjustments': adjustments,
             'allocations': allocation_rows,
             'declaration': {
+                'declared_submitted_amount': _str(report.declared_submitted_amount),
+                'submission_funding_source': report.submission_funding_source,
                 'shortage_reason_category': report.shortage_reason_category,
                 'shortage_explanation': report.shortage_explanation,
                 'shortage_evidence_name': report.shortage_evidence_name,
@@ -532,7 +537,11 @@ class WeeklyReportService:
             c['other_outflows'],
             c['commission_retained'],
             c['expected_remittance'],
-            c['agent_reported_submitted'],
+            _joined(
+                c['agent_reported_submitted'],
+                f'declared={c["declared_submitted_amount"]}',
+                f'funded_by={c["submission_funding_source"]}',
+            ),
             c['verified_submitted'],
             c['shortage_amount'],
             c['surplus_amount'],
@@ -672,6 +681,8 @@ class WeeklyReportService:
         payload['adjustments'] = [a.to_dict() for a in report.adjustments]
         payload['allocations'] = [a.to_dict() for a in report.allocations]
         payload['declaration'] = {
+            'declared_submitted_amount': _str(report.declared_submitted_amount),
+            'submission_funding_source': report.submission_funding_source,
             'shortage_reason_category': report.shortage_reason_category,
             'shortage_explanation': report.shortage_explanation,
             'shortage_evidence_name': report.shortage_evidence_name,
@@ -749,6 +760,8 @@ class WeeklyReportService:
         c['expected_remittance'] = _str(expected)
         c['agent_reported_submitted'] = _str(momo_reported)
         c['verified_submitted'] = _str(momo_verified)
+        c['declared_submitted_amount'] = _str(report.declared_submitted_amount)
+        c['submission_funding_source'] = report.submission_funding_source
         c['shortage_amount'] = _str(max(Decimal('0'), expected - momo_verified))
         c['surplus_amount'] = _str(max(Decimal('0'), momo_verified - expected))
         c['opening_outstanding'] = _str(report.opening_outstanding)
@@ -808,6 +821,18 @@ class WeeklyReportService:
               user=actor, reason=reason)
         return report
 
+    @staticmethod
+    def _parse_declared_amount(value):
+        try:
+            amount = _dec(value)
+        except (InvalidOperation, ValueError, TypeError):
+            raise WeeklyReportError('Amount submitted must be a valid number',
+                                    'weekly_report.invalid_amount', 400)
+        if amount < 0:
+            raise WeeklyReportError('Amount submitted cannot be negative',
+                                    'weekly_report.invalid_amount', 400)
+        return amount
+
     def update_draft(self, report, data, actor):
         if report.status not in ('draft', 'ready_for_submission',
                                  'returned_for_correction', 'late'):
@@ -819,10 +844,16 @@ class WeeklyReportService:
             'shortage_explanation': 'shortage_explanation',
             'expected_resolution_date': 'expected_resolution_date',
             'override_reason': 'override_reason',
+            'declared_submitted_amount': 'declared_submitted_amount',
+            'submission_funding_source': 'submission_funding_source',
         }
         previous = {}
         for key, attr in allowed.items():
-            if key not in data:
+            # An empty string clears optional text fields but never erases a
+            # money declaration or its required funding source.
+            if key not in data or (key in ('declared_submitted_amount',
+                                          'submission_funding_source')
+                                   and data.get(key) in (None, '')):
                 continue
             previous[attr] = getattr(report, attr)
             value = data.get(key)
@@ -832,6 +863,14 @@ class WeeklyReportService:
                 except ValueError:
                     raise WeeklyReportError('Invalid expected resolution date',
                                             'weekly_report.invalid_date', 400)
+            elif key == 'declared_submitted_amount':
+                value = self._parse_declared_amount(value)
+            elif key == 'submission_funding_source':
+                value = str(value).strip()
+                if value not in WEEKLY_SUBMISSION_SOURCES:
+                    raise WeeklyReportError(
+                        'Funding source must be agent_phone, company or someone_else',
+                        'weekly_report.invalid_submission_source', 400)
             setattr(report, attr, value)
         if previous:
             audit('weekly_report_draft_updated', 'weekly_report', report.id,
@@ -862,6 +901,16 @@ class WeeklyReportService:
             except ValueError:
                 raise WeeklyReportError('Invalid expected resolution date',
                                         'weekly_report.invalid_date', 400)
+        if data.get('declared_submitted_amount') not in (None, ''):
+            report.declared_submitted_amount = self._parse_declared_amount(
+                data['declared_submitted_amount'])
+        if data.get('submission_funding_source') not in (None, ''):
+            source = str(data['submission_funding_source']).strip()
+            if source not in WEEKLY_SUBMISSION_SOURCES:
+                raise WeeklyReportError(
+                    'Funding source must be agent_phone, company or someone_else',
+                    'weekly_report.invalid_submission_source', 400)
+            report.submission_funding_source = source
 
         evidence = (files or {}).get('evidence')
         evidence_provided = bool(evidence and evidence.filename)
@@ -1334,7 +1383,8 @@ class WeeklyReportService:
             'authorized_receipts', 'verified_provider_payments',
             'approved_collection_expenses', 'authorized_refunds', 'other_outflows',
             'commission_retained', 'expected_remittance', 'agent_reported_submitted',
-            'verified_submitted', 'shortage_amount', 'surplus_amount',
+            'verified_submitted', 'declared_submitted_amount',
+            'shortage_amount', 'surplus_amount',
             'commission_earned', 'closing_outstanding',
         )
         components = calc.get('components', {})
