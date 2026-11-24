@@ -2,21 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate, getUserCache, can } from '@/lib/api';
+import { api, fmtMoney, fmtDate, can } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default function ClosingsPage() {
+  const { user } = useAuth();
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState('');
+  const [dateTouched, setDateTouched] = useState(false);
   const [showAllDates, setShowAllDates] = useState(false);
   const [totalsEmployeeId, setTotalsEmployeeId] = useState<number | null>(null);
   const [totalsNonce, setTotalsNonce] = useState(0);
   const [totals, setTotals] = useState<any | null>(null);
-  const [totalsFor, setTotalsFor] = useState('');
+  const [totalsKey, setTotalsKey] = useState('');
   const [loadingTotals, setLoadingTotals] = useState(false);
   const [totalErr, setTotalErr] = useState('');
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -28,68 +31,97 @@ export default function ClosingsPage() {
   const [reRunning, setReRunning] = useState<any | null>(null);
   const [error2, setError2] = useState('');
 
-  const me = getUserCache();
-  const canApprove = can(me, 'closings.approve');
+  const canApprove = can(user, 'closings.approve');
+  const canView = can(user, 'closings.view') || can(user, 'closings.submit') || canApprove;
   const dateValid = ISO_DATE.test(date);
-  const totalsCurrent = totals !== null && totalsFor === date;
+  const selectedEmployeeId = totalsEmployeeId ?? user?.employee_id ?? null;
+  const totalsCurrent = totals !== null && !!selectedEmployeeId
+    && totalsKey === `${selectedEmployeeId}:${date}`;
+
+  // The business calendar is server-authoritative. The browser's own "today"
+  // is only a fallback if this endpoint is unavailable.
+  const businessDate = useFetch<any>(canView ? '/api/closings/today' : '', [canView]);
+  const employees = useFetch<any>(canApprove ? '/api/employees?per_page=500&status=active' : '', [canApprove]);
+  const employeeOptions = employees.data?.items || [];
+  const selectedEmployeeName = employeeOptions.find((e: any) => e.id === selectedEmployeeId)?.full_name
+    || (selectedEmployeeId === user?.employee_id ? user?.employee_name : '')
+    || (selectedEmployeeId ? `Employee #${selectedEmployeeId}` : '');
+
+  useEffect(() => {
+    if (dateTouched) return;
+    if (businessDate.data?.date && ISO_DATE.test(businessDate.data.date)) {
+      setDate(businessDate.data.date);
+    } else if (businessDate.error) {
+      setDate(todayIso());
+    }
+  }, [businessDate.data?.date, businessDate.error, dateTouched]);
 
   const dateFilter = showAllDates || !dateValid ? {} : { start: date, end: date };
+  const employeeFilter = selectedEmployeeId || undefined;
   const { data, error, loading, reload } = useFetch('/api/closings',
-    [page, status, date, showAllDates],
+    [page, status, date, showAllDates, employeeFilter],
     {
       page, per_page: 15,
       status: status || undefined,
+      employee_id: employeeFilter,
       ...dateFilter,
     });
   const items = data?.items || [];
 
-  // Totals always track the selected date (and, while re-running, the employee
-  // whose closing is being re-run) — changing the date reloads them.
+  // Totals always track the selected date AND employee. The response echo
+  // keys the cache so a late/other-employee reply can never be shown as if it
+  // belonged to the current selection.
   useEffect(() => {
     if (!dateValid) {
       setTotals(null);
-      setTotalsFor('');
+      setTotalsKey('');
       setLoadingTotals(false);
       setTotalErr(date ? 'Date must be in YYYY-MM-DD format.' : 'Pick a date to load its totals.');
+      return;
+    }
+    if (!selectedEmployeeId) {
+      setTotals(null);
+      setTotalsKey('');
+      setLoadingTotals(false);
+      setTotalErr('Select an employee to load totals.');
       return;
     }
     let cancelled = false;
     setLoadingTotals(true);
     setTotalErr('');
-    const empId = totalsEmployeeId ?? me?.employee_id;
-    const qs = new URLSearchParams({ date });
-    if (empId) qs.set('employee_id', String(empId));
+    const qs = new URLSearchParams({ date, employee_id: String(selectedEmployeeId) });
     api<any>(`/api/closings/totals?${qs}`)
       .then((d: any) => {
         if (cancelled) return;
         setTotals(d.totals);
-        setTotalsFor(d.date);
+        setTotalsKey(`${d.employee_id}:${d.date}`);
       })
       .catch((e: any) => {
         if (cancelled) return;
         setTotals(null);
-        setTotalsFor('');
+        setTotalsKey('');
         setTotalErr(e.message || 'Could not load totals for this date.');
       })
       .finally(() => { if (!cancelled) setLoadingTotals(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, totalsEmployeeId, totalsNonce]);
+  }, [date, selectedEmployeeId, totalsNonce]);
 
-  const canSubmit = dateValid && totalsCurrent && !loadingTotals && !totalErr
+  const canSubmit = dateValid && !!selectedEmployeeId && totalsCurrent && !loadingTotals && !totalErr
     && (canApprove || actualCash !== '');
 
   function pickDate(value: string) {
+    setDateTouched(true);
     setDate(value);
     setPage(1);
-    // A date change starts a fresh run — drop any re-run pinned to another date.
+    // Only the re-run context is dropped; the chosen employee is preserved.
     setReRunning(null);
-    setTotalsEmployeeId(null);
   }
 
   function rerunClosing(c: any) {
     setReRunning(c);
     setTotalsEmployeeId(c.employee_id ?? null);
+    setDateTouched(true);
     setDate(c.closing_date);
     setPage(1);
     setActualCash(c.actual_cash !== null && c.actual_cash !== undefined ? String(c.actual_cash) : '');
@@ -105,11 +137,11 @@ export default function ClosingsPage() {
     setError2('');
     try {
       const body: any = { closing_date: date, actual_cash: actualCash !== '' ? Number(actualCash) : undefined, notes: notes || undefined };
-      if (reRunning) body.employee_id = reRunning.employee_id;
+      if (selectedEmployeeId) body.employee_id = selectedEmployeeId;
       await api('/api/closings/submit', { method: 'POST', body });
       setSubmitOpen(false);
       setReRunning(null);
-      setTotalsEmployeeId(null);
+      if (!canApprove) setTotalsEmployeeId(null);
       setActualCash('');
       setNotes('');
       setPage(1);
@@ -147,7 +179,7 @@ export default function ClosingsPage() {
       <PageHeader title="Daily Closing" subtitle="End-of-day cash reconciliation and approval"
         actions={
           <button className="btn btn-primary"
-            onClick={() => { setReRunning(null); setTotalsEmployeeId(null); setActualCash(''); setNotes(''); setError2(''); setSubmitOpen(true); }}>
+            onClick={() => { setReRunning(null); setActualCash(''); setNotes(''); setError2(''); setSubmitOpen(true); }}>
             <i className="bi bi-cash-coin me-1" /> Run closing
           </button>
         } />
@@ -158,16 +190,33 @@ export default function ClosingsPage() {
             <div className="card-body">
               <h6 className="card-title fw-semibold">
                 Expected totals for {dateValid ? fmtDate(date) : '—'}
-                {reRunning?.employee_name && (
-                  <span className="text-muted fw-normal small"> · {reRunning.employee_name}</span>
+                {selectedEmployeeName && (
+                  <span className="text-muted fw-normal small"> · {selectedEmployeeName}</span>
                 )}
               </h6>
+              {canApprove && (
+                <div className="mb-2">
+                  <label className="form-label small text-muted mb-1" htmlFor="closingEmployee">Employee</label>
+                  <select id="closingEmployee" className="form-select form-select-sm"
+                    value={selectedEmployeeId ?? ''}
+                    onChange={(e) => {
+                      setTotalsEmployeeId(e.target.value ? Number(e.target.value) : null);
+                      setPage(1);
+                    }}>
+                    <option value="">Select an employee…</option>
+                    {employeeOptions.map((emp: any) => (
+                      <option key={emp.id} value={emp.id}>{emp.full_name || emp.email || `#${emp.id}`}</option>
+                    ))}
+                  </select>
+                  {employees.loading && <div className="small text-muted mt-1">Loading employees…</div>}
+                </div>
+              )}
               <div className="input-group mb-2">
                 <input type="date" className="form-control form-control-sm" value={date}
                   aria-label="Closing date" onChange={(e) => pickDate(e.target.value)} />
                 <button className="btn btn-sm btn-outline-primary"
                   onClick={() => setTotalsNonce((n) => n + 1)}
-                  disabled={!dateValid || loadingTotals}>
+                  disabled={!dateValid || !selectedEmployeeId || loadingTotals}>
                   {loadingTotals ? 'Loading…' : 'Load'}
                 </button>
               </div>
@@ -181,7 +230,9 @@ export default function ClosingsPage() {
               {totalsCurrent && (
                 <>
                   {Number(totals.transaction_count) === 0 && (
-                    <p className="small text-muted mb-2">No transactions recorded on this date.</p>
+                    <p className="small text-muted mb-2">
+                      No completed transactions recorded for this employee on this date.
+                    </p>
                   )}
                   <table className="table table-sm mb-0">
                     <tbody>

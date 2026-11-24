@@ -59,10 +59,18 @@ adapter (`/api/integrations/lms/*`) can sync courses, cohorts, and learners.
 4. Later price/rate edits never rewrite past transactions (price-history tests).
 
 ### Daily closing
-1. `GET /api/closings/totals` previews an employee’s day from that day’s transactions.
-2. `POST /api/closings/submit` creates/closes it; reconciliation class from
-   `cash_difference` (shortage/overtun/balanced); notifies managers on shortage.
-3. `POST /api/closings/{id}/review` (approve/reject) locks the record.
+1. The screen takes its default day from `GET /api/closings/today` (server clock in
+   `Africa/Kigali`); the browser timezone never decides which day is being closed.
+2. `GET /api/closings/totals?date=&employee_id=` previews the **selected date's**
+   transactions for the **selected employee**. Agents are pinned to their own
+   employee row; approvers choose one. Responses echo both values so a slow reply
+   from an earlier selection can never be displayed as current.
+3. `POST /api/closings/submit` stores the same recomputed totals for that date —
+   expected cash, payments, costs, profit and commission are never copied from a
+   preview or from another day. The reconciliation class comes from
+   `cash_difference` (shortage/overtun/balanced); managers are notified on shortage.
+4. `POST /api/closings/{id}/review` (approve/reject) locks the record and audits
+   the actual previous status.
 
 ### Payroll
 1. `POST /api/payroll/periods` builds a `PayrollItem` per active employee

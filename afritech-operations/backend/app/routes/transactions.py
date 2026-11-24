@@ -300,7 +300,7 @@ def update_transaction_status(transaction_id):
     if new_status in ('cancelled', 'refunded'):
         if not user.has_permission('transactions.cancel'):
             return json_error('You do not have permission to cancel/refund transactions', 403)
-        txn.cancelled_reason = data.get('reason', 'User requested')
+        txn.cancellation_reason = data.get('reason', 'User requested')
         txn.cancelled_by = user.id
         txn.cancelled_at = datetime.now(timezone.utc)
         # Reverse the commission effect: zero commission/company profit but

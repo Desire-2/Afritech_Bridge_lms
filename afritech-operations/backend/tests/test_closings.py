@@ -1,5 +1,5 @@
 """Daily closing flow: totals preview, submit, approve/lock, tamper resistance."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 
 def _agent_token(client):
@@ -14,6 +14,25 @@ def _manager_token(client):
 
 def _hdr(token):
     return {'Authorization': f'Bearer {token}'}
+
+
+def _make_transaction(client, token, date_str, price):
+    """Create a completed cash transaction on an explicit calendar date."""
+    pm = next(p for p in client.get('/api/services/payment-methods',
+                                    headers=_hdr(token)).get_json()['payment_methods']
+              if p['code'] == 'cash')
+    service = client.get('/api/services?per_page=5', headers=_hdr(token)).get_json()['items'][0]
+    client_row = client.get('/api/clients?per_page=5', headers=_hdr(token)).get_json()['items'][0]
+    r = client.post('/api/transactions', headers=_hdr(token), json={
+        'service_id': service['id'],
+        'client_id': client_row['id'],
+        'payment_method_id': pm['id'],
+        'customer_price': price,
+        'official_cost': price / 2,
+        'transaction_date': date_str,
+    })
+    assert r.status_code == 201, r.get_data(as_text=True)
+    return r.get_json()['transaction']
 
 
 CLOSING_DATE = '2026-09-08'  # a date with no seeded closing
@@ -34,6 +53,95 @@ class TestClosingTotals:
         r = client.get('/api/closings/totals', headers=admin)
         assert r.status_code == 200
         assert r.get_json()['employee_id'] == me['employee_id']
+
+
+class TestSelectedDateTotals:
+    """The preview and the submitted closing must both use the selected date,
+    the selected employee and the server's business calendar."""
+
+    def test_today_endpoint_uses_business_timezone(self, client):
+        from app.services.weekly_policy import local_date
+
+        r = client.get('/api/closings/today', headers=_hdr(_agent_token(client)))
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body['date'] == local_date(datetime.now(timezone.utc)).isoformat()
+        assert body['timezone'] == 'Africa/Kigali'
+
+    def test_totals_and_submit_use_selected_previous_date(self, client):
+        agent = _agent_token(client)
+        me = client.get('/api/auth/me', headers=_hdr(agent)).get_json()['user']
+        employee_id = me['employee_id']
+        # Outside the seeded 30-day window, so each selected date is unique.
+        first_day = (date.today() - timedelta(days=45)).isoformat()
+        second_day = (date.today() - timedelta(days=44)).isoformat()
+        _make_transaction(client, agent, first_day, 1500)
+        _make_transaction(client, agent, second_day, 2750)
+
+        r = client.get(f'/api/closings/totals?date={first_day}&employee_id={employee_id}',
+                       headers=_hdr(agent))
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body['date'] == first_day
+        assert body['employee_id'] == employee_id
+        assert body['totals']['transaction_count'] == 1
+        assert body['totals']['customer_payments'] == '1500.00'
+        assert body['totals']['expected_cash'] == '1500.00'
+
+        r = client.get(f'/api/closings/totals?date={second_day}&employee_id={employee_id}',
+                       headers=_hdr(agent))
+        assert r.status_code == 200
+        assert r.get_json()['totals']['customer_payments'] == '2750.00'
+
+        r = client.post('/api/closings/submit', headers=_hdr(agent),
+                        json={'closing_date': first_day, 'actual_cash': 1500})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        closing = r.get_json()['closing']
+        assert closing['closing_date'] == first_day
+        assert closing['transaction_count'] == 1
+        assert closing['expected_cash'] == 1500
+        assert closing['cash_difference'] == 0
+
+    def test_manager_can_target_an_agent_but_must_name_an_employee(self, client):
+        agent = _agent_token(client)
+        manager = _manager_token(client)
+        employee_id = client.get('/api/auth/me', headers=_hdr(agent)).get_json()['user']['employee_id']
+        selected_day = (date.today() - timedelta(days=43)).isoformat()
+        _make_transaction(client, agent, selected_day, 3200)
+
+        r = client.get(f'/api/closings/totals?date={selected_day}&employee_id={employee_id}',
+                       headers=_hdr(manager))
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert r.get_json()['employee_id'] == employee_id
+        assert r.get_json()['totals']['expected_cash'] == '3200.00'
+
+        r = client.get('/api/closings/totals?employee_id=999999', headers=_hdr(manager))
+        assert r.status_code == 404
+
+        # An approver without an employee profile must be told to choose one
+        # instead of creating a closing with a null employee.
+        from app.extensions import db
+        from app.models import Role, User
+
+        approver = User(email='approver-no-emp@test.dev')
+        approver.set_password('Password123!')
+        approver.is_active = True
+        approver.roles.append(Role.query.filter_by(code='manager').first())
+        db.session.add(approver)
+        db.session.flush()
+        login = client.post('/api/auth/login',
+                            json={'email': approver.email, 'password': 'Password123!'})
+        assert login.status_code == 200, login.get_data(as_text=True)
+        r = client.post('/api/closings/submit',
+                        headers=_hdr(login.get_json()['access_token']),
+                        json={'closing_date': selected_day, 'actual_cash': 3200})
+        assert r.status_code == 400
+        assert 'employee' in r.get_json()['error'].lower()
+
+    def test_agent_cannot_use_another_employee(self, client):
+        agent = _agent_token(client)
+        r = client.get('/api/closings/totals?employee_id=999999', headers=_hdr(agent))
+        assert r.status_code == 403
 
 
 class TestClosingFlow:

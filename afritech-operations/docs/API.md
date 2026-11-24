@@ -76,10 +76,17 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 
 ## Daily closing
 
-- `GET /api/closings/totals?date=&employee_id=` — preview for agent (self) /
-  manager+ (any employee)
+- `GET /api/closings/today` — authoritative calendar date/timezone in the
+  business zone (`Africa/Kigali`), used by the screen instead of the browser clock.
+- `GET /api/closings/totals?date=&employee_id=` — preview **that date's** records
+  for an agent (self only) or approver (explicit employee required). Responds with
+  `date`, `employee_id`, `employee_name`, `timezone` and the `totals` object, so a
+  stale reply for another date/employee can be discarded by the client. Omitted
+  `date` defaults to the server's business date.
 - `POST /api/closings/submit` — `{closing_date, actual_cash, notes, employee_id?}`
-  (re-submit allowed when `status=correction_requested|rejected`; resets status to `submitted`)
+  (re-submit allowed when `status=correction_requested|rejected`; resets status to `submitted`).
+  Derived amounts are always recalculated from `closing_date`'s records; agents
+  are forced to their own employee, and approvers must name an employee.
 - `GET /api/closings?status=&start=&end=&employee_id=`
 - `GET /api/closings/{id}` · `POST /api/closings/{id}/review` — `{decision, note}`
   decision: `approved` (locks) | `rejected` | `correction_requested`

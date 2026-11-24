@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from flask import Blueprint, request, jsonify
@@ -9,9 +9,40 @@ from ..auth.auth import require_permission, require_any_permission, current_user
 from ..services.audit import audit
 from ..services.notifications import notify
 from ..services.automation import cash_shortage_alert
+from ..services.weekly_policy import get_policy, local_date
 from .helpers import json_error, parse_date, parse_id, parse_json, paginate, paginate_response
 
 bp = Blueprint('closings', __name__, url_prefix='/api/closings')
+
+
+def business_today():
+    """Calendar day in the configured business timezone, never the host's."""
+    return local_date(datetime.now(timezone.utc), get_policy())
+
+
+def resolve_closing_employee(user, own_employee, requested_id):
+    """Resolve whose closing is being previewed/submitted.
+
+    Agents are always scoped to their own employee row. Approvers may target
+    another employee, but an explicit id must name a real row: silently falling
+    back to the approver's own profile (often absent) is what produced empty
+    totals for a selected date and null-employee closing rows.
+    """
+    if not user.has_permission('closings.approve'):
+        if requested_id is not None and (not own_employee or requested_id != own_employee.id):
+            return None, json_error('You cannot load or submit a closing for another employee', 403)
+        if not own_employee:
+            return None, json_error('No employee profile linked', 400)
+        return own_employee, None
+
+    if requested_id is not None:
+        employee = db.session.get(Employee, requested_id)
+        if not employee:
+            return None, json_error('Employee not found', 404)
+        return employee, None
+    if own_employee:
+        return own_employee, None
+    return None, json_error('Select an employee', 400)
 
 
 def triage_daily_totals(employee_id, closing_date):
@@ -68,7 +99,7 @@ def parse_closing_date(raw, field='date', default_to_today=True):
     empty or malformed value is a 400 instead of a ValueError-turned-500.
     """
     if raw is None:
-        return (date.today() if default_to_today else None), None
+        return (business_today() if default_to_today else None), None
     parsed, err = parse_date(raw, field)
     if err:
         return None, err
@@ -77,62 +108,82 @@ def parse_closing_date(raw, field='date', default_to_today=True):
     return parsed, None
 
 
+@bp.get('/today')
+@require_any_permission('closings.view', 'closings.submit')
+def closing_today():
+    """Authoritative business date for the closing screen.
+
+    The browser must not derive today from its own timezone; a UTC browser late
+    in the evening would otherwise open a closing for the previous Kigali day.
+    """
+    return jsonify({'date': business_today().isoformat(),
+                    'timezone': get_policy()['timezone']})
+
+
 @bp.get('/totals')
 @require_any_permission('closings.view', 'closings.submit')
 def closing_totals():
     """Preview daily totals for an agent/date (no persist)."""
     data = request.args
-    emp = current_employee()
+    own_employee = current_employee()
     user = current_user()
-    employee_id, err = parse_id(data.get('employee_id'), 'employee_id')
+    requested_id, err = parse_id(data.get('employee_id'), 'employee_id')
     if err:
         return err
-    if not user.has_permission('closings.approve'):
-        employee_id = emp.id if emp else None
-    elif not employee_id:
-        employee_id = emp.id if emp else None
+    employee, err = resolve_closing_employee(user, own_employee, requested_id)
+    if err:
+        return err
     closing_date, err = parse_closing_date(data.get('date'), 'date')
     if err:
         return err
-    if not employee_id:
-        return json_error('No employee identified', 400)
-    totals = triage_daily_totals(employee_id, closing_date)
+    totals = triage_daily_totals(employee.id, closing_date)
     # Money stays a string (exact decimal text over the wire); the count is
-    # a plain integer so consumers never have to coerce it.
+    # a plain integer so consumers never have to coerce it. The response echoes
+    # the employee and date so the screen can reject a stale/other-day reply.
     wire = {k: (v if k == 'transaction_count' else str(v))
             for k, v in totals.items()}
     return jsonify({'totals': wire,
-                    'employee_id': employee_id, 'date': closing_date.isoformat()})
+                    'employee_id': employee.id,
+                    'employee_name': employee.full_name,
+                    'date': closing_date.isoformat(),
+                    'timezone': get_policy()['timezone']})
 
 
 @bp.post('/submit')
 @require_any_permission('closings.submit', 'closings.approve')
 def submit_closing():
     data = parse_json()
-    emp = current_employee()
+    own_employee = current_employee()
     user = current_user()
     closing_date, err = parse_closing_date(data.get('closing_date'), 'closing_date')
     if err:
         return err
 
-    # Managers may submit on behalf; agents only for themselves
-    target_employee_id, err = parse_id(data.get('employee_id'), 'employee_id')
+    # Managers may submit on behalf; agents are always scoped to themselves.
+    requested_id, err = parse_id(data.get('employee_id'), 'employee_id')
     if err:
         return err
-    if target_employee_id is None:
-        target_employee_id = emp.id if emp else None
-    if not user.has_permission('closings.approve') and target_employee_id != (emp.id if emp else None):
-        return json_error('You cannot submit a closing for another employee', 403)
-    if not emp and not user.has_permission('closings.approve'):
-        return json_error('No employee profile linked', 400)
+    target_employee, err = resolve_closing_employee(user, own_employee, requested_id)
+    if err:
+        return err
 
-    existing = DailyClosing.query.filter_by(employee_id=target_employee_id, closing_date=closing_date).first()
+    branch_id, err = parse_id(data.get('branch_id'), 'branch_id')
+    if err:
+        return err
+    notes = data.get('notes')
+    if notes is not None:
+        notes = str(notes)
+        if len(notes) > 500:
+            return json_error('notes must be 500 characters or fewer', 400)
+
+    existing = DailyClosing.query.filter_by(
+        employee_id=target_employee.id, closing_date=closing_date).first()
     if existing and existing.status in ('submitted', 'approved'):
         return json_error('A closing for this date already exists', 409)
 
-    totals = triage_daily_totals(target_employee_id, closing_date)
+    totals = triage_daily_totals(target_employee.id, closing_date)
     actual_cash = data.get('actual_cash')
-    if actual_cash is None and emp and not user.has_permission('closings.approve'):
+    if actual_cash is None and not user.has_permission('closings.approve'):
         return json_error('actual_cash is required for agents', 400)
     if actual_cash is not None:
         try:
@@ -152,8 +203,10 @@ def submit_closing():
         closing = DailyClosing()
         db.session.add(closing)
     closing.closing_date = closing_date
-    closing.employee_id = target_employee_id
-    closing.branch_id = data.get('branch_id') or (emp.branch_id if emp else None)
+    closing.employee_id = target_employee.id
+    # A manager submitting for an agent must stamp the agent's branch, not the
+    # manager's own branch (which is often absent).
+    closing.branch_id = branch_id or target_employee.branch_id
     closing.transaction_count = totals['transaction_count']
     closing.customer_payments = totals['customer_payments']
     closing.cash_payments = totals['cash_payments']
@@ -167,7 +220,7 @@ def submit_closing():
     closing.cash_difference = actual_cash - totals['expected_cash']
     closing.reconciliation_class = DailyClosing.reconciliation_class_for(closing.cash_difference)
     closing.status = 'submitted'
-    closing.notes = data.get('notes')
+    closing.notes = notes
     closing.submitted_at = datetime.now(timezone.utc)
     closing.reviewed_by = None
     closing.reviewed_at = None
@@ -251,6 +304,7 @@ def review_closing(closing_id):
     decision = data.get('decision')
     if decision not in ('approved', 'rejected', 'correction_requested'):
         return json_error('Decision must be approved, rejected or correction_requested')
+    previous_status = closing.status
 
     closing.status = 'approved' if decision == 'approved' else decision
     closing.reviewed_by = current_user().id
@@ -262,7 +316,7 @@ def review_closing(closing_id):
 
     db.session.commit()
     audit(f'closing_{decision}', 'daily_closing', closing.id,
-          previous_value={'status': 'submitted'}, new_value=closing.to_dict())
+          previous_value={'status': previous_status}, new_value=closing.to_dict())
 
     agent = Employee.query.get(closing.employee_id)
     if agent and agent.user_id:
