@@ -21,13 +21,6 @@ const COST_SOURCES = ['personal', 'company', 'someone_else', 'not_paid'];
 
 type CostForm = {
   source: string;
-  amount: string;
-  provider: string;
-  reference: string;
-  sender_phone: string;
-  paid_at: string;
-  notes: string;
-  evidence: File | null;
 };
 
 type TransferForm = {
@@ -67,12 +60,6 @@ function evidenceProblem(file: File | null, t: (key: string) => string): string 
   if (!EVIDENCE_TYPES.includes(ext)) return t('ui.error.evidenceType');
   if (file.size > MAX_EVIDENCE_BYTES) return t('ui.error.evidenceSize');
   return '';
-}
-
-function localDateTime(dateValue: string | undefined): string {
-  if (!dateValue) return '';
-  const datePart = dateValue.slice(0, 10);
-  return `${datePart}T12:00`;
 }
 
 export default function AgentWeeklyFlow({
@@ -215,14 +202,6 @@ export default function AgentWeeklyFlow({
 
   const costForm = (row: any): CostForm => costForms[row.transaction_id] || {
     source: row.payment_source || 'not_paid',
-    amount: row.claimed_amount && moneyNumber(row.claimed_amount) > 0
-      ? String(moneyNumber(row.claimed_amount)) : '',
-    provider: row.provider || providers[0] || 'momo',
-    reference: row.reference || '',
-    sender_phone: '',
-    paid_at: localDateTime(row.paid_at || row.date),
-    notes: row.notes || '',
-    evidence: null,
   };
 
   function updateCostForm(row: any, patch: Partial<CostForm>) {
@@ -232,28 +211,35 @@ export default function AgentWeeklyFlow({
     }));
   }
 
+  function selectCostSource(row: any, source: string) {
+    if (busy) return;
+    updateCostForm(row, { source });
+    if (source === 'personal') void saveCost(row, source);
+  }
+
   async function afterMutation(messageKey: string) {
     if (report?.id) await load({ report_id: report.id });
     setNotice(t(messageKey));
   }
 
-  async function saveCost(row: any) {
-    if (row.company_funded) {
+  async function saveCost(row: any, selectedSource?: string) {
+    if (busy) return;
+    if (row.company_funded || row.auto_company_funded) {
       setActionError(t('ui.agent.costAutoCompanyNote'));
       return;
     }
-    const form = costForm(row);
+    const source = selectedSource || costForm(row).source;
     setBusy(true);
     setActionError('');
     setNotice('');
     try {
-      if (!COST_SOURCES.includes(form.source)) {
+      if (!COST_SOURCES.includes(source)) {
         setActionError(t('ui.error.required'));
         return;
       }
       // The answer is already recorded. Do not delete and recreate a verified
       // claim just because the agent reopened it and pressed save.
-      if (row.claim_id && row.payment_source === form.source) {
+      if (row.claim_id && row.payment_source === source) {
         setEditingCost(null);
         setNotice(t('ui.label.costPaymentRecorded'));
         return;
@@ -264,39 +250,13 @@ export default function AgentWeeklyFlow({
       }
       const body = new FormData();
       body.set('transaction_id', String(row.transaction_id));
-      body.set('payment_source', form.source);
-      body.set('personal_payment', form.source === 'personal' ? 'true' : 'false');
-      if (form.source === 'personal') {
-        const personalAmount = parseAmount(form.amount);
-        const officialCost = moneyNumber(row.official_cost);
-        if (personalAmount === null || personalAmount <= 0 || personalAmount > officialCost) {
-          setActionError(t('ui.agent.error.costAmount'));
-          return;
-        }
-        if (form.reference.trim().length < 4) {
-          setActionError(t('ui.agent.error.reference'));
-          return;
-        }
-        if (!form.sender_phone.trim()) {
-          setActionError(t('error.claim_sender_required'));
-          return;
-        }
-        const fileProblem = evidenceProblem(form.evidence, t);
-        if (fileProblem) {
-          setActionError(fileProblem);
-          return;
-        }
-        if (!form.evidence) {
-          setActionError(t('error.claim_evidence_required'));
-          return;
-        }
-        body.set('amount', String(personalAmount));
-        body.set('provider', form.provider || providers[0] || 'momo');
-        body.set('reference', form.reference.trim().toUpperCase());
-        body.set('sender_phone', form.sender_phone.trim());
-        if (form.paid_at) body.set('paid_at', form.paid_at);
-        if (form.notes) body.set('notes', form.notes);
-        body.set('evidence', form.evidence);
+      body.set('payment_source', source);
+      body.set('personal_payment', source === 'personal' ? 'true' : 'false');
+      if (source === 'personal') {
+        // No extra fields: the backend records the full official cost from the
+        // transaction and the employee profile already on file.
+        body.set('auto_personal', 'true');
+        body.set('amount', String(moneyNumber(row.official_cost)));
       }
       await api(`/api/weekly-reports/${report.id}/official-cost-payments`, {
         method: 'POST', formData: body,
@@ -654,7 +614,8 @@ export default function AgentWeeklyFlow({
                                   <input type="radio"
                                     name={`cost-source-${row.transaction_id}`}
                                     value={source} checked={form.source === source}
-                                    onChange={() => updateCostForm(row, { source })} />
+                                    disabled={busy}
+                                    onChange={() => selectCostSource(row, source)} />
                                   <span>{t(`ui.agent.costSource.${source}`)}</span>
                                 </label>
                               ))}
@@ -662,85 +623,18 @@ export default function AgentWeeklyFlow({
                           </fieldset>
 
                           {form.source === 'personal' && (
-                            <div className="agent-subform-inner mt-3">
-                              <div className="fw-semibold small mb-2">{t('ui.agent.costPersonalDetails')}</div>
-                              <div className="row g-2">
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-amount-${row.transaction_id}`}>
-                                    {t('ui.agent.amountInRwf')}
-                                  </label>
-                                  <TextInput id={`cost-amount-${row.transaction_id}`}
-                                    className="agent-touch" type="number" min="0" step="0.01"
-                                    inputMode="decimal" value={form.amount}
-                                    onChange={(e) => updateCostForm(row, { amount: e.target.value })} />
-                                </div>
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-provider-${row.transaction_id}`}>
-                                    {t('field.paymentProvider')}
-                                  </label>
-                                  <select id={`cost-provider-${row.transaction_id}`}
-                                    className="form-select agent-touch" value={form.provider}
-                                    onChange={(e) => updateCostForm(row, { provider: e.target.value })}>
-                                    {providers.map((provider) => (
-                                      <option key={provider} value={provider}>
-                                        {t(`ui.provider.${provider}`)}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-reference-${row.transaction_id}`}>
-                                    {t('field.reference')}
-                                  </label>
-                                  <TextInput id={`cost-reference-${row.transaction_id}`}
-                                    className="agent-touch" value={form.reference}
-                                    onChange={(e) => updateCostForm(row, { reference: e.target.value })} />
-                                </div>
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-sender-${row.transaction_id}`}>
-                                    {t('field.senderPhone')}
-                                  </label>
-                                  <TextInput id={`cost-sender-${row.transaction_id}`}
-                                    className="agent-touch" inputMode="tel" value={form.sender_phone}
-                                    onChange={(e) => updateCostForm(row, { sender_phone: e.target.value })} />
-                                </div>
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-date-${row.transaction_id}`}>
-                                    {t('field.paidAt')}
-                                  </label>
-                                  <TextInput id={`cost-date-${row.transaction_id}`}
-                                    className="agent-touch" type="datetime-local" value={form.paid_at}
-                                    onChange={(e) => updateCostForm(row, { paid_at: e.target.value })} />
-                                </div>
-                                <div className="col-12 col-sm-6">
-                                  <label className="form-label small" htmlFor={`cost-evidence-${row.transaction_id}`}>
-                                    {t('field.evidence')}
-                                  </label>
-                                  <TextInput id={`cost-evidence-${row.transaction_id}`}
-                                    className="agent-touch" type="file"
-                                    accept=".pdf,.png,.jpg,.jpeg,.webp"
-                                    onChange={(e) => updateCostForm(row, {
-                                      evidence: e.target.files?.[0] || null,
-                                    })} />
-                                </div>
-                                <div className="col-12">
-                                  <label className="form-label small" htmlFor={`cost-notes-${row.transaction_id}`}>
-                                    {t('field.notes')}
-                                  </label>
-                                  <TextArea id={`cost-notes-${row.transaction_id}`}
-                                    value={form.notes}
-                                    onChange={(e) => updateCostForm(row, { notes: e.target.value })} />
-                                </div>
-                              </div>
-                              <div className="form-text">{t('ui.label.evidenceHelp')}</div>
-                            </div>
+                            <p className="small text-muted mb-0 mt-2">
+                              {t('ui.agent.costPersonalAuto')}
+                            </p>
                           )}
 
                           <div className="d-flex flex-wrap gap-2 mt-3">
-                            <button type="button" className="btn btn-primary agent-touch"
-                              disabled={busy} onClick={() => saveCost(row)}>
-                              {t('ui.agent.saveAnswer')}
-                            </button>
+                            {form.source !== 'personal' && (
+                              <button type="button" className="btn btn-primary agent-touch"
+                                disabled={busy} onClick={() => saveCost(row)}>
+                                {t('ui.agent.saveAnswer')}
+                              </button>
+                            )}
                             <button type="button" className="btn btn-outline-secondary agent-touch"
                               disabled={busy} onClick={() => setEditingCost(null)}>
                               {t('ui.label.cancel')}

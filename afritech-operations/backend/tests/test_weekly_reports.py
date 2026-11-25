@@ -202,15 +202,19 @@ def _claim_row(report, txn, amount=None, personal=True, verified=False, referenc
 
 
 def _claim_api(client, hdr, report, txn, amount=None, personal=True, reference=None,
-               paid_at=None, provider='momo', sender_phone='+250788111222', source=None):
+               paid_at=None, provider='momo', sender_phone='+250788111222', source=None,
+               auto=False):
     data = {
         'transaction_id': str(txn.id),
         'personal_payment': 'true' if personal else 'false',
-        'notes': 'Official cost settlement evidence',
     }
+    if auto:
+        data['auto_personal'] = 'true'
+    else:
+        data['notes'] = 'Official cost settlement evidence'
     if source:
         data['payment_source'] = source
-    if personal:
+    if personal and not auto:
         data.update({
             'amount': str(amount if amount is not None else txn.official_cost),
             'provider': provider,
@@ -723,6 +727,44 @@ class TestOfficialCostPayments:
         types = {row.type for row in Notification.query.filter_by(
             related_type='weekly_report', related_id=report.id).all()}
         assert {'weekly_cost_payment_submitted', 'weekly_cost_payment_verified'} <= types
+
+    def test_auto_personal_claim_uses_full_transaction_cost_without_extra_fields(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
+        """Selecting 'own funds' only needs the payer answer from the agent."""
+        emp = _agent()
+        week = _future_week()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        response = _claim_api(client, agent_hdr, report, txn, auto=True)
+        assert response.status_code == 201, response.get_data(as_text=True)
+        claim = response.get_json()['claim']
+        assert claim['payment_source'] == 'personal'
+        assert claim['personal_payment'] is True
+        assert claim['amount'] == 400.0
+        assert claim['is_partial'] is False
+        assert claim['verification_status'] == 'pending'
+        assert claim['evidence_name'] is None
+
+        stored = OfficialCostPayment.query.get(claim['id'])
+        assert stored.amount == Decimal('400.00')
+        assert stored.sender_phone == emp.phone
+        assert stored.evidence_path is None
+        assert stored.reference.startswith(f'SELF-{report.id}-')
+        assert stored.notes == 'Auto-recorded from the transaction and employee profile'
+
+        summary = _detail(client, agent_hdr, report.id)['summary']
+        assert summary['personal_paid_pending'] == '400.00'
+        assert summary['personal_paid_verified'] == '0.00'
+        assert summary['expected_amount'] == '1000.00'
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '1000.00'
+        verified = _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                           claim_id=claim['id'], note='Transaction and profile matched')
+        assert verified.status_code == 200, verified.get_data(as_text=True)
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '600.00'
 
     def test_company_paid_unverified_and_rejected_claims_never_deduct(
             self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):

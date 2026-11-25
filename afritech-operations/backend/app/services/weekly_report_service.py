@@ -1202,7 +1202,9 @@ class WeeklyReportService:
 
         A ``False`` personal-payment answer is kept for audit but carries zero
         credit. A ``True`` answer only becomes deductible after a reviewer has
-        verified the claim, its reference and its evidence.
+        verified it. When ``auto_personal`` is set, the full official cost is
+        recorded from the transaction and the employee's registered details,
+        so the agent does not have to supply payment fields or evidence.
         """
         self._require_editable(report)
         try:
@@ -1231,6 +1233,8 @@ class WeeklyReportService:
             personal = raw_personal
         else:
             personal = str(raw_personal or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        auto_personal = str(data.get('auto_personal') or '').strip().lower() in (
+            '1', 'true', 'yes', 'on')
         raw_source = str(data.get('payment_source') or '').strip().lower()
         if raw_source not in OFFICIAL_COST_PAYMENT_SOURCES:
             # Old yes/no clients are still accepted: "yes" means personal,
@@ -1259,57 +1263,81 @@ class WeeklyReportService:
             evidence_path = evidence_name = content_type = None
             size_bytes = None
         else:
-            try:
-                amount = _dec(data.get('amount'))
-            except Exception:
-                raise WeeklyReportError('A valid personally paid amount is required',
-                                        'weekly_report.claim_invalid_amount', 400)
-            if amount <= 0 or amount > official_cost:
-                raise WeeklyReportError(
-                    f'Personal payment must be greater than zero and at most {official_cost:.2f}',
-                    'weekly_report.claim_invalid_amount', 400)
-            provider = (data.get('provider') or '').strip().lower()
-            if provider not in MOMO_PROVIDERS:
-                raise WeeklyReportError('Invalid personal payment provider',
-                                        'weekly_report.claim_invalid_provider', 400)
-            reference = (data.get('reference') or '').strip().upper()
-            if len(reference) < 4:
-                raise WeeklyReportError('A payment reference is required',
-                                        'weekly_report.claim_reference_required', 400)
-            sender_phone = (data.get('sender_phone') or '').strip() or None
-            if not sender_phone:
-                raise WeeklyReportError('The sender phone used to pay the cost is required',
-                                        'weekly_report.claim_sender_required', 400)
-            paid_raw = data.get('paid_at')
-            try:
-                if paid_raw:
-                    paid_at = datetime.fromisoformat(str(paid_raw).replace('Z', '+00:00'))
-                    if paid_at.tzinfo is None:
-                        paid_at = paid_at.replace(
-                            tzinfo=business_timezone(report.timezone_name)).astimezone(timezone.utc)
-                else:
-                    paid_at = now
-            except ValueError:
-                raise WeeklyReportError('Invalid payment date/time',
-                                        'weekly_report.claim_invalid_date', 400)
-            if not in_week(paid_at, report.week_start, get_policy()):
-                raise WeeklyReportError(
-                    'Personal payment date must fall within the Sunday–Saturday reporting week',
-                    'weekly_report.claim_invalid_date', 400)
-            normalized_sender = ''.join(ch for ch in sender_phone if ch.isdigit() or ch == '+')
-            reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
-            if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
-                raise WeeklyReportError('That personal payment reference already exists',
-                                        'weekly_report.claim_duplicate', 409)
-            if evidence is None or not getattr(evidence, 'filename', None):
-                raise WeeklyReportError('Evidence is required for a personal cost payment',
-                                        'weekly_report.claim_evidence_required', 400)
-            evidence_path = self._store_evidence(evidence, report, 'official_cost')
-            evidence_name = evidence.filename[:255]
-            content_type = evidence.mimetype
-            size_bytes = os.path.getsize(
-                os.path.join(current_app.config['UPLOAD_FOLDER'],
-                             evidence_path.replace('/uploads/', '')))
+            evidence_path = evidence_name = content_type = None
+            size_bytes = None
+            if auto_personal:
+                # The agent only confirms the payer. Everything else comes from
+                # the transaction and the employee record already held here.
+                amount = official_cost
+                provider = MOMO_PROVIDERS[0]
+                reference = f'SELF-{report.id}-{txn.transaction_number}'[:128]
+                sender_phone = (report.employee.phone or '').strip() or None
+                paid_at = datetime.combine(
+                    txn.transaction_date, datetime.min.time().replace(hour=12),
+                    tzinfo=business_timezone(report.timezone_name),
+                ).astimezone(timezone.utc)
+                if not in_week(paid_at, report.week_start, get_policy()):
+                    raise WeeklyReportError(
+                        'Personal payment date must fall within the Sunday–Saturday reporting week',
+                        'weekly_report.claim_invalid_date', 400)
+                normalized_sender = ''.join(
+                    ch for ch in (sender_phone or '') if ch.isdigit() or ch == '+')
+                reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
+                if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
+                    raise WeeklyReportError('That personal payment reference already exists',
+                                            'weekly_report.claim_duplicate', 409)
+            else:
+                try:
+                    amount = _dec(data.get('amount'))
+                except Exception:
+                    raise WeeklyReportError('A valid personally paid amount is required',
+                                            'weekly_report.claim_invalid_amount', 400)
+                if amount <= 0 or amount > official_cost:
+                    raise WeeklyReportError(
+                        f'Personal payment must be greater than zero and at most {official_cost:.2f}',
+                        'weekly_report.claim_invalid_amount', 400)
+                provider = (data.get('provider') or '').strip().lower()
+                if provider not in MOMO_PROVIDERS:
+                    raise WeeklyReportError('Invalid personal payment provider',
+                                            'weekly_report.claim_invalid_provider', 400)
+                reference = (data.get('reference') or '').strip().upper()
+                if len(reference) < 4:
+                    raise WeeklyReportError('A payment reference is required',
+                                            'weekly_report.claim_reference_required', 400)
+                sender_phone = (data.get('sender_phone') or '').strip() or None
+                if not sender_phone:
+                    raise WeeklyReportError('The sender phone used to pay the cost is required',
+                                            'weekly_report.claim_sender_required', 400)
+                paid_raw = data.get('paid_at')
+                try:
+                    if paid_raw:
+                        paid_at = datetime.fromisoformat(str(paid_raw).replace('Z', '+00:00'))
+                        if paid_at.tzinfo is None:
+                            paid_at = paid_at.replace(
+                                tzinfo=business_timezone(report.timezone_name)).astimezone(timezone.utc)
+                    else:
+                        paid_at = now
+                except ValueError:
+                    raise WeeklyReportError('Invalid payment date/time',
+                                            'weekly_report.claim_invalid_date', 400)
+                if not in_week(paid_at, report.week_start, get_policy()):
+                    raise WeeklyReportError(
+                        'Personal payment date must fall within the Sunday–Saturday reporting week',
+                        'weekly_report.claim_invalid_date', 400)
+                normalized_sender = ''.join(ch for ch in sender_phone if ch.isdigit() or ch == '+')
+                reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
+                if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
+                    raise WeeklyReportError('That personal payment reference already exists',
+                                            'weekly_report.claim_duplicate', 409)
+                if evidence is None or not getattr(evidence, 'filename', None):
+                    raise WeeklyReportError('Evidence is required for a personal cost payment',
+                                            'weekly_report.claim_evidence_required', 400)
+                evidence_path = self._store_evidence(evidence, report, 'official_cost')
+                evidence_name = evidence.filename[:255]
+                content_type = evidence.mimetype
+                size_bytes = os.path.getsize(
+                    os.path.join(current_app.config['UPLOAD_FOLDER'],
+                                 evidence_path.replace('/uploads/', '')))
 
         claim = OfficialCostPayment(
             report_id=report.id, transaction_id=txn.id, employee_id=report.employee_id,
@@ -1320,7 +1348,10 @@ class WeeklyReportService:
             provider=provider, reference=reference, paid_at=paid_at,
             sender_phone=sender_phone, evidence_path=evidence_path,
             evidence_name=evidence_name, content_type=content_type,
-            size_bytes=size_bytes, notes=data.get('notes'),
+            size_bytes=size_bytes,
+            notes=data.get('notes') or (
+                'Auto-recorded from the transaction and employee profile'
+                if auto_personal else None),
             verification_status='pending', created_by=actor.id)
         db.session.add(claim)
         try:
@@ -1340,7 +1371,8 @@ class WeeklyReportService:
         audit('weekly_cost_payment_submitted', 'weekly_official_cost_payment', claim.id,
               new_value={'transaction_id': txn.id, 'amount': _str(amount),
                          'personal_payment': personal,
-                         'auto_company_funded': company_funded}, user=actor)
+                         'auto_company_funded': company_funded,
+                         'auto_personal': auto_personal}, user=actor)
         if personal:
             from .notifications import notify_weekly_reviewers
             notify_weekly_reviewers(
