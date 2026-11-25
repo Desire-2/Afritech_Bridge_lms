@@ -13,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from sqlalchemy.dialects import postgresql, sqlite
 
 from app.auth.permissions import (
     ACCOUNTANT_WEEKLY_PERMISSIONS, AGENT_WEEKLY_PERMISSIONS,
@@ -244,6 +245,21 @@ class TestOfficialCostSourceMigration:
         assert sunday_migration.revision == 'c2f8a7d41b90'
         assert cost_source_migration.down_revision == 'a9d4e7f16c20'
         assert cost_source_migration.revision == 'b7e3c9a1d452'
+
+    def test_backfill_uses_boolean_predicate_for_postgresql(
+            self, cost_source_migration):
+        statement = cost_source_migration._backfill_personal_payment_source()
+        postgres_sql = str(statement.compile(dialect=postgresql.dialect()))
+        assert 'personal_payment IS true' in postgres_sql
+        assert '= 1' not in postgres_sql
+        sqlite_sql = str(statement.compile(dialect=sqlite.dialect()))
+        assert 'personal_payment IS 1' in sqlite_sql
+        assert '= 1' not in sqlite_sql
+
+    def test_migration_does_not_seed_rows(self, cost_source_migration):
+        source = pathlib.Path(cost_source_migration.__file__).read_text().upper()
+        assert 'INSERT INTO' not in source
+        assert 'BULK_INSERT' not in source
 
     def test_existing_personal_claims_keep_their_deductible_source(
             self, tmp_path, monkeypatch, cost_source_migration):
