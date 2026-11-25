@@ -399,6 +399,18 @@ def submit_quiz_attempt(attempt_id):
     else:
         attempt.status = QuizAttemptStatus.MANUAL_GRADING_PENDING
 
+    # Quiz outcomes are real LMS evidence. Manual-grading-pending attempts are
+    # recorded, but the Passport engine never converts them into proficiency.
+    from ..talent_passport.hooks import notify_talent_passport
+    attempt_marker = (attempt.end_time.isoformat()
+                      if attempt.end_time else str(attempt.id))
+    notify_talent_passport(
+        "quiz.submitted", user_id,
+        "quiz_attempt", attempt.id,
+        course_id=attempt.quiz.course_id,
+        suffix=f"{attempt.status.value}:{attempt_marker}",
+    )
+
     db.session.commit()
     
     # Update lesson scores after quiz completion

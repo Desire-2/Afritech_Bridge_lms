@@ -285,6 +285,23 @@ class EnrollmentProgressService:
             if user_progress:
                 user_progress.completion_percentage = counts["progress"] * 100
 
+            # Canonical progress updates flow into Talent Passport without a
+            # second progress calculation. The suffix changes only when the
+            # canonical progress/status actually changes, keeping retries
+            # idempotent while still recording genuine updates.
+            from ..talent_passport.hooks import notify_talent_passport
+            completed_marker = (enrollment.completed_at.isoformat()
+                                if enrollment.completed_at else "")
+            notify_talent_passport(
+                "course.completed" if counts["is_complete"] else "enrollment.progress",
+                enrollment.student_id,
+                "enrollment",
+                enrollment.id,
+                course_id=enrollment.course_id,
+                suffix=(f"{enrollment.progress}:{enrollment.status}:"
+                        f"{completed_marker}"),
+            )
+
             if commit:
                 db.session.commit()
 

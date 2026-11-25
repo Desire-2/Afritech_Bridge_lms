@@ -63,6 +63,12 @@ from src.models.aage_models import (  # Adaptive AI Assessment & Grading Engine
     GradingReview, LearningExample, EvaluatorVersion, CalibrationRun,
     CalibrationCase, GradingAuditLog, ensure_aage_schema,
 )  # Import AAGE models so db.metadata knows their tables
+from src.talent_passport.models import (  # Talent Passport feature tables
+    TalentPassport, SkillCategory, SkillDefinition, CourseSkillMapping,
+    StudentSkill, SkillEvidence, PortfolioItem, PassportVisibility,
+    PassportAchievementRecord, PassportAuditEvent, ProcessedPassportEvent,
+)
+from src.talent_passport.routes import talent_passport_bp
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
@@ -446,6 +452,7 @@ app.register_blueprint(payment_verify_bp) # Register payment verification routes
 app.register_blueprint(internships_bp) # Register internship application blueprint
 app.register_blueprint(instructor_settings_bp) # Register instructor settings blueprint
 app.register_blueprint(booking_bp) # Register booking blueprint
+app.register_blueprint(talent_passport_bp) # Register Talent Passport API blueprint
 
 # Mount the /api/v2 integration API (blueprint, request middleware, docs
 # aliases). Kept after the legacy registrations so /api/v1 routing is

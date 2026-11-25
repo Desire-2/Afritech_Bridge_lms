@@ -289,7 +289,21 @@ class AchievementService:
                 points_service.add_points(achievement.points, 'achievement')
             if achievement.xp_bonus:
                 points_service.add_xp(achievement.xp_bonus)
-            
+
+            db.session.flush()
+
+            # Mirror the existing LMS award; the Passport adds no badge rules.
+            from ..talent_passport.hooks import notify_talent_passport
+            earned_marker = (user_achievement.earned_at.isoformat()
+                             if user_achievement.earned_at
+                             else str(user_achievement.times_earned or 1))
+            notify_talent_passport(
+                "achievement.awarded", user_id,
+                "user_achievement", user_achievement.id,
+                course_id=context_data.get('course_id') if context_data else None,
+                suffix=f"{user_achievement.times_earned or 1}:{earned_marker}",
+            )
+
             # Commit transaction
             db.session.commit()
             

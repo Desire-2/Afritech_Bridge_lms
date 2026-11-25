@@ -159,6 +159,24 @@ except ImportError:  # pragma: no cover - engine tables optional at import time
     CalibrationCase = None
     GradingAuditLog = None
 
+# Talent Passport — feature tables owned by this module, joined to existing
+# LMS users/courses/records. Imported here so `db.create_all()` and Alembic's
+# model discovery see them alongside the rest of the LMS schema.
+from ..talent_passport.models import (
+    TalentPassport,
+    SkillCategory,
+    SkillDefinition,
+    CourseSkillMapping,
+    StudentSkill,
+    SkillEvidence,
+    PortfolioItem,
+    PassportVisibility,
+    PassportAchievementRecord,
+    PassportAuditEvent,
+    TalentPassportDocument,
+    ProcessedPassportEvent,
+)
+
 
 __all__ = [
     # Course Models
@@ -236,6 +254,20 @@ __all__ = [
     'CalibrationRun',
     'CalibrationCase',
     'GradingAuditLog',
+
+    # Talent Passport
+    'TalentPassport',
+    'SkillCategory',
+    'SkillDefinition',
+    'CourseSkillMapping',
+    'StudentSkill',
+    'SkillEvidence',
+    'PortfolioItem',
+    'PassportVisibility',
+    'PassportAchievementRecord',
+    'PassportAuditEvent',
+    'TalentPassportDocument',
+    'ProcessedPassportEvent',
 ]
 
 print("✅ Models package loaded - Quiz consolidation complete")

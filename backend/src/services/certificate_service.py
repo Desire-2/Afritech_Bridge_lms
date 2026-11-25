@@ -160,6 +160,13 @@ class CertificateService:
                 if force and existing_cert.overall_score != overall_score:
                     existing_cert.overall_score = overall_score
                     existing_cert.recompute_verification_hash()
+                    from ..talent_passport.hooks import notify_talent_passport
+                    notify_talent_passport(
+                        "certificate.updated", student_id,
+                        "certificate", existing_cert.id,
+                        course_id=course_id,
+                        suffix=f"score:{overall_score}",
+                    )
                 if not force:
                     EnrollmentProgressService.sync_enrollment(enrollment, commit=False)
                 db.session.commit()
@@ -196,6 +203,15 @@ class CertificateService:
             # Transcript stats update joins the same transaction so a failure
             # rolls back the whole issuance.
             CertificateService._update_student_transcript(student_id)
+
+            # Mirror the canonical certificate into Talent Passport. The hook
+            # uses a SAVEPOINT and cannot invalidate this issuance.
+            from ..talent_passport.hooks import notify_talent_passport
+            notify_talent_passport(
+                "certificate.issued", student_id,
+                "certificate", certificate.id,
+                course_id=course_id,
+            )
 
             # Mark enrollment as completed through the authoritative service
             # (skipped on admin force so a manual override is not reopened)

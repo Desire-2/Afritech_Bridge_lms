@@ -713,6 +713,22 @@ def write_through_grade(result: EvaluationResult, *,
             loaded.row.graded_at = now_local()
         except Exception:  # pragma: no cover
             pass
+
+    # This is the authoritative grade publication point for every AAGE path
+    # (jobs, reviews and explicit API publication). Refresh Passport evidence
+    # in the same transaction; the hook is failure-isolated and idempotent.
+    from ...talent_passport.hooks import notify_talent_passport
+    passport_source = (
+        "assignment_submission" if result.submission_type == SUBMISSION_ASSIGNMENT
+        else "project_submission"
+    )
+    published_at = result.published_at.isoformat() if result.published_at else ""
+    notify_talent_passport(
+        "aage.published", result.student_id,
+        passport_source, result.submission_id,
+        course_id=result.course_id,
+        suffix=f"result-{result.id}-{published_at}",
+    )
     db_commit()
 
     audit(

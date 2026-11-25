@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -40,7 +41,8 @@ import {
   CheckCircle,
   TrendingUp,
   Flame,
-  Activity
+  Activity,
+  Contact
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -422,6 +424,21 @@ const StudentProfilePage: React.FC = () => {
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-6">
+          <Card className="border-primary/30 shadow-none">
+            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <Contact className="mt-0.5 h-6 w-6 shrink-0 text-primary" aria-hidden="true" />
+                <div>
+                  <h2 className="text-base font-semibold">Build your Talent Passport</h2>
+                  <p className="text-sm text-muted-foreground">Show verified skills, projects and certificates to employers.</p>
+                </div>
+              </div>
+              <Button asChild className="min-h-11 focus-visible:ring-2 focus-visible:ring-offset-2">
+                <Link href="/student/talent-passport">Open Talent Passport</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Personal Info Card */}
             <Card>

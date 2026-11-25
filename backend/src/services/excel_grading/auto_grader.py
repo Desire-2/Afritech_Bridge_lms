@@ -205,6 +205,16 @@ def _auto_approve_grading_result(
             result.instructor_reviewed_at = None
             result.instructor_notes = 'Preliminary AI assessment — instructor review required'
             result.status = 'completed'
+
+            from ...talent_passport.hooks import notify_talent_passport
+            graded_marker = (result.graded_at.isoformat()
+                             if result.graded_at else str(result.id))
+            notify_talent_passport(
+                "excel.graded", result.student_id,
+                "excel_grading_result", result.id,
+                course_id=result.course_id,
+                suffix=f"preliminary:{graded_marker}",
+            )
             db.session.commit()
             return False
 
@@ -213,6 +223,18 @@ def _auto_approve_grading_result(
         result.instructor_reviewed_at = now_local()
         result.instructor_notes = 'Auto-approved by AI grading system'
         result.status = 'completed'
+
+        from ...talent_passport.hooks import notify_talent_passport
+        reviewed_marker = (result.instructor_reviewed_at.isoformat()
+                           if result.instructor_reviewed_at
+                           else (result.graded_at.isoformat()
+                                 if result.graded_at else str(result.id)))
+        notify_talent_passport(
+            "excel.reviewed", result.student_id,
+            "excel_grading_result", result.id,
+            course_id=result.course_id,
+            suffix=f"{result.instructor_reviewed}:{reviewed_marker}",
+        )
 
         db.session.commit()
 

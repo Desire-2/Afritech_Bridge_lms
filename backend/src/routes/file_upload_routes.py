@@ -153,6 +153,17 @@ def submit_assignment_with_files(assignment_id):
         )
         
         db.session.add(submission)
+        db.session.flush()
+
+        # A submitted assignment is evidence even before grading. The hook runs
+        # in a SAVEPOINT and cannot fail the student's submission.
+        from ..talent_passport.hooks import notify_talent_passport
+        notify_talent_passport(
+            "assignment.submitted", current_user_id,
+            "assignment_submission", submission.id,
+            course_id=assignment.course_id,
+        )
+
         db.session.commit()
         
         logger.info(f"Assignment {assignment_id} submitted by user {current_user_id} with {len(files_data)} files")
@@ -285,6 +296,16 @@ def resubmit_assignment_with_files(assignment_id):
         assignment.modification_requested_at = None
         assignment.modification_requested_by = None
         assignment.can_resubmit = False
+
+        from ..talent_passport.hooks import notify_talent_passport
+        resubmit_marker = (existing.submitted_at.isoformat()
+                           if existing.submitted_at else str(existing.id))
+        notify_talent_passport(
+            "assignment.resubmitted", current_user_id,
+            "assignment_submission", existing.id,
+            course_id=assignment.course_id,
+            suffix=resubmit_marker,
+        )
         
         # Update lesson completion if exists
         if assignment.lesson_id:
@@ -438,6 +459,24 @@ def submit_project_with_files(project_id):
             submission.set_team_members(team_members)
         
         db.session.add(submission)
+        db.session.flush()
+
+        # Submitting a project is evidence even before it is graded. Team
+        # submissions remain capped in the Passport capability engine.
+        from ..talent_passport.hooks import notify_talent_passport
+        notify_talent_passport(
+            "project.submitted", current_user_id,
+            "project_submission", submission.id,
+            course_id=project.course_id,
+        )
+        for member_id in set(team_members or []):
+            notify_talent_passport(
+                "project.submitted", int(member_id),
+                "project_submission", submission.id,
+                course_id=project.course_id,
+                suffix="team-member",
+            )
+
         db.session.commit()
         
         logger.info(f"Project {project_id} submitted by user {current_user_id} with {len(files_data)} files")

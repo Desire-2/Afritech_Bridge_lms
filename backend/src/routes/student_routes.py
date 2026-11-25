@@ -1582,6 +1582,18 @@ def submit_assignment(assignment_id):
             external_url=data.get('external_url')
         )
         db.session.add(submission)
+        db.session.flush()
+
+        from ..talent_passport.hooks import notify_talent_passport
+        submit_marker = (submission.submitted_at.isoformat()
+                         if submission.submitted_at else str(submission.id))
+        notify_talent_passport(
+            "assignment.submitted", current_user_id,
+            "assignment_submission", submission.id,
+            course_id=assignment.course_id,
+            suffix=submit_marker,
+        )
+
         db.session.commit()
 
         # Every assignment submission is graded by AAGE; spreadsheet files use
@@ -2556,6 +2568,16 @@ def submit_quiz(quiz_id):
                 answer_data={'selected_answer': answer_data}
             )
             db.session.add(user_answer)
+
+        from ..talent_passport.hooks import notify_talent_passport
+        quiz_marker = (attempt.end_time.isoformat()
+                       if attempt.end_time else str(attempt.id))
+        notify_talent_passport(
+            "quiz.submitted", current_user_id,
+            "quiz_attempt", attempt.id,
+            course_id=quiz.course_id,
+            suffix=quiz_marker,
+        )
         
         db.session.commit()
         
@@ -3439,6 +3461,23 @@ def submit_project(project_id):
             existing_submission.text_content = data.get('text_content')
             existing_submission.file_path = data.get('file_url')
             existing_submission.submitted_at = now_local()
+
+            from ..talent_passport.hooks import notify_talent_passport
+            scaffold_marker = existing_submission.submitted_at.isoformat()
+            notify_talent_passport(
+                "project.submitted", current_user_id,
+                "project_submission", existing_submission.id,
+                course_id=project.course_id,
+                suffix=scaffold_marker,
+            )
+            for member_id in set(team_members or []):
+                notify_talent_passport(
+                    "project.submitted", int(member_id),
+                    "project_submission", existing_submission.id,
+                    course_id=project.course_id,
+                    suffix=f"team:{scaffold_marker}",
+                )
+
             db.session.commit()
             aage_job = enqueue_for_submission(
                 submission_type='project',
@@ -3468,6 +3507,25 @@ def submit_project(project_id):
             submission.set_team_members(team_members)
         
         db.session.add(submission)
+        db.session.flush()
+
+        from ..talent_passport.hooks import notify_talent_passport
+        project_marker = (submission.submitted_at.isoformat()
+                          if submission.submitted_at else str(submission.id))
+        notify_talent_passport(
+            "project.submitted", current_user_id,
+            "project_submission", submission.id,
+            course_id=project.course_id,
+            suffix=project_marker,
+        )
+        for member_id in set(team_members or []):
+            notify_talent_passport(
+                "project.submitted", int(member_id),
+                "project_submission", submission.id,
+                course_id=project.course_id,
+                suffix=f"team:{project_marker}",
+            )
+
         db.session.commit()
 
         # Mirror the file-upload route: AAGE owns every project grade and

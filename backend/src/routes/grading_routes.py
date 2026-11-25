@@ -448,7 +448,18 @@ def grade_assignment_submission(submission_id):
             }
             # Store as properly formatted JSON
             submission.feedback = json.dumps(rubric_data, indent=2)
-        
+
+        # Keep Talent Passport evidence in step with the authoritative grade.
+        # The hook is failure-isolated and shares this transaction.
+        from ..talent_passport.hooks import notify_talent_passport
+        graded_marker = (submission.graded_at.isoformat()
+                         if submission.graded_at else str(submission.id))
+        notify_talent_passport(
+            "assignment.graded", submission.student_id,
+            "assignment_submission", submission.id,
+            suffix=f"instructor:{graded_marker}",
+        )
+
         db.session.commit()
         
         # ===== FIX: Update module progress with assignment score =====
@@ -808,6 +819,16 @@ def bulk_grade_assignments():
                 submission.feedback = feedback
                 submission.graded_at = now_local()
                 submission.graded_by = current_user_id
+
+                from ..talent_passport.hooks import notify_talent_passport
+                bulk_marker = (submission.graded_at.isoformat()
+                               if submission.graded_at else str(submission.id))
+                notify_talent_passport(
+                    "assignment.graded", submission.student_id,
+                    "assignment_submission", submission.id,
+                    course_id=submission.assignment.course_id,
+                    suffix=f"bulk:{bulk_marker}",
+                )
                 
                 # Create/Update LessonCompletion for this assignment
                 try:
@@ -1276,7 +1297,17 @@ def grade_project_submission(submission_id):
             }
             # Store as properly formatted JSON
             submission.feedback = json.dumps(rubric_data, indent=2)
-        
+
+        # Keep Talent Passport evidence in step with the authoritative grade.
+        from ..talent_passport.hooks import notify_talent_passport
+        graded_marker = (submission.graded_at.isoformat()
+                         if submission.graded_at else str(submission.id))
+        notify_talent_passport(
+            "project.graded", submission.student_id,
+            "project_submission", submission.id,
+            suffix=f"instructor:{graded_marker}",
+        )
+
         db.session.commit()
 
         # ===== Grade Sharing: Propagate grade to ALL team members =====
@@ -1659,6 +1690,18 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
         elif not enrollment:
             logger.warning(f"⚠️ Team member {member_id}: enrollment not found for course {course_id}")
         
+        # Team grades are shared LMS facts; refresh each member's Passport too.
+        # The Passport still caps shared grades until an individual is verified.
+        from ..talent_passport.hooks import notify_talent_passport
+        graded_marker = (graded_at.isoformat() if graded_at
+                         else str(member_submission.id))
+        notify_talent_passport(
+            "project.graded", member_id,
+            "project_submission", member_submission.id,
+            course_id=course_id,
+            suffix=f"team-member:{graded_marker}",
+        )
+
         result['success'] = True
         
     except Exception as e:
@@ -2412,6 +2455,26 @@ def quick_grade():
             submission.feedback = feedback
             submission.graded_at = now_local()
             submission.graded_by = current_user_id
+
+        from ..talent_passport.hooks import notify_talent_passport
+        quick_source = (
+            "assignment_submission" if submission_type == 'assignment'
+            else "project_submission"
+        )
+        quick_course_id = (
+            submission.assignment.course_id if submission_type == 'assignment'
+            else submission.project.course_id
+        )
+        quick_marker = (submission.graded_at.isoformat()
+                        if submission.graded_at else str(submission.id))
+        notify_talent_passport(
+            "project.graded" if submission_type == 'project' else "assignment.graded",
+            submission.student_id,
+            quick_source,
+            submission.id,
+            course_id=quick_course_id,
+            suffix=f"quick:{quick_marker}",
+        )
         
         # Update max_resubmissions if provided
         new_max_resubmissions = data.get('max_resubmissions')

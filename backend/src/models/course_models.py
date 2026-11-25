@@ -73,7 +73,6 @@ class Course(db.Model):
         cascade="all, delete-orphan",
         order_by='ApplicationWindow.opens_at'
     )
-
     def __repr__(self):
         return f'<Course {self.title}>'
 

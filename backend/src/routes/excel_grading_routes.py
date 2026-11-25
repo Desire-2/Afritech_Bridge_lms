@@ -461,6 +461,17 @@ def review_result(result_id):
         if published:
             legacy.instructor_reviewed = True
             legacy.status = 'reviewed'
+
+            from ..talent_passport.hooks import notify_talent_passport
+            reviewed_marker = (legacy.instructor_reviewed_at.isoformat()
+                               if legacy.instructor_reviewed_at
+                               else str(legacy.id))
+            notify_talent_passport(
+                "excel.reviewed", legacy.student_id,
+                "excel_grading_result", legacy.id,
+                course_id=legacy.course_id,
+                suffix=f"instructor:{reviewed_marker}",
+            )
             db.session.commit()
 
         result = EvaluationResult.query.get(result_id_aage)

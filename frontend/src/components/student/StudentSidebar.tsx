@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle, Bell, Calendar } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle, Bell, Calendar, Contact } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -82,6 +82,12 @@ const StudentSidebar = () => {
     {
       title: 'ACHIEVEMENTS',
       items: [
+        {
+          href: '/student/talent-passport',
+          label: 'Talent Passport',
+          description: 'Skills & portfolio',
+          icon: <Contact size={iconSize} />
+        },
         { 
           href: '/student/certificates', 
           label: 'Certifications', 
