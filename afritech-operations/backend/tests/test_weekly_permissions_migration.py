@@ -11,6 +11,8 @@ from datetime import date
 
 import pytest
 import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
 from app.auth.permissions import (
     ACCOUNTANT_WEEKLY_PERMISSIONS, AGENT_WEEKLY_PERMISSIONS,
@@ -37,6 +39,11 @@ def migration():
 @pytest.fixture()
 def sunday_migration():
     return _load_migration('c2f8a7d41b90')
+
+
+@pytest.fixture()
+def cost_source_migration():
+    return _load_migration('b7e3c9a1d452')
 
 
 @pytest.fixture()
@@ -229,3 +236,50 @@ class TestSundayWeekMigration:
                             if row['action'] == 'weekly_report_deadline_corrected']
             assert period_ids == ['1', '2']
             assert deadline_ids == ['5']
+
+
+class TestOfficialCostSourceMigration:
+    def test_revision_follows_declaration_columns(self, sunday_migration,
+                                                  cost_source_migration):
+        assert sunday_migration.revision == 'c2f8a7d41b90'
+        assert cost_source_migration.down_revision == 'a9d4e7f16c20'
+        assert cost_source_migration.revision == 'b7e3c9a1d452'
+
+    def test_existing_personal_claims_keep_their_deductible_source(
+            self, tmp_path, monkeypatch, cost_source_migration):
+        engine = sa.create_engine(
+            f'sqlite:///{tmp_path}/weekly_cost_sources.db')
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                'CREATE TABLE weekly_official_cost_payments ('
+                'id INTEGER PRIMARY KEY, personal_payment BOOLEAN NOT NULL)'))
+            conn.execute(sa.text(
+                'INSERT INTO weekly_official_cost_payments (id, personal_payment) '
+                'VALUES (1, 1), (2, 0)'))
+
+        connection = engine.connect()
+        operations = Operations(MigrationContext.configure(connection))
+        monkeypatch.setattr(cost_source_migration, 'op', operations)
+        try:
+            cost_source_migration.upgrade()
+            connection.commit()
+            with engine.connect() as conn:
+                rows = conn.execute(sa.text(
+                    'SELECT id, payment_source FROM weekly_official_cost_payments '
+                    'ORDER BY id')).mappings().all()
+                assert [row['payment_source'] for row in rows] == [
+                    'personal', 'not_paid']
+                indexes = conn.execute(sa.text(
+                    "PRAGMA index_list('weekly_official_cost_payments')")).mappings().all()
+                assert any(row['name'] ==
+                           'ix_weekly_official_cost_payments_payment_source'
+                           for row in indexes)
+
+            cost_source_migration.downgrade()
+            connection.commit()
+            with engine.connect() as conn:
+                columns = {row['name'] for row in conn.execute(sa.text(
+                    "PRAGMA table_info('weekly_official_cost_payments')")).mappings()}
+                assert 'payment_source' not in columns
+        finally:
+            connection.close()

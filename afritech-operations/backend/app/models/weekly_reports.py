@@ -41,9 +41,25 @@ WEEKLY_SUBMISSION_SOURCES = ['agent_phone', 'company', 'someone_else']
 # A personal payment of an official service cost has its own verification
 # lifecycle. It is never a customer Payment and never a remittance MoMo row.
 COST_PAYMENT_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
+# Who actually funded an official service cost. ``personal_payment`` remains
+# the boolean that controls deduction, but a simple "no" used to mean three
+# different things; this source makes the agent's answer auditable.
+OFFICIAL_COST_PAYMENT_SOURCES = [
+    'personal', 'company', 'someone_else', 'not_paid',
+]
+# Plain-language reasons for submitting less than expected. The older,
+# accounting-oriented categories remain valid for historical reports.
 SHORTAGE_REASON_CATEGORIES = [
+    'customer_not_paid', 'service_issue', 'payment_problem',
+    'money_unavailable', 'incorrect_record',
     'cash_count_error', 'unrecorded_collection', 'unapproved_expense',
     'provider_payment_timing', 'bank_delay', 'documentation_error', 'other',
+]
+# The six plain-language choices shown to a Service Agent. Older categories
+# remain valid on historical reports and in exports.
+AGENT_SHORTAGE_REASON_CATEGORIES = [
+    'customer_not_paid', 'service_issue', 'payment_problem',
+    'money_unavailable', 'incorrect_record', 'other',
 ]
 ADJUSTMENT_KINDS = [
     'authorized_receipt', 'provider_payment', 'collection_expense',
@@ -306,6 +322,8 @@ class OfficialCostPayment(TimestampMixin, db.Model):
     # customer's payment status, never the status of this personal payment.
     official_cost = db.Column(db.Numeric(16, 2), nullable=False)
     customer_payment_status = db.Column(db.String(32), nullable=False)
+    payment_source = db.Column(db.String(32), nullable=False, default='not_paid',
+                               index=True)
     personal_payment = db.Column(db.Boolean, nullable=False, default=False)
     amount = db.Column(db.Numeric(16, 2), nullable=False)
     is_partial = db.Column(db.Boolean, nullable=False, default=False)
@@ -341,6 +359,7 @@ class OfficialCostPayment(TimestampMixin, db.Model):
             'employee_id': self.employee_id,
             'official_cost': float(self.official_cost or 0),
             'customer_payment_status': self.customer_payment_status,
+            'payment_source': self.payment_source or 'not_paid',
             'personal_payment': bool(self.personal_payment),
             'amount': float(self.amount or 0),
             'is_partial': bool(self.is_partial),

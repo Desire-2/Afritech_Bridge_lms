@@ -116,12 +116,21 @@ All endpoints are under `/api/weekly-reports` and use the restricted
 workflow, calculation formula, policy settings and bilingual export details.
 
 - `GET /policy` · `GET /weeks`
+- `POST /agent-summary` (Service Agent only; one self-scoped request that
+  prepares/reuses her draft and returns the authoritative `summary`, `policy`,
+  `constants`, `employee` and `weeks`; accepts `week_start` or a self-owned
+  `report_id`)
 - `GET /queue` (reviewers) · `GET /` · `POST /generate`
   (admin/manager for in-scope agents; Service Agent for herself only)
 - `GET/PATCH /{id}` · `POST /{id}/submit`
   (agent declaration includes `declared_submitted_amount` and
-  `submission_funding_source`: `agent_phone` | `company` | `someone_else`)
+  `submission_funding_source`: `agent_phone` | `company` | `someone_else`;
+  a lower/zero amount needs `shortage_reason_category` plus
+  `shortage_explanation`, and a higher amount needs `surplus_explanation`)
 - `GET /{id}/transactions` · `GET /{id}/daily-closings` · `GET /{id}/expenses`
+- `GET/POST/DELETE /{id}/official-cost-payments[/…]`
+  (`payment_source`: `personal` | `company` | `someone_else` | `not_paid`; only
+  a verified `personal` claim reduces expected remittance)
 - `POST/DELETE /{id}/momo[/…]` · `GET /{id}/evidence`
 - `POST /{id}/override` · `POST /{id}/missing-closings/override`
 - `POST /{id}/review` · `POST /{id}/adjustments` · `GET /{id}/audit`

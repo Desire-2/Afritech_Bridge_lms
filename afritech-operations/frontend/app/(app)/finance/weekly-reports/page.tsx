@@ -11,6 +11,7 @@ import { P } from '@/lib/permissions';
 import { EmptyState, ErrorAlert, Loading, PageHeader, Pagination } from '@/components/ui';
 import { Field, SelectInput, TextInput } from '@/components/form';
 import { useWeeklyI18n, WeeklyLangSwitcher } from '@/lib/weekly-i18n';
+import AgentWeeklyFlow from '@/components/weekly/AgentWeeklyFlow';
 import ReportDashboard from '@/components/weekly/ReportDashboard';
 import {
   WEEKLY_TABS, WeekOption, WeeklyBadge, WeeklyTab, weekOptionLabel,
@@ -42,7 +43,11 @@ export default function WeeklyReportsPage() {
 
   const canReview = can(user, P.weeklyReportsReview);
   const canManage = can(user, P.weeklyReportsManage);
-  const canGenerate = canManage || can(user, P.weeklyReportsSubmit);
+  const canSubmit = can(user, P.weeklyReportsSubmit);
+  const canGenerate = canManage || canSubmit;
+  // A Service Agent gets the guided three-section task. Managers, Accountants
+  // and reviewers keep the full dashboard; no agent ever sees the report queue.
+  const guidedAgent = canSubmit && !canReview && !canManage && !user?.is_super_admin;
   const weeks: WeekOption[] = weeksData.data?.weeks || [];
 
   useEffect(() => {
@@ -73,6 +78,20 @@ export default function WeeklyReportsPage() {
   if (loading) return <Loading label={t('ui.label.loading')} />;
   if (!can(user, P.weeklyReportsView)) {
     return <EmptyState message={t('ui.error.accessDenied')} icon="bi-shield-lock" />;
+  }
+
+  if (guidedAgent) {
+    return (
+      <div>
+        <PageHeader
+          title={t('ui.agent.title')}
+          subtitle={t('ui.agent.subtitle')}
+          actions={<WeeklyLangSwitcher />}
+        />
+        <AgentWeeklyFlow initialReportId={deepLink.report}
+          focusDeclaration={deepLink.tab === 'shortage'} />
+      </div>
+    );
   }
 
   async function generate() {

@@ -15,7 +15,8 @@ from ..models import (
     WeeklyReport, WeeklyReportAdjustment, WeeklyReportExpense,
     WEEKLY_REPORT_TRANSITIONS, ADJUSTMENT_KINDS, SHORTAGE_REASON_CATEGORIES,
     COST_PAYMENT_VERIFICATION_STATUSES, MOMO_PROVIDERS,
-    WEEKLY_SUBMISSION_SOURCES,
+    WEEKLY_SUBMISSION_SOURCES, OFFICIAL_COST_PAYMENT_SOURCES,
+    AGENT_SHORTAGE_REASON_CATEGORIES,
 )
 from ..auth.scope import service_agent_employee_ids
 from .audit import audit
@@ -201,8 +202,8 @@ class WeeklyReportService:
         """Data-only claim view. Phone numbers are masked at the boundary."""
         if claim is None:
             return {
-                'id': None, 'personal_payment': None, 'amount': '0.00',
-                'is_partial': False, 'provider': None, 'reference': None,
+                'id': None, 'payment_source': 'unknown', 'personal_payment': None,
+                'amount': '0.00', 'is_partial': False, 'provider': None, 'reference': None,
                 'paid_at': None, 'sender_phone': None, 'evidence_name': None,
                 'notes': None, 'verification_status': 'not_claimed',
                 'verification_note': None,
@@ -210,6 +211,7 @@ class WeeklyReportService:
         data = claim.to_dict(include_sensitive=True)
         return {
             'id': data['id'],
+            'payment_source': data.get('payment_source') or 'not_paid',
             'personal_payment': data['personal_payment'],
             'amount': _str(data['amount']),
             'is_partial': data['is_partial'],
@@ -286,6 +288,7 @@ class WeeklyReportService:
                 'is_eligible': is_eligible,
                 'cost_payment_claim_id': claim_view['id'],
                 'official_cost_payment_status': claim_view['verification_status'],
+                'official_cost_payment_source': claim_view['payment_source'],
                 'personal_payment': claim_view['personal_payment'],
                 'personal_payment_amount': claim_view['amount'],
                 'personal_payment_reference': claim_view['reference'],
@@ -413,6 +416,12 @@ class WeeklyReportService:
                     - commission_retained)
         shortage = max(Decimal('0'), expected - momo_verified)
         surplus = max(Decimal('0'), momo_verified - expected)
+        # The agent's own declaration is shown to her immediately, while the
+        # reviewed totals above remain the financial source of truth. A claim is
+        # never allowed to clear a verified shortage on its own.
+        declared = _dec(report.declared_submitted_amount)
+        declared_shortage = max(Decimal('0'), expected - declared)
+        declared_surplus = max(Decimal('0'), declared - expected)
         outstanding_delta = self._outstanding_adjustment_total(report)
         closing_outstanding = max(
             Decimal('0'), expected - momo_verified + outstanding_delta)
@@ -447,8 +456,10 @@ class WeeklyReportService:
                 'expected_remittance': _str(expected),
                 'agent_reported_submitted': _str(momo_reported),
                 'verified_submitted': _str(momo_verified),
-                'declared_submitted_amount': _str(report.declared_submitted_amount),
+                'declared_submitted_amount': _str(declared),
                 'submission_funding_source': report.submission_funding_source,
+                'declared_shortage_amount': _str(declared_shortage),
+                'declared_surplus_amount': _str(declared_surplus),
                 'shortage_amount': _str(shortage),
                 'surplus_amount': _str(surplus),
                 'commission_earned': _str(commission),
@@ -632,6 +643,7 @@ class WeeklyReportService:
                       if claim_row and c.id == claim_row.get('id')), None))
             txn_row['cost_payment_claim_id'] = view['id']
             txn_row['official_cost_payment_status'] = view['verification_status']
+            txn_row['official_cost_payment_source'] = view['payment_source']
             txn_row['personal_payment'] = view['personal_payment']
             txn_row['personal_payment_amount'] = view['amount']
             txn_row['personal_payment_reference'] = view['reference']
@@ -760,8 +772,11 @@ class WeeklyReportService:
         c['expected_remittance'] = _str(expected)
         c['agent_reported_submitted'] = _str(momo_reported)
         c['verified_submitted'] = _str(momo_verified)
-        c['declared_submitted_amount'] = _str(report.declared_submitted_amount)
+        declared = _dec(report.declared_submitted_amount)
+        c['declared_submitted_amount'] = _str(declared)
         c['submission_funding_source'] = report.submission_funding_source
+        c['declared_shortage_amount'] = _str(max(Decimal('0'), expected - declared))
+        c['declared_surplus_amount'] = _str(max(Decimal('0'), declared - expected))
         c['shortage_amount'] = _str(max(Decimal('0'), expected - momo_verified))
         c['surplus_amount'] = _str(max(Decimal('0'), momo_verified - expected))
         c['opening_outstanding'] = _str(report.opening_outstanding)
@@ -842,6 +857,7 @@ class WeeklyReportService:
         allowed = {
             'shortage_reason_category': 'shortage_reason_category',
             'shortage_explanation': 'shortage_explanation',
+            'surplus_explanation': 'shortage_explanation',
             'expected_resolution_date': 'expected_resolution_date',
             'override_reason': 'override_reason',
             'declared_submitted_amount': 'declared_submitted_amount',
@@ -893,8 +909,12 @@ class WeeklyReportService:
                 'weekly_report.late_blocked', 403)
         if data.get('shortage_reason_category'):
             report.shortage_reason_category = data.get('shortage_reason_category')
-        if data.get('shortage_explanation'):
-            report.shortage_explanation = data.get('shortage_explanation')
+        if data.get('shortage_explanation') or data.get('surplus_explanation'):
+            # One plain-language explanation field serves both "less than
+            # expected" and "more than expected"; the UI labels it for the
+            # situation the agent is actually in.
+            report.shortage_explanation = (data.get('shortage_explanation')
+                                           or data.get('surplus_explanation'))
         if data.get('expected_resolution_date'):
             try:
                 report.expected_resolution_date = date.fromisoformat(str(data['expected_resolution_date']))
@@ -920,27 +940,32 @@ class WeeklyReportService:
         calc = self.refresh(report, actor)
         c = calc.get('components', {})
         shortage = _dec(c.get('shortage_amount'))
-        if shortage > 0:
+        declared_shortage = _dec(c.get('declared_shortage_amount'))
+        declared_surplus = _dec(c.get('declared_surplus_amount'))
+        # A modern submission always carries the declared amount. Older
+        # integrations that never declare one keep the reviewed-verification
+        # rules, so historical behaviour is unchanged.
+        declared = data.get('declared_submitted_amount') not in (None, '') \
+            or _dec(report.declared_submitted_amount) > 0
+        asking_shortage = declared_shortage if declared else shortage
+        if asking_shortage > 0 or declared_surplus > 0:
             if data.get('override_reason'):
                 report.override_reason = data['override_reason']
             category_valid = report.shortage_reason_category in SHORTAGE_REASON_CATEGORIES
             explained = bool(category_valid and report.shortage_explanation)
-            evidenced = (bool(report.shortage_evidence_path) or evidence_provided
-                         or not policy['shortage_requires_evidence'])
-            resolution_dated = bool(report.expected_resolution_date)
             authorized = bool(report.override_reason and report.override_authorized_by)
-            if not authorized:
+            if asking_shortage > 0 and not authorized:
+                # The guided agent flow asks one short question and one reason;
+                # evidence and a resolution date can still be attached but are
+                # no longer a barrier to an honest, explained shortage.
                 if not explained:
                     raise WeeklyReportError(
-                        'A valid shortage category and detailed explanation are required.',
+                        'A valid reason and brief explanation are required.',
                         'weekly_report.shortage_explanation', 400)
-                if not evidenced:
-                    raise WeeklyReportError('Evidence is required when a shortage is reported.',
-                                            'weekly_report.shortage_evidence', 400)
-                if not resolution_dated:
-                    raise WeeklyReportError(
-                        'An expected resolution date is required for a shortage.',
-                        'weekly_report.shortage_resolution', 400)
+            elif declared_surplus > 0 and not report.shortage_explanation:
+                raise WeeklyReportError(
+                    'Please confirm or explain the extra amount.',
+                    'weekly_report.surplus_explanation', 400)
 
         if evidence_provided:
             report.shortage_evidence_path = self._store_evidence(evidence, report, 'shortage')
@@ -1117,13 +1142,22 @@ class WeeklyReportService:
             personal = raw_personal
         else:
             personal = str(raw_personal or '').strip().lower() in ('1', 'true', 'yes', 'on')
+        raw_source = str(data.get('payment_source') or '').strip().lower()
+        if raw_source not in OFFICIAL_COST_PAYMENT_SOURCES:
+            # Old yes/no clients are still accepted: "yes" means personal,
+            # "no" used to be indistinguishable between company/other/unpaid.
+            raw_source = 'personal' if personal else 'not_paid'
+        # The explicit source wins: a company-paid cost can never become a
+        # personal credit just because a client sent the legacy boolean.
+        personal = raw_source == 'personal'
 
         now = datetime.now(timezone.utc)
         if not personal:
-            # Capture the negative answer without creating any deductible money.
+            # Record the exact answer for audit, but never create deductible
+            # money from a company, another person or an unpaid cost.
             amount = Decimal('0')
             provider = 'not_applicable'
-            reference = f'NA-{txn.id}'
+            reference = f'NA-{txn.id}-{raw_source}'
             sender_phone = None
             paid_at = now
             reference_key = f'not-applicable:{txn.id}:{uuid.uuid4().hex[:8]}'
@@ -1185,7 +1219,8 @@ class WeeklyReportService:
         claim = OfficialCostPayment(
             report_id=report.id, transaction_id=txn.id, employee_id=report.employee_id,
             reference_key=reference_key, official_cost=official_cost,
-            customer_payment_status=customer_status, personal_payment=personal,
+            customer_payment_status=customer_status, payment_source=raw_source,
+            personal_payment=personal,
             amount=amount, is_partial=bool(personal and amount < official_cost),
             provider=provider, reference=reference, paid_at=paid_at,
             sender_phone=sender_phone, evidence_path=evidence_path,
@@ -1370,6 +1405,106 @@ class WeeklyReportService:
         payload['status'] = {'name': report.status}
         return payload
 
+    def agent_summary(self, report, calc=None):
+        """One plain-language data contract for the guided Service Agent task.
+
+        Only already-authoritative figures are reshaped here; no arithmetic is
+        duplicated in the browser and no claim can clear a verified shortage.
+        """
+        calc = calc or self.calculation_view(report)
+        c = calc.get('components', {})
+        claim_by_txn = {}
+        for claim in calc.get('official_cost_payments', []):
+            claim_by_txn.setdefault(claim.get('transaction_id'), claim)
+
+        cost_rows = []
+        source_totals = {key: Decimal('0') for key in OFFICIAL_COST_PAYMENT_SOURCES}
+        for row in calc.get('transactions', []):
+            cost = _dec(row.get('official_cost'))
+            if cost <= 0:
+                continue
+            claim = claim_by_txn.get(row.get('id')) or {}
+            source = (claim.get('payment_source')
+                      or row.get('official_cost_payment_source') or 'not_paid')
+            if source not in source_totals:
+                source = 'not_paid'
+            verified = bool(claim.get('personal_payment')
+                            and claim.get('verification_status') == 'verified')
+            claimed_amount = _dec(claim.get('amount'))
+            credit = claimed_amount if verified and source == 'personal' else Decimal('0')
+            if source == 'personal':
+                source_totals['personal'] += credit
+            else:
+                source_totals[source] += cost
+            cost_rows.append({
+                'transaction_id': row.get('id'),
+                'transaction_number': row.get('transaction_number'),
+                'service_name': row.get('service_name'),
+                'date': row.get('date'),
+                'official_cost': _str(cost),
+                'customer_payment_status': row.get('payment_status'),
+                'payment_source': source,
+                'claim_id': claim.get('id'),
+                'claimed_amount': _str(claimed_amount),
+                'is_partial': bool(claim.get('is_partial')),
+                'verification_status': claim.get('verification_status') or 'not_claimed',
+                'verified_amount': _str(credit),
+                'provider': claim.get('provider'),
+                'reference': claim.get('reference'),
+                'paid_at': claim.get('paid_at'),
+                'evidence_name': claim.get('evidence_name'),
+                'notes': claim.get('notes'),
+                'verification_note': claim.get('verification_note'),
+            })
+
+        declared = _dec(c.get('declared_submitted_amount'))
+        expected = _dec(c.get('expected_remittance'))
+        status = report.status
+        return {
+            'status': status,
+            'editable': status in ('draft', 'ready_for_submission', 'late',
+                                   'returned_for_correction'),
+            'week_start': report.week_start.isoformat(),
+            'week_end': report.week_end.isoformat(),
+            'due_at': report.due_at.isoformat() if report.due_at else None,
+            'period_label': report.period_label,
+            'transaction_count': int(calc.get('transaction_count') or 0),
+            'eligible_transaction_count': int(calc.get('eligible_transaction_count') or 0),
+            'total_collected': _str(c.get('eligible_collections')),
+            'official_costs_total': _str(c.get('service_costs')),
+            'previous_outstanding': _str(c.get('opening_outstanding')),
+            'personal_paid_verified': _str(source_totals['personal']),
+            'personal_paid_pending': _str(sum(
+                (_dec(r['claimed_amount']) for r in cost_rows
+                 if r['payment_source'] == 'personal'
+                 and r['verification_status'] == 'pending'), Decimal('0'))),
+            'company_paid': _str(source_totals['company']),
+            'someone_else_paid': _str(source_totals['someone_else']),
+            'not_paid': _str(source_totals['not_paid']),
+            'expected_amount': _str(expected),
+            'declared_amount': _str(declared),
+            'submission_funding_source': c.get('submission_funding_source')
+            or report.submission_funding_source,
+            'agent_reported_submitted': _str(c.get('agent_reported_submitted')),
+            'verified_submitted': _str(c.get('verified_submitted')),
+            'declared_shortage': _str(c.get('declared_shortage_amount')
+                                      or max(Decimal('0'), expected - declared)),
+            'declared_surplus': _str(c.get('declared_surplus_amount')
+                                     or max(Decimal('0'), declared - expected)),
+            'verified_shortage': _str(c.get('shortage_amount')),
+            'verified_surplus': _str(c.get('surplus_amount')),
+            'shortage_reason_category': report.shortage_reason_category,
+            'shortage_explanation': report.shortage_explanation,
+            'expected_resolution_date': report.expected_resolution_date.isoformat()
+            if report.expected_resolution_date else None,
+            'shortage_evidence_name': report.shortage_evidence_name,
+            'is_late': bool(report.is_late),
+            'official_costs': cost_rows,
+            'momo_submissions': calc.get('momo_submissions', []),
+            'shortage_reason_categories': AGENT_SHORTAGE_REASON_CATEGORIES,
+            'official_cost_payment_sources': OFFICIAL_COST_PAYMENT_SOURCES,
+        }
+
     def detail(self, report, actor=None, refresh=False):
         if refresh:
             calc = self.refresh(report, actor)
@@ -1392,6 +1527,7 @@ class WeeklyReportService:
             if key in components:
                 payload[key] = float(_dec(components[key]))
         payload['calculation'] = calc
+        payload['summary'] = self.agent_summary(report, calc)
         payload['momo_submissions'] = [m.to_dict() for m in report.momo_submissions]
         payload['cost_payment_claims'] = [c.to_dict() for c in report.cost_payment_claims]
         payload['adjustments'] = [a.to_dict() for a in report.adjustments]

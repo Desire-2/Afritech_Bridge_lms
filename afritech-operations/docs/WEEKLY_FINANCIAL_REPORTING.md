@@ -54,7 +54,7 @@ move the period back to the old Saturday–Friday rule.
 | `collection_funded_payment_methods` | `cash` | Expense payment methods that reduce remittance |
 | `eligible_transaction_statuses` | `completed` | Transaction statuses that count |
 | `ineligible_transaction_statuses` | see above | Hard exclusions |
-| `shortage_requires_evidence` | `true` | Evidence mandatory for explained shortages |
+| `shortage_requires_evidence` | `true` | Legacy policy flag kept for compatibility; the guided task accepts an explained shortage without evidence and treats evidence as optional |
 | `statement_items` | `21` | Number of statement lines in exports |
 
 `require_week_start()` still rejects a stored report whose `week_start` is not a
@@ -68,9 +68,12 @@ while the report keeps its business `timezone_name`. A scheduler run on Sunday
 creates and reminds for the **completed** Sunday–Saturday week, not the week that
 has just begun. Historical weeks are available through
 `GET /api/weekly-reports/weeks` (current, previous and 11 older weeks by default).
-Service Agents get a **Generate my weekly report** button because `POST /generate`
-now accepts `weekly_reports.submit` and forces the target employee to the
-caller's own row.
+Service Agents land directly in the guided task: `POST /agent-summary` accepts
+`weekly_reports.submit`, ignores any supplied `employee_id`, idempotently
+prepares the caller's draft through the same normalisation as `POST /generate`,
+and returns everything the page needs in one response. `POST /generate` still
+accepts `weekly_reports.submit` for compatibility and also forces the target
+employee to the caller's own row.
 
 ## 3. Reconciliation formula
 
@@ -136,15 +139,22 @@ cash, difference, status, date and comments. A missing closing has
 represented as a zero-value closing. A reviewer with `weekly_reports.adjust` may
 acknowledge missing closings with a recorded reason.
 
-A shortage submission must include a category, a detailed explanation, evidence
-and an expected resolution date. An unexplained shortage is accepted only with
-an authorised override reason and `weekly_reports.adjust` permission. Evidence
-must be PDF/PNG/JPG/JPEG/WEBP and at most 10 MB; it is stored under
-`/uploads/weekly_reports/{report_id}/` only after the rest of the declaration
-passes validation, so a rejected submission cannot leave an orphan file. A
-client-supplied MoMo `submitted_at` must fall inside the reported week or before
-its stored deadline; short phone numbers are masked down to the last three
-digits (or completely when three digits or fewer) in every serialized response.
+The guided task compares the agent's declared amount with the authoritative
+expected amount immediately. An exact match needs no explanation. A lower
+amount (including zero) needs one of the six plain-language reasons
+(`customer_not_paid`, `service_issue`, `payment_problem`, `money_unavailable`,
+`incorrect_record`, `other`) and a brief `shortage_explanation`; a higher amount
+needs `surplus_explanation`. Evidence and an expected resolution date may still
+be attached, but no longer block an honest, explained shortage. The older
+accounting categories remain valid for historical reports and exports. An
+unexplained shortage is accepted only with an authorised override reason and
+`weekly_reports.adjust` permission. Evidence must be PDF/PNG/JPG/JPEG/WEBP and
+at most 10 MB; it is stored under `/uploads/weekly_reports/{report_id}/` only
+after the rest of the declaration passes validation, so a rejected submission
+cannot leave an orphan file. A client-supplied MoMo `submitted_at` must fall
+inside the reported week or before its stored deadline; short phone numbers are
+masked down to the last three digits (or completely when three digits or fewer)
+in every serialized response.
 
 ### 4.1 Official cost personal-payment claims
 
@@ -156,13 +166,17 @@ captures:
 
 - the source customer payment status (informational only), official cost and
   transaction link;
-- `personal_payment` yes/no;
+- `payment_source` — `personal` (I paid using my own money), `company`
+  (AfriTech Bridge paid), `someone_else` or `not_paid`. This is additive: the
+  legacy `personal_payment` boolean is still derived from it and controls
+  deduction; a non-personal answer stores zero deductible amount and no
+  evidence;
 - when yes: the amount personally paid (`0 < amount ≤ official_cost`),
   `is_partial`, provider (`momo`, `bank_transfer`, `cash_deposit`), reference,
   payment date/time within the Sunday–Saturday window, sender phone, evidence
   file and notes;
-- when no: a zero-amount audit record with no evidence requirement and no
-  possible deduction;
+- when the source is not personal: a zero-amount audit record with no evidence
+  requirement and no possible deduction;
 - reviewer `pending`/`verified`/`rejected` status, verifier, timestamp and note.
 
 Evidence is mandatory for a personal claim and is validated for type/size by the
@@ -180,25 +194,31 @@ decisions write audit rows and notify the agent; submission notifies reviewers.
 
 ### 4.2 Service Agent submission card
 
-Service Agents do not have `weekly_reports.manage`, but `POST /generate` also
-accepts `weekly_reports.submit`: without an `employee_id` it creates (or returns)
-the agent's own report for the backend-normalised week. An explicit
-`employee_id` is allowed only when it is the agent's own row, so one agent can
-never generate another agent's report. The UI's **Generate my weekly report**
-button calls this endpoint and opens the returned report id directly.
+Service Agents do not have `weekly_reports.manage`. Their `/finance/weekly-reports`
+page is a single guided task with three stacked sections and no report queue:
 
-The agent's declaration card on the shortage/surplus tab records:
+1. **Your week at a glance** — `POST /agent-summary` has already prepared the
+   draft and returns the authoritative expected amount, period, deadline and
+   status. `[View details]` opens an optional modal that explains the collections,
+   opening balance, official costs and verified/pending credits. It never
+   recalculates money in the browser.
+2. **Confirm official cost payers** — each in-week cost with a positive official
+   cost is listed with its known source preselected. The agent chooses `personal`,
+   `company`, `someone_else` or `not_paid`. Only a `personal` claim with evidence
+   and reviewer verification reduces the expected amount; pending claims are
+   labelled as pending and deduct nothing.
+3. **Declare and submit** — the agent enters an RWF amount, sees the immediate
+   match/short/surplus hint, answers the conditional question, optionally adds
+   one or more transfers, reviews the short summary and submits. The declared
+   amount, the evidence-backed `agent_reported_submitted` total and the
+   reviewer-verified `verified_submitted` total are displayed separately.
 
-- `declared_submitted_amount` — the total amount the agent says she submitted;
-- `submission_funding_source` — `agent_phone`, `company` or `someone_else`.
-
-Both fields are editable through `PATCH /{id}` and accepted by `POST /{id}/submit`;
-they are frozen with the snapshot once the report is submitted. They are a
-declaration only: `agent_reported_submitted` still comes from the MoMo/bank rows
-and `verified_submitted` still counts only reviewer-verified transfers. Selecting
-`agent_phone` never clears a shortage by itself. The per-cost "own funds?"
-answer remains separate, on the **Official costs** tab, where it is tied to one
-verified `OfficialCostPayment` claim.
+`declared_submitted_amount` and `submission_funding_source` are editable through
+`PATCH /{id}` and accepted by `POST /{id}/submit`; they are frozen with the
+snapshot once the report is submitted. They are a declaration only: selecting
+`agent_phone` never clears a shortage by itself, and unverified MoMo rows never
+replace `verified_submitted`. Reviewers, Managers and Accountants keep the full
+nine-tab `ReportDashboard` and the `/finance/weekly-reports/review` route.
 
 ## 5. Workflow and state machine
 
@@ -269,7 +289,8 @@ Base path: `/api/weekly-reports`
 | GET | `/policy` | Effective policy, statuses, categories, providers, languages, current week |
 | GET | `/weeks` | Available current/previous/historical weeks with counts |
 | GET | `/queue` | Manager/Accountant review queue |
-| GET | `""` | Permission/branch/agent-scoped list |
+| GET | `""` | Permission/branch/agent-scoped list (reviewer workspace only) |
+| POST | `/agent-summary` | Service Agent's one-call guided landing: self-scoped draft + `summary`/`policy`/`constants`/`weeks` |
 | POST | `/generate` | Idempotent generation: admin/manager for any in-scope agent; Service Agent for herself only |
 | GET | `/{id}` | Report, calculation, submissions, adjustments, allocations, transitions |
 | PATCH | `/{id}` | Save editable declaration fields, including weekly submitted amount and funding source |
@@ -278,7 +299,7 @@ Base path: `/api/weekly-reports`
 | GET | `/{id}/daily-closings` | Per-day rows, missing list, override |
 | GET | `/{id}/expenses` | Eligible expense rows |
 | GET | `/{id}/official-cost-payments` | Claim list with verified total |
-| POST | `/{id}/official-cost-payments` | Add a personal official-cost claim with evidence |
+| POST | `/{id}/official-cost-payments` | Record an official-cost payer (`payment_source`); personal source additionally requires amount, reference, sender phone and evidence |
 | DELETE | `/{id}/official-cost-payments/{claim_id}` | Remove a claim while editable |
 | GET | `/{id}/official-cost-payments/{claim_id}/evidence` | Download claim evidence (audited) |
 | POST | `/{id}/momo` | Add transfer with optional evidence |
@@ -300,7 +321,7 @@ locked `calculation` used on screen:
 2. Opening outstanding balance brought forward
 3. Eligible transaction count
 4. Customer collections from eligible transactions
-5. Official service costs with customer payment status and personal-cost claim status
+5. Official service costs with customer payment status, cost payer source and personal-cost claim status
 6. Authorized receipts during the week
 7. Verified agent-funded service/provider payments (verified personal claims only)
 8. Approved collection-funded expenses
@@ -356,11 +377,14 @@ Kinyarwanda. The frontend uses matching keys in `frontend/lib/weekly-i18n.tsx`
 with a persistent `[ EN ] [ RW ]` switcher. Switching language only changes
 system labels; form data and user-entered text remain untouched.
 
-The Service Agent dashboard links directly to the latest weekly report. When
-that report is still editable, the "Submit weekly report" action opens it on the
-shortage/surplus tab where the declaration and submit controls live. The link
-carries the backend report id; the browser never derives a reporting week or
-recalculates a money figure.
+The Service Agent dashboard links directly to the latest weekly report. The
+`?report=<id>&tab=shortage` deep link is mapped to section 3 of the guided task;
+`POST /agent-summary` accepts that id only when it belongs to the caller and
+returns the week boundaries from the backend. The browser never derives a
+reporting week or recalculates a money figure. The `[ EN ] [ RW ]` switcher uses
+an external store, so unsaved form values and selected `File` objects survive a
+language change. All six agent reasons, the comparison hints, validation errors,
+notifications, success screen and exports are available in both languages.
 
 ## 11. Persistence and migration
 
@@ -394,6 +418,15 @@ columns with defaults (`0` and `agent_phone`). It is additive: existing reports
 keep their submission snapshots and verified totals, and downgrade drops only
 these two columns.
 
+Migration `b7e3c9a1d452` (`down_revision = a9d4e7f16c20`) adds
+`weekly_official_cost_payments.payment_source` with a `not_paid` default and an
+index. Verified legacy personal claims are labelled `personal` so their
+deduction is preserved; all older non-personal answers become `not_paid` because
+the former boolean could not distinguish company, another payer and unpaid.
+Existing snapshots are untouched, and downgrade drops only this column and its
+index. Deployment must apply `c2f8a7d41b90`, `a9d4e7f16c20` and `b7e3c9a1d452`
+in order.
+
 No existing table or row is dropped during upgrade; historical snapshots are
 never silently rewritten.
 
@@ -408,13 +441,17 @@ venv/bin/python -m pytest -q tests/test_weekly_reports.py \
 venv/bin/python -m pytest -q tests
 venv/bin/python -m compileall -q app \
   migrations/versions/f7c9a4d2e8b1_weekly_financial_reports.py \
-  migrations/versions/c2f8a7d41b90_sunday_week_and_personal_cost_payments.py
+  migrations/versions/c2f8a7d41b90_sunday_week_and_personal_cost_payments.py \
+  migrations/versions/a9d4e7f16c20_weekly_submission_declaration.py \
+  migrations/versions/b7e3c9a1d452_official_cost_payment_sources.py
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db upgrade
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db downgrade f7c9a4d2e8b1
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db upgrade c2f8a7d41b90
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db upgrade a9d4e7f16c20
 cd ../frontend && npm run build && npx tsc --noEmit
 ```
 
@@ -434,8 +471,15 @@ numbers, and a continuous generate → claim → submit → verify cost → veri
 also proves the Service Agent can generate only her own report, that the weekly
 submitted-amount/funding-source declaration saves, validates, submits and freezes
 with the snapshot, and that these declaration fields never replace verified
-transfer totals.
+transfer totals. The guided-flow tests prove the one-call `/agent-summary`
+contract and its self-scope, plain-language cost sources with no deduction for
+company/other/unpaid answers, verified personal credits reducing expected
+amount while pending credits stay visible, exact/less/zero/more declarations,
+required vs optional explanations, frozen submitted amounts and cost answers,
+Company Secretary/Accountant denial, and bilingual reasons and errors.
 `tests/test_weekly_permissions_migration.py` proves an existing installation
 gains the restricted permission family, repairs only draft/deadline periods and
 preserves submitted/approved snapshots on upgrade, and loses only the weekly
-permission family and claim table on downgrade.
+permission family and claim table on downgrade. It also proves the new cost
+source revision follows the declaration revision, maps legacy verified personal
+claims to `personal` and downgrades cleanly.

@@ -9,6 +9,7 @@ from ..extensions import db
 from ..models import (
     AuditLog, Employee, MoMoSubmission, OfficialCostPayment, Setting, User,
     WeeklyReport, MOMO_PROVIDERS, SHORTAGE_REASON_CATEGORIES,
+    AGENT_SHORTAGE_REASON_CATEGORIES, OFFICIAL_COST_PAYMENT_SOURCES,
     WEEKLY_REPORT_STATUSES, WEEKLY_SUBMISSION_SOURCES,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
@@ -82,6 +83,8 @@ def policy():
         'policy': get_policy(),
         'statuses': WEEKLY_REPORT_STATUSES,
         'shortage_reason_categories': SHORTAGE_REASON_CATEGORIES,
+        'agent_shortage_reason_categories': AGENT_SHORTAGE_REASON_CATEGORIES,
+        'official_cost_payment_sources': OFFICIAL_COST_PAYMENT_SOURCES,
         'momo_providers': MOMO_PROVIDERS,
         'submission_sources': WEEKLY_SUBMISSION_SOURCES,
         'languages': list(SUPPORTED_LANGUAGES),
@@ -113,6 +116,80 @@ def weeks():
         }
         policy_rows.append(item)
     return jsonify({'weeks': policy_rows, 'current': policy_rows[0] if policy_rows else None})
+
+
+@bp.post('/agent-summary')
+@require_permission('weekly_reports.submit')
+def agent_summary():
+    """One self-scoped request that prepares and explains the agent's week.
+
+    The endpoint is deliberately available only to the ``submit`` permission:
+    reviewers do not hold it, and a Service Agent can never pass an
+    ``employee_id`` to reach another agent's figures. It is idempotent — the
+    report is created once and then reused — but unlike a GET it is allowed to
+    prepare the draft the same way the existing ``/generate`` action does.
+    """
+    user = current_user()
+    emp = current_employee()
+    if not emp:
+        return json_error('No employee account is linked to this user', 403)
+    data = parse_json() or {}
+    # A deep link from the dashboard can name the exact report. It is still
+    # self-scoped: another agent's report id is rejected before any figures
+    # are calculated or returned.
+    if data.get('report_id') not in (None, ''):
+        try:
+            linked_id = int(data['report_id'])
+        except (TypeError, ValueError):
+            return json_error('Invalid report id', 400)
+        linked = WeeklyReport.query.get(linked_id)
+        if not linked or linked.employee_id != emp.id:
+            return json_error('You can only open your own weekly report', 403)
+        week_start = normalize_week_start(linked.week_start)
+    else:
+        reference, err = parse_date(data.get('week_start'), 'week_start')
+        if err:
+            return err
+        week_start = normalize_week_start(reference) if reference else week_bounds()[0]
+    report, created = service.ensure_report(emp, week_start, actor=user)
+    db.session.commit()
+
+    detail = service.detail(report, user)
+    policy = get_policy()
+    current_week_start = week_bounds()[0]
+    week_options = list(available_weeks(policy=policy))
+    # A deep link can open a report older than the normal 13-week picker.
+    if week_start not in week_options:
+        week_options.insert(0, week_start)
+    week_rows = []
+    for start in week_options:
+        mine = WeeklyReport.query.filter_by(week_start=start, employee_id=emp.id).first()
+        week_rows.append({
+            'week_start': start.isoformat(),
+            'week_end': week_end_for(start, policy).isoformat(),
+            'report_id': mine.id if mine else None,
+            'status': mine.status if mine else None,
+            'current': start == current_week_start,
+            'selected': start == week_start,
+        })
+    return jsonify({
+        'message': 'Weekly report prepared',
+        'created': created,
+        'report': detail,
+        'summary': detail['summary'],
+        'policy': policy,
+        'constants': {
+            'statuses': WEEKLY_REPORT_STATUSES,
+            'shortage_reason_categories': SHORTAGE_REASON_CATEGORIES,
+            'agent_shortage_reason_categories': AGENT_SHORTAGE_REASON_CATEGORIES,
+            'official_cost_payment_sources': OFFICIAL_COST_PAYMENT_SOURCES,
+            'submission_sources': WEEKLY_SUBMISSION_SOURCES,
+            'momo_providers': MOMO_PROVIDERS,
+            'languages': list(SUPPORTED_LANGUAGES),
+        },
+        'employee': {'id': emp.id, 'name': emp.full_name, 'branch_id': emp.branch_id},
+        'weeks': week_rows,
+    })
 
 
 @bp.get('/queue')

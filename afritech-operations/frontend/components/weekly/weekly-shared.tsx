@@ -37,6 +37,7 @@ export function weeklyErrorMessage(err: any, t: (key: string) => string): string
   const code = err?.data?.code || '';
   const map: Record<string, string> = {
     'weekly_report.shortage_explanation': 'error.shortage_explanation',
+    'weekly_report.surplus_explanation': 'error.surplus_explanation',
     'weekly_report.shortage_evidence': 'error.shortage_evidence',
     'weekly_report.shortage_resolution': 'error.shortage_resolution',
     'weekly_report.invalid_date': 'error.shortage_resolution',

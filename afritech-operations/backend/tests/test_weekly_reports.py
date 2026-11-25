@@ -183,6 +183,7 @@ def _claim_row(report, txn, amount=None, personal=True, verified=False, referenc
         report_id=report.id, transaction_id=txn.id, employee_id=report.employee_id,
         reference_key=f'test:{uuid.uuid4().hex}', official_cost=cost,
         customer_payment_status=customer_status, personal_payment=personal,
+        payment_source='personal' if personal else 'not_paid',
         amount=value, is_partial=bool(personal and value < cost),
         provider='momo' if personal else 'not_applicable',
         reference=(reference or f'WKP-{uuid.uuid4().hex[:10]}').upper(), paid_at=stamp,
@@ -199,12 +200,14 @@ def _claim_row(report, txn, amount=None, personal=True, verified=False, referenc
 
 
 def _claim_api(client, hdr, report, txn, amount=None, personal=True, reference=None,
-               paid_at=None, provider='momo', sender_phone='+250788111222'):
+               paid_at=None, provider='momo', sender_phone='+250788111222', source=None):
     data = {
         'transaction_id': str(txn.id),
         'personal_payment': 'true' if personal else 'false',
         'notes': 'Official cost settlement evidence',
     }
+    if source:
+        data['payment_source'] = source
     if personal:
         data.update({
             'amount': str(amount if amount is not None else txn.official_cost),
@@ -905,8 +908,8 @@ class TestMoMo:
 
 
 class TestShortageSurplus:
-    def test_shortage_requires_category_explanation_and_evidence(self, client, admin_hdr,
-                                                                  agent_hdr):
+    def test_shortage_requires_only_a_plain_reason_and_explanation(self, client, admin_hdr,
+                                                                    agent_hdr):
         emp = _agent()
         week = _future_week()
         _txn(emp, week + timedelta(days=1), price=1000, cost=400)
@@ -917,15 +920,16 @@ class TestShortageSurplus:
         assert r.status_code == 400
         assert r.get_json()['code'] == 'weekly_report.shortage_explanation'
         r = client.post(url, headers=agent_hdr,
-                        json={'shortage_reason_category': 'cash_count_error'})
+                        json={'shortage_reason_category': 'customer_not_paid'})
         assert r.status_code == 400
+        # Evidence and a resolution date may still be attached, but a short,
+        # honest explanation is enough to submit an explained shortage.
         r = client.post(url, headers=agent_hdr, json={
-            'shortage_reason_category': 'cash_count_error',
-            'shortage_explanation': 'Cash counted twice',
+            'shortage_reason_category': 'customer_not_paid',
+            'shortage_explanation': 'Customer has not paid yet',
         })
-        assert r.status_code == 400
-        assert r.get_json()['code'] == 'weekly_report.shortage_evidence'
-        assert WeeklyReport.query.get(report.id).status == 'draft'
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert WeeklyReport.query.get(report.id).status == 'submitted'
 
     def test_shortage_with_evidence_and_resolution_date(self, client, admin_hdr, agent_hdr,
                                                         tmp_path, monkeypatch):
@@ -1849,6 +1853,7 @@ class TestAgentWeeklySubmissionWorkflow:
         submitted = _submit(client, agent_hdr, report.id, payload={
             'declared_submitted_amount': '1250.50',
             'submission_funding_source': 'company',
+            'surplus_explanation': 'Extra cash from an earlier collection',
         })
         assert submitted.status_code == 200, submitted.get_data(as_text=True)
         body = submitted.get_json()['report']
@@ -1873,3 +1878,223 @@ class TestAgentWeeklySubmissionWorkflow:
             assert r.status_code == 400, r.get_data(as_text=True)
             assert WeeklyReport.query.get(report.id).status in (
                 'draft', 'ready_for_submission', 'late')
+
+
+class TestGuidedAgentFlow:
+    """The single-page agent task must stay self-scoped and backend-led."""
+
+    def test_summary_prepares_own_week_in_one_request(self, client, agent_hdr):
+        emp = _agent()
+        week = _future_week()
+        _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+
+        first = client.post('/api/weekly-reports/agent-summary', headers=agent_hdr,
+                            json={'week_start': week.isoformat()})
+        assert first.status_code == 200, first.get_data(as_text=True)
+        body = first.get_json()
+        assert body['created'] is True
+        assert body['employee']['id'] == emp.id
+        assert body['report']['employee_id'] == emp.id
+        assert body['summary'] == body['report']['summary']
+        assert body['policy']['timezone'] == 'Africa/Kigali'
+        assert body['constants']['official_cost_payment_sources'] == [
+            'personal', 'company', 'someone_else', 'not_paid']
+        assert any(row['selected'] for row in body['weeks'])
+
+        summary = body['summary']
+        assert summary['week_start'] == week.isoformat()
+        assert summary['week_end'] == (week + timedelta(days=6)).isoformat()
+        assert summary['transaction_count'] == 1
+        assert summary['total_collected'] == '1000.00'
+        assert summary['official_costs_total'] == '400.00'
+        assert summary['previous_outstanding'] == '0.00'
+        assert summary['expected_amount'] == '1000.00'
+        assert summary['declared_amount'] == '0.00'
+        assert summary['declared_shortage'] == '1000.00'
+        assert summary['verified_shortage'] == '1000.00'
+        assert len(summary['official_costs']) == 1
+        assert summary['official_costs'][0]['payment_source'] == 'not_paid'
+
+        repeat = client.post('/api/weekly-reports/agent-summary', headers=agent_hdr,
+                             json={'week_start': week.isoformat()})
+        assert repeat.status_code == 200
+        assert repeat.get_json()['created'] is False
+        assert repeat.get_json()['report']['id'] == body['report']['id']
+
+    def test_summary_is_self_scoped_and_closed_to_other_roles(self, client, admin_hdr,
+                                                              agent_hdr, accountant_hdr):
+        other_employee = _agent2()
+        week = _future_week()
+        other_report = _generate(client, admin_hdr, other_employee, week)
+
+        denied = client.post('/api/weekly-reports/agent-summary', headers=agent_hdr,
+                             json={'report_id': other_report.id})
+        assert denied.status_code == 403
+
+        # An employee_id in the payload is never honoured; the agent sees her
+        # own report even when she tries to query somebody else's figures.
+        scoped = client.post('/api/weekly-reports/agent-summary', headers=agent_hdr,
+                             json={'week_start': week.isoformat(),
+                                   'employee_id': other_employee.id})
+        assert scoped.status_code == 200, scoped.get_data(as_text=True)
+        assert scoped.get_json()['report']['employee_id'] == _agent().id
+
+        secretary = _hdr(client, 'secretary@afritech.dev')
+        assert client.post('/api/weekly-reports/agent-summary', headers=secretary,
+                           json={}).status_code == 403
+        assert client.post('/api/weekly-reports/agent-summary', headers=accountant_hdr,
+                           json={}).status_code == 403
+
+    def test_non_personal_cost_sources_are_recorded_but_never_deducted(
+            self, client, admin_hdr, agent_hdr):
+        emp = _agent()
+        week = _future_week()
+        txns = [_txn(emp, week + timedelta(days=day), price=1000, cost=400)
+                for day in (1, 2, 3)]
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        for txn, source in zip(txns, ('company', 'someone_else', 'not_paid')):
+            created = _claim_api(client, agent_hdr, report, txn, personal=False,
+                                 source=source)
+            assert created.status_code == 201, created.get_data(as_text=True)
+            assert created.get_json()['claim']['payment_source'] == source
+
+        detail = _detail(client, agent_hdr, report.id)
+        summary = detail['summary']
+        assert summary['expected_amount'] == '3000.00'
+        assert summary['official_costs_total'] == '1200.00'
+        assert summary['personal_paid_verified'] == '0.00'
+        assert summary['company_paid'] == '400.00'
+        assert summary['someone_else_paid'] == '400.00'
+        assert summary['not_paid'] == '400.00'
+        assert {row['payment_source'] for row in summary['official_costs']} == {
+            'company', 'someone_else', 'not_paid'}
+
+    def test_verified_personal_credit_deducts_but_pending_stays_visible(
+            self, client, admin_hdr, agent_hdr):
+        emp = _agent()
+        week = _future_week()
+        txns = [_txn(emp, week + timedelta(days=day), price=1000, cost=400)
+                for day in (1, 2)]
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        pending = _claim_api(client, agent_hdr, report, txns[0], source='personal')
+        assert pending.status_code == 201, pending.get_data(as_text=True)
+        _claim_row(report, txns[1], personal=True, verified=True, amount=400)
+        db.session.commit()
+
+        summary = _detail(client, agent_hdr, report.id)['summary']
+        assert summary['expected_amount'] == '1600.00'
+        assert summary['personal_paid_verified'] == '400.00'
+        assert summary['personal_paid_pending'] == '400.00'
+        assert summary['verified_shortage'] == '1600.00'
+        assert {row['verification_status'] for row in summary['official_costs']} == {
+            'pending', 'verified'}
+
+        submitted = _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': '1600.00',
+            'submission_funding_source': 'agent_phone',
+        }, override=False)
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+        components = submitted.get_json()['report']['calculation']['components']
+        assert components['expected_remittance'] == '1600.00'
+        assert components['declared_shortage_amount'] == '0.00'
+        # A declaration is not verified money; the reviewed shortage remains
+        # authoritative until a reviewer verifies a matching transfer.
+        assert components['shortage_amount'] == '1600.00'
+
+    def test_explanations_are_required_only_for_less_or_more(
+            self, client, admin_hdr, agent_hdr):
+        emp = _agent()
+        cases = [
+            {'declared_submitted_amount': '600.00',
+             'submission_funding_source': 'agent_phone'},
+            {'declared_submitted_amount': '1100.00',
+             'submission_funding_source': 'agent_phone'},
+        ]
+        for payload in cases:
+            week = _future_week()
+            _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+            db.session.commit()
+            report = _generate(client, admin_hdr, emp, week)
+            response = _submit(client, agent_hdr, report.id, payload=payload,
+                               override=False)
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()['code'].startswith('weekly_report.')
+            assert WeeklyReport.query.get(report.id).status in (
+                'draft', 'ready_for_submission', 'late')
+
+    def test_submission_freezes_declared_amount_and_cost_answers(
+            self, client, admin_hdr, agent_hdr):
+        week = _future_week()
+        txn = _txn(_agent(), week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, _agent(), week)
+        submitted = _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': '1000.00',
+            'submission_funding_source': 'agent_phone',
+        }, override=False)
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+
+        locked = client.patch(f'/api/weekly-reports/{report.id}', headers=agent_hdr,
+                              json={'declared_submitted_amount': 1})
+        assert locked.status_code == 409
+        new_answer = _claim_api(client, agent_hdr, report, txn, source='company')
+        assert new_answer.status_code == 409
+        assert WeeklyReport.query.get(report.id).declared_submitted_amount == \
+            Decimal('1000.00')
+
+    def test_declaration_drives_questions_without_erasing_verified_shortage(
+            self, client, admin_hdr, agent_hdr):
+        emp = _agent()
+        cases = [
+            ('declared amount matches', '1000.00', {}, '0.00', '1000.00'),
+            ('short amount has a reason', '600.00', {
+                'shortage_reason_category': 'payment_problem',
+                'shortage_explanation': 'The customer paid the balance later',
+            }, '400.00', '1000.00'),
+            ('zero amount has a reason', '0', {
+                'shortage_reason_category': 'customer_not_paid',
+                'shortage_explanation': 'Customer has not paid yet',
+            }, '1000.00', '1000.00'),
+            ('extra amount has a reason', '1100.00', {
+                'surplus_explanation': 'Extra cash from an earlier collection',
+            }, '0.00', '1000.00'),
+        ]
+        for label, amount, extra, declared_shortage, verified_shortage in cases:
+            week = _future_week()
+            _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+            db.session.commit()
+            report = _generate(client, admin_hdr, emp, week)
+            payload = {
+                'declared_submitted_amount': amount,
+                'submission_funding_source': 'agent_phone',
+                **extra,
+            }
+            response = _submit(client, agent_hdr, report.id, payload=payload,
+                               override=False)
+            assert response.status_code == 200, \
+                f'{label}: {response.get_data(as_text=True)}'
+            components = response.get_json()['report']['calculation']['components']
+            assert components['declared_shortage_amount'] == declared_shortage
+            assert components['shortage_amount'] == verified_shortage
+            assert WeeklyReport.query.get(report.id).status == 'submitted'
+
+    def test_guided_reason_labels_are_bilingual(self):
+        from app.models import AGENT_SHORTAGE_REASON_CATEGORIES
+        assert AGENT_SHORTAGE_REASON_CATEGORIES == [
+            'customer_not_paid', 'service_issue', 'payment_problem',
+            'money_unavailable', 'incorrect_record', 'other']
+        for reason in AGENT_SHORTAGE_REASON_CATEGORIES:
+            assert t(f'reason.{reason}', 'en') != f'reason.{reason}'
+            assert t(f'reason.{reason}', 'rw') != f'reason.{reason}'
+        assert t('reason.customer_not_paid', 'en') == 'Customer has not paid fully'
+        assert t('reason.customer_not_paid', 'rw') == 'Umukiriya ntabwo yishyuye byuzuye'
+        assert t('error.shortage_explanation', 'rw') == \
+            'Impamvu n’ibisobanuro bivuga make birakenewe.'
+        assert t('error.surplus_explanation', 'en') == \
+            'Please confirm or explain the extra amount.'
+        assert t('error.surplus_explanation', 'rw') == \
+            'Emeza cyangwa usobanure amafaranga y’inyongera.'
