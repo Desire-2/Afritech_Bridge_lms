@@ -101,6 +101,31 @@ def is_company_funded_service(service_name=None, service=None):
     return False
 
 
+def is_auto_personal(claim_or_row):
+    """True for the guided own-funds answer, from a model or a data row."""
+    if claim_or_row is None:
+        return False
+    if isinstance(claim_or_row, dict):
+        return bool(claim_or_row.get('auto_personal'))
+    return bool(getattr(claim_or_row, 'auto_personal', False))
+
+
+def has_personal_cost_credit(claim_or_row):
+    """A verified manual claim or an auto answer awaiting report approval."""
+    if claim_or_row is None:
+        return False
+    if isinstance(claim_or_row, dict):
+        personal = bool(claim_or_row.get('personal_payment'))
+        status = claim_or_row.get('verification_status')
+    else:
+        personal = bool(getattr(claim_or_row, 'personal_payment', False))
+        status = getattr(claim_or_row, 'verification_status', None)
+    if not personal:
+        return False
+    return status == 'verified' or (status == 'pending'
+                                   and is_auto_personal(claim_or_row))
+
+
 class WeeklyReportService:
     # ── generation / lookup ────────────────────────────────────────────────
 
@@ -228,6 +253,7 @@ class WeeklyReportService:
         if claim is None:
             view = {
                 'id': None, 'payment_source': 'unknown', 'personal_payment': None,
+                'auto_personal': False,
                 'amount': '0.00', 'is_partial': False, 'provider': None, 'reference': None,
                 'paid_at': None, 'sender_phone': None, 'evidence_name': None,
                 'notes': None, 'verification_status': 'not_claimed',
@@ -239,6 +265,7 @@ class WeeklyReportService:
                 'id': data['id'],
                 'payment_source': data.get('payment_source') or 'not_paid',
                 'personal_payment': data['personal_payment'],
+                'auto_personal': bool(data.get('auto_personal')),
                 'amount': _str(data['amount']),
                 'is_partial': data['is_partial'],
                 'provider': data['provider'],
@@ -257,6 +284,7 @@ class WeeklyReportService:
             # a legacy personal claim on one of them is never a deduction.
             view.update({
                 'payment_source': 'company', 'personal_payment': False,
+                'auto_personal': False,
                 'amount': '0.00', 'is_partial': False, 'auto_company_funded': True,
             })
         else:
@@ -265,15 +293,13 @@ class WeeklyReportService:
 
     @classmethod
     def _verified_cost_credit(cls, claim, transaction=None):
-        """Only a personally paid, verified claim can reduce remittance."""
-        if claim is None or not claim.personal_payment:
+        """Credit a verified claim or an auto own-funds answer awaiting approval."""
+        if not has_personal_cost_credit(claim):
             return Decimal('0')
         txn = transaction or getattr(claim, 'transaction', None)
         if is_company_funded_service(
                 getattr(txn, 'service_name', None), getattr(txn, 'service', None)):
             # AfriTech Bridge pays Land Document costs; never credit the agent.
-            return Decimal('0')
-        if claim.verification_status != 'verified':
             return Decimal('0')
         return max(Decimal('0'), _dec(claim.amount))
 
@@ -305,6 +331,7 @@ class WeeklyReportService:
                 # reach the snapshot, calculation view or exports as deductible.
                 row.update({
                     'payment_source': 'company', 'personal_payment': False,
+                    'auto_personal': False,
                     'amount': '0.00', 'is_partial': False,
                 })
             claim_rows.append(row)
@@ -349,6 +376,7 @@ class WeeklyReportService:
                 'official_cost_payment_status': claim_view['verification_status'],
                 'official_cost_payment_source': claim_view['payment_source'],
                 'personal_payment': claim_view['personal_payment'],
+                'auto_personal': claim_view['auto_personal'],
                 'personal_payment_amount': claim_view['amount'],
                 'personal_payment_reference': claim_view['reference'],
                 'personal_payment_evidence_name': claim_view['evidence_name'],
@@ -590,7 +618,7 @@ class WeeklyReportService:
         claim_count = len(payload.get('official_cost_payments') or [])
         verified_claims = sum(
             1 for row in (payload.get('official_cost_payments') or [])
-            if row.get('personal_payment') and row.get('verification_status') == 'verified'
+            if has_personal_cost_credit(row)
         )
         values = [
             _joined(payload['period'].get('label'), payload['agent'].get('name')),
@@ -683,6 +711,7 @@ class WeeklyReportService:
             # are corrected for Land Document costs on every overlay pass.
             row.update({
                 'payment_source': 'company', 'personal_payment': False,
+                'auto_personal': False,
                 'amount': '0.00', 'is_partial': False, 'auto_company_funded': True,
                 'service_name': getattr(txn, 'service_name', None),
             })
@@ -692,6 +721,7 @@ class WeeklyReportService:
             claim = claim_by_id.get(row.get('id'))
             if claim is None:
                 continue
+            row['auto_personal'] = is_auto_personal(claim)
             row['verification_status'] = claim.verification_status
             row['verified_by'] = claim.verified_by
             row['verified_at'] = claim.verified_at.isoformat() if claim.verified_at else None
@@ -732,6 +762,7 @@ class WeeklyReportService:
             txn_row['official_cost_payment_status'] = view['verification_status']
             txn_row['official_cost_payment_source'] = view['payment_source']
             txn_row['personal_payment'] = view['personal_payment']
+            txn_row['auto_personal'] = view['auto_personal']
             txn_row['personal_payment_amount'] = view['amount']
             txn_row['personal_payment_reference'] = view['reference']
             txn_row['personal_payment_evidence_name'] = view['evidence_name']
@@ -1344,6 +1375,7 @@ class WeeklyReportService:
             reference_key=reference_key, official_cost=official_cost,
             customer_payment_status=customer_status, payment_source=raw_source,
             personal_payment=personal,
+            auto_personal=bool(personal and auto_personal),
             amount=amount, is_partial=bool(personal and amount < official_cost),
             provider=provider, reference=reference, paid_at=paid_at,
             sender_phone=sender_phone, evidence_path=evidence_path,
@@ -1494,6 +1526,29 @@ class WeeklyReportService:
                             audit_action='weekly_report_review_started')
         if decision == 'approve':
             self.transition(report, 'approved', actor, reason=reason)
+            # Guided own-funds answers were deducted when the agent answered.
+            # Approval is their final confirmation; manual claims still need an
+            # explicit reviewer decision and are never changed here.
+            for claim in report.cost_payment_claims:
+                txn = claim.transaction
+                if (not is_auto_personal(claim)
+                        or claim.verification_status != 'pending'
+                        or not claim.personal_payment
+                        or is_company_funded_service(
+                            getattr(txn, 'service_name', None),
+                            getattr(txn, 'service', None))):
+                    continue
+                previous = {'status': claim.verification_status,
+                            'note': claim.verification_note}
+                claim.verification_status = 'verified'
+                claim.verification_note = bilingual('ui.label.costAutoApproved')
+                claim.verified_by = actor.id
+                claim.verified_at = datetime.now(timezone.utc)
+                audit('weekly_cost_payment_confirmed_on_approval',
+                      'weekly_official_cost_payment', claim.id,
+                      previous_value=previous,
+                      new_value={'status': 'verified',
+                                 'note': claim.verification_note}, user=actor)
             calc = self.refresh(report, actor)
             c = calc.get('components', {})
             # Expected remittance already includes the opening balance; the
@@ -1568,10 +1623,9 @@ class WeeklyReportService:
                 # Section 2 confirms this payer automatically: AfriTech Bridge
                 # funds Land Document costs, so the agent never owes a credit.
                 source = 'company'
-            verified = (not company_funded and bool(claim.get('personal_payment')
-                        and claim.get('verification_status') == 'verified'))
+            creditable = not company_funded and has_personal_cost_credit(claim)
             claimed_amount = _dec(claim.get('amount')) if not company_funded else Decimal('0')
-            credit = claimed_amount if verified and source == 'personal' else Decimal('0')
+            credit = claimed_amount if creditable and source == 'personal' else Decimal('0')
             if source == 'personal':
                 source_totals['personal'] += credit
             else:
@@ -1589,6 +1643,7 @@ class WeeklyReportService:
                 'claim_id': claim.get('id'),
                 'claimed_amount': _str(claimed_amount),
                 'is_partial': bool(claim.get('is_partial')),
+                'auto_personal': is_auto_personal(claim),
                 'verification_status': claim.get('verification_status') or 'not_claimed',
                 'verified_amount': _str(credit),
                 'provider': claim.get('provider'),
@@ -1615,11 +1670,20 @@ class WeeklyReportService:
             'total_collected': _str(c.get('eligible_collections')),
             'official_costs_total': _str(c.get('service_costs')),
             'previous_outstanding': _str(c.get('opening_outstanding')),
-            'personal_paid_verified': _str(source_totals['personal']),
+            'personal_paid_verified': _str(sum(
+                (_dec(r['verified_amount']) for r in cost_rows
+                 if r['verification_status'] == 'verified'), Decimal('0'))),
+            # A guided own-funds answer is already in `expected_amount`, but it
+            # only becomes Verified when the whole report is approved.
+            'personal_paid_applied': _str(sum(
+                (_dec(r['verified_amount']) for r in cost_rows
+                 if r['auto_personal'] and r['verification_status'] == 'pending'),
+                Decimal('0'))),
             'personal_paid_pending': _str(sum(
                 (_dec(r['claimed_amount']) for r in cost_rows
                  if r['payment_source'] == 'personal'
-                 and r['verification_status'] == 'pending'), Decimal('0'))),
+                 and r['verification_status'] == 'pending'
+                 and not r['auto_personal']), Decimal('0'))),
             'company_paid': _str(source_totals['company']),
             'someone_else_paid': _str(source_totals['someone_else']),
             'not_paid': _str(source_totals['not_paid']),

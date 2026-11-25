@@ -297,8 +297,10 @@ class OfficialCostPayment(TimestampMixin, db.Model):
 
     This is additive: customer ``Payment`` rows remain the source of all money
     collected from customers, and ``MoMoSubmission`` rows remain remittances to
-    the company. Only a *verified* row here reduces expected remittance, and a
-    ``personal_payment`` answer of ``False`` never qualifies.
+    the company. A *verified* row reduces expected remittance. A guided
+    ``auto_personal`` answer also reduces it while pending and is confirmed
+    when the weekly report is approved; a ``personal_payment`` answer of
+    ``False`` never qualifies.
     """
 
     __tablename__ = 'weekly_official_cost_payments'
@@ -325,6 +327,10 @@ class OfficialCostPayment(TimestampMixin, db.Model):
     payment_source = db.Column(db.String(32), nullable=False, default='not_paid',
                                index=True)
     personal_payment = db.Column(db.Boolean, nullable=False, default=False)
+    # True only for the guided "I paid using my own money" answer. It is
+    # persisted so pending auto claims can be credited immediately and then
+    # confirmed when the report is approved, without changing manual claims.
+    auto_personal = db.Column(db.Boolean, nullable=False, default=False)
     amount = db.Column(db.Numeric(16, 2), nullable=False)
     is_partial = db.Column(db.Boolean, nullable=False, default=False)
     provider = db.Column(db.String(32), nullable=False)
@@ -361,6 +367,7 @@ class OfficialCostPayment(TimestampMixin, db.Model):
             'customer_payment_status': self.customer_payment_status,
             'payment_source': self.payment_source or 'not_paid',
             'personal_payment': bool(self.personal_payment),
+            'auto_personal': bool(self.auto_personal),
             'amount': float(self.amount or 0),
             'is_partial': bool(self.is_partial),
             'provider': self.provider,

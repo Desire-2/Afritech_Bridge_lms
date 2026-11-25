@@ -742,6 +742,7 @@ class TestOfficialCostPayments:
         claim = response.get_json()['claim']
         assert claim['payment_source'] == 'personal'
         assert claim['personal_payment'] is True
+        assert claim['auto_personal'] is True
         assert claim['amount'] == 400.0
         assert claim['is_partial'] is False
         assert claim['verification_status'] == 'pending'
@@ -753,18 +754,66 @@ class TestOfficialCostPayments:
         assert stored.evidence_path is None
         assert stored.reference.startswith(f'SELF-{report.id}-')
         assert stored.notes == 'Auto-recorded from the transaction and employee profile'
+        assert stored.auto_personal is True
 
         summary = _detail(client, agent_hdr, report.id)['summary']
-        assert summary['personal_paid_pending'] == '400.00'
+        assert summary['personal_paid_applied'] == '400.00'
+        assert summary['personal_paid_pending'] == '0.00'
         assert summary['personal_paid_verified'] == '0.00'
-        assert summary['expected_amount'] == '1000.00'
+        assert summary['expected_amount'] == '600.00'
+        cost_row = next(row for row in summary['official_costs']
+                        if row['transaction_id'] == txn.id)
+        assert cost_row['auto_personal'] is True
+        assert cost_row['verified_amount'] == '400.00'
+        assert cost_row['verification_status'] == 'pending'
+
+        listing = _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/official-cost-payments', headers=agent_hdr))
+        assert listing['verified_total'] == '400.00'
 
         assert _submit(client, agent_hdr, report.id).status_code == 200
+        before = _components(client, accountant_hdr, report.id)
+        assert before['verified_service_costs'] == '400.00'
+        assert before['expected_remittance'] == '600.00'
+
+        approved = _review(client, accountant_hdr, report.id, 'approve')
+        assert approved.status_code == 200, approved.get_data(as_text=True)
+        db.session.refresh(stored)
+        assert stored.verification_status == 'verified'
+        assert stored.verified_by is not None and stored.verified_at is not None
+        after = _components(client, accountant_hdr, report.id)
+        assert after['expected_remittance'] == '600.00'
+        actions = {row['action'] for row in _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/audit', headers=accountant_hdr))['items']}
+        assert 'weekly_cost_payment_confirmed_on_approval' in actions
+
+    def test_auto_personal_credit_stops_when_reviewer_rejects_it(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
+        """Auto credit is immediate but a reviewer can still reject the claim."""
+        emp = _agent()
+        week = _future_week()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        response = _claim_api(client, agent_hdr, report, txn, auto=True)
+        assert response.status_code == 201, response.get_data(as_text=True)
+        claim = response.get_json()['claim']
+        assert _components(client, agent_hdr, report.id)['expected_remittance'] == '600.00'
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        rejected = _review(client, accountant_hdr, report.id, 'reject_cost_payment',
+                           claim_id=claim['id'], note='Profile phone did not match')
+        assert rejected.status_code == 200, rejected.get_data(as_text=True)
         assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '1000.00'
-        verified = _review(client, accountant_hdr, report.id, 'verify_cost_payment',
-                           claim_id=claim['id'], note='Transaction and profile matched')
-        assert verified.status_code == 200, verified.get_data(as_text=True)
-        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '600.00'
+
+        stored = OfficialCostPayment.query.get(claim['id'])
+        assert stored.verification_status == 'rejected'
+        approved = _review(client, accountant_hdr, report.id, 'approve')
+        assert approved.status_code == 200, approved.get_data(as_text=True)
+        db.session.refresh(stored)
+        assert stored.verification_status == 'rejected'
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '1000.00'
 
     def test_company_paid_unverified_and_rejected_claims_never_deduct(
             self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):

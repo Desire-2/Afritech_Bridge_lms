@@ -19,7 +19,8 @@ from ..services.weekly_policy import (
     normalize_week_start, week_bounds, week_end_for,
 )
 from ..services.weekly_report_service import (
-    WeeklyReportService, WeeklyReportError, is_company_funded_service,
+    WeeklyReportService, WeeklyReportError, has_personal_cost_credit,
+    is_company_funded_service,
 )
 from ..services.weekly_i18n import SUPPORTED_LANGUAGES, t
 from .helpers import json_error, paginate, paginate_response, parse_date, parse_json
@@ -432,7 +433,9 @@ def report_cost_payments(report_id):
                 'payment_source': 'company', 'personal_payment': False,
                 'amount': 0.0, 'is_partial': False, 'auto_company_funded': True,
             })
-        elif row['personal_payment'] and row['verification_status'] == 'verified':
+        elif has_personal_cost_credit(row):
+            # Guided own-funds answers are already credited while pending;
+            # approval only finalises their status.
             verified_total += Decimal(str(row['amount']))
     return jsonify({
         'items': claims,

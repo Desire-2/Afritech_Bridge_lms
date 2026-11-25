@@ -1042,6 +1042,9 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                   const companyFunded = !!row.company_funded || !!claim?.auto_company_funded;
                   const verified = !companyFunded && !!claim && claim.personal_payment
                     && claim.verification_status === 'verified';
+                  const autoApplied = !companyFunded && !!claim && claim.personal_payment
+                    && !!claim.auto_personal && claim.verification_status === 'pending';
+                  const credited = verified || autoApplied;
                   return (
                     <tr key={row.id}>
                       <td className="small fw-semibold">{row.transaction_number || row.id}</td>
@@ -1059,7 +1062,10 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                           : claim.personal_payment ? fmtMoney(claim.amount)
                             : t('status.not_applicable')}
                       </td>
-                      <td><WeeklyBadge status={claim?.verification_status || 'not_claimed'} /></td>
+                      <td>
+                        <WeeklyBadge status={autoApplied ? 'auto_applied'
+                          : claim?.verification_status || 'not_claimed'} />
+                      </td>
                       <td className="small">
                         {!claim ? <span className="text-muted">{t('ui.label.none')}</span> : (
                           <div>
@@ -1070,6 +1076,9 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                             {claim.is_partial && <div>{t('ui.label.partialPayment')}</div>}
                             {companyFunded && (
                               <div className="text-muted">{t('ui.agent.costAutoCompanyNote')}</div>
+                            )}
+                            {autoApplied && (
+                              <div className="text-muted">{t('ui.agent.costAutoAppliedNote')}</div>
                             )}
                             {claim.evidence_path && (
                               <button type="button" className="btn btn-link btn-sm p-0"
@@ -1090,7 +1099,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                       <td className="text-end small">
                         {companyFunded
                           ? t('ui.agent.costNoDeduction')
-                          : fmtMoney(verified ? claim.amount : 0)}
+                          : fmtMoney(credited ? claim.amount : 0)}
                       </td>
                       <td className="small">
                         <div className="d-flex flex-wrap gap-1">
@@ -1116,11 +1125,13 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                                   ...claimReviewNote, [claim.id]: e.target.value,
                                 })} />
                               <div className="d-flex gap-1">
-                                <button type="button" className="btn btn-sm btn-outline-success"
-                                  disabled={busy || !claim.personal_payment}
-                                  onClick={() => reviewClaim(claim.id, 'verify_cost_payment')}>
-                                  {t('action.verifyCost')}
-                                </button>
+                                {!autoApplied && (
+                                  <button type="button" className="btn btn-sm btn-outline-success"
+                                    disabled={busy || !claim.personal_payment}
+                                    onClick={() => reviewClaim(claim.id, 'verify_cost_payment')}>
+                                    {t('action.verifyCost')}
+                                  </button>
+                                )}
                                 <button type="button" className="btn btn-sm btn-outline-danger"
                                   disabled={busy}
                                   onClick={() => reviewClaim(claim.id, 'reject_cost_payment')}>

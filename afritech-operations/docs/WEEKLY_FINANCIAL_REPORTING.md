@@ -98,15 +98,19 @@ Important rules:
   rule and displayed separately. It is **not** cash due unless
   `commission_retained` is explicitly enabled.
 - Official service costs are always shown in full. A cost reduces remittance
-  only when a dedicated `OfficialCostPayment` claim says the agent paid it from
-  her own MoMo/phone **and** a reviewer marks that claim `verified`. Customer
-  payment status is never evidence of this: `paid`, `partially_paid` and unpaid
-  costs all contribute zero unless they have a verified personal claim. Company
-  paid, other-source, unverified and rejected claims contribute zero. Partial
-  personal payments deduct only the verified amount, never the full cost.
-  Land Document transactions are an automatic exception: their Service label
-  marks them as AfriTech Bridge-funded, their payer is confirmed as `company`
-  without agent input, and no verified personal claim can deduct them.
+  when either (a) a dedicated `OfficialCostPayment` claim says the agent paid
+  it from her own MoMo/phone **and** a reviewer marks that manual claim
+  `verified`, or (b) the guided "I paid using my own money" answer records an
+  `auto_personal` claim for the full cost. An `auto_personal` claim is deducted
+  immediately while it remains `pending`, and approval of the weekly report is
+  its final confirmation. Customer payment status is never evidence of this:
+  `paid`, `partially_paid` and unpaid costs all contribute zero without a
+  qualifying personal claim. Company-paid, other-source and rejected claims
+  contribute zero. Manual partial payments deduct only the verified amount;
+  guided own-funds answers always use the full official cost. Land Document
+  transactions are an automatic exception: their Service label marks them as
+  AfriTech Bridge-funded, their payer is confirmed as `company` without agent
+  input, and no personal claim can deduct them.
   An audited `provider_payment` adjustment remains a separate, explicit way to
   record other provider payments.
 - Only `approved`/`paid` expenses whose payment method is collection-funded are
@@ -210,11 +214,13 @@ page is a single guided task with three stacked sections and no report queue:
 2. **Confirm official cost payers** — each in-week cost that still needs an
    answer is listed with its known source preselected. The agent chooses
    `personal`, `company`, `someone_else` or `not_paid`. Choosing `personal`
-   immediately records a pending claim for the full official cost: the amount,
-   date, reference and sender phone are taken from the transaction and the
-   employee profile, so no extra fields or evidence are requested. Only a
-   `personal` claim after reviewer verification reduces the expected amount;
-   pending claims are labelled as pending and deduct nothing. Transactions
+   immediately records an `auto_personal` claim for the full official cost:
+   the amount, date, reference and sender phone are taken from the transaction
+   and the employee profile, so no extra fields or evidence are requested. The
+   full cost is deducted from the expected amount straight away and is labelled
+   "Applied — confirmed at approval"; approving the weekly report changes the
+   claim to `verified`. Manual personal claims still deduct only after a
+   reviewer verifies them, and their pending claims deduct nothing. Transactions
    whose Service is a **Land Document** (including "Land Document Apply") are confirmed
    automatically as `company`: AfriTech Bridge pays that official cost, so the
    row is omitted from this work list, no evidence is requested and no amount is
@@ -252,10 +258,14 @@ Review actions (`POST /api/weekly-reports/{id}/review`):
   records verifier, note and timestamp; only verified transfers count as money
   submitted.
 - `verify_cost_payment` / `reject_cost_payment` — records verifier, note and
-  timestamp for an official-cost claim. Only verified personal claims reduce
-  expected remittance; rejection requires a reason.
+  timestamp for a manual official-cost claim. Verified manual claims reduce
+  expected remittance; rejection requires a reason and removes any credit.
+  Guided `auto_personal` claims are already credited and can be rejected here,
+  but do not need early verification.
 - `request_correction` — returns the report with a mandatory reason.
-- `approve` — computes the final carry-forward and approval audit.
+- `approve` — confirms pending guided `auto_personal` claims, computes the final
+  carry-forward and writes the approval audit. Their amount is unchanged
+  because it was already deducted when the agent answered.
 - `reject` — requires a reason.
 
 Adjustments (`POST /api/weekly-reports/{id}/adjustments`) always store kind,
@@ -440,8 +450,14 @@ index. Verified legacy personal claims are labelled `personal` so their
 deduction is preserved; all older non-personal answers become `not_paid` because
 the former boolean could not distinguish company, another payer and unpaid.
 Existing snapshots are untouched, and downgrade drops only this column and its
-index. Deployment must apply `c2f8a7d41b90`, `a9d4e7f16c20` and `b7e3c9a1d452`
-in order.
+index.
+
+Migration `c4d7e1a9b263` (`down_revision = b7e3c9a1d452`) adds
+`weekly_official_cost_payments.auto_personal` with a `false` default. It is
+additive: historical claims stay `false`, so approved reports and frozen
+snapshots do not change meaning retroactively. Downgrade drops only this
+column. Deployment must apply `c2f8a7d41b90`, `a9d4e7f16c20`, `b7e3c9a1d452`
+and `c4d7e1a9b263` in order.
 
 No existing table or row is dropped during upgrade; historical snapshots are
 never silently rewritten.
@@ -459,7 +475,8 @@ venv/bin/python -m compileall -q app \
   migrations/versions/f7c9a4d2e8b1_weekly_financial_reports.py \
   migrations/versions/c2f8a7d41b90_sunday_week_and_personal_cost_payments.py \
   migrations/versions/a9d4e7f16c20_weekly_submission_declaration.py \
-  migrations/versions/b7e3c9a1d452_official_cost_payment_sources.py
+  migrations/versions/b7e3c9a1d452_official_cost_payment_sources.py \
+  migrations/versions/c4d7e1a9b263_persist_guided_own_funds_answers.py
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db upgrade
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
@@ -468,6 +485,10 @@ FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db upgrade c2f8a7d41b90
 FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
   venv/bin/flask --app app db upgrade a9d4e7f16c20
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db upgrade b7e3c9a1d452
+FLASK_CONFIG=development DATABASE_URL=sqlite:////tmp/weekly_migration_check.db \
+  venv/bin/flask --app app db upgrade c4d7e1a9b263
 cd ../frontend && npm run build && npx tsc --noEmit
 ```
 
@@ -479,20 +500,24 @@ reviewer alerts, locked-report overrides, evidence orphan prevention, deleted
 transfer overlays, read-only GETs, delta adjustments, MoMo date validation and
 all 21 bilingual rows in both PDF and XLSX exports). It also proves the
 Sunday–Saturday boundaries/deadline helper, the scheduler's completed-week
-selection, that only verified own-funds claims (including partial amounts)
-reduce remittance, duplicate and evidence validation, bilingual export of the
+selection, that manual verified own-funds claims (including partial amounts)
+reduce remittance while guided auto claims deduct the full cost immediately and
+are confirmed on approval, duplicate and evidence validation, bilingual export of the
 claim/reference/provider/date/evidence/reviewer fields with masked phone
 numbers, a Land Document cost being confirmed as company-paid automatically
-with no deduction in calculations, summaries, locked overlays or exports, and a
+with no deduction in calculations, summaries, locked overlays or exports, a
 continuous generate → claim → submit → verify cost → verify MoMo
-→ approve → export flow that preserves the approved snapshot and audit trail. It
-also proves the Service Agent can generate only her own report, that the weekly
+→ approve → export flow that preserves the approved snapshot and audit trail, and
+a guided own-funds flow that deducts before submission and confirms on approval
+without changing the expected amount. It also proves the Service Agent can
+generate only her own report, that the weekly
 submitted-amount/funding-source declaration saves, validates, submits and freezes
 with the snapshot, and that these declaration fields never replace verified
 transfer totals. The guided-flow tests prove the one-call `/agent-summary`
 contract and its self-scope, plain-language cost sources with no deduction for
 company/other/unpaid answers, verified personal credits reducing expected
-amount while pending credits stay visible, exact/less/zero/more declarations,
+amount while manual pending credits stay visible and auto own-funds credits are
+applied immediately, exact/less/zero/more declarations,
 required vs optional explanations, frozen submitted amounts and cost answers,
 Company Secretary/Accountant denial, and bilingual reasons and errors.
 `tests/test_weekly_permissions_migration.py` proves an existing installation

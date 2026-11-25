@@ -469,6 +469,7 @@ export default function AgentWeeklyFlow({
     [t('ui.agent.previousOutstanding'), summary.previous_outstanding],
     [t('ui.agent.officialCosts'), summary.official_costs_total],
     [t('ui.agent.verifiedCredits'), summary.personal_paid_verified],
+    [t('ui.agent.appliedCredits'), summary.personal_paid_applied],
     [t('ui.agent.pendingCredits'), summary.personal_paid_pending],
     [t('ui.agent.companyPaid'), summary.company_paid],
     [t('ui.agent.someoneElsePaid'), summary.someone_else_paid],
@@ -581,6 +582,7 @@ export default function AgentWeeklyFlow({
 
               <div className="agent-chip-row mb-3">
                 <span className="agent-chip"><b>{fmtMoney(summary.personal_paid_verified)}</b> {t('ui.agent.verifiedCredits')}</span>
+                <span className="agent-chip"><b>{fmtMoney(summary.personal_paid_applied)}</b> {t('ui.agent.appliedCredits')}</span>
                 <span className="agent-chip"><b>{fmtMoney(summary.personal_paid_pending)}</b> {t('ui.agent.pendingCredits')}</span>
                 <span className="agent-chip"><b>{fmtMoney(summary.company_paid)}</b> {t('ui.agent.companyPaid')}</span>
                 <span className="agent-chip"><b>{fmtMoney(summary.someone_else_paid)}</b> {t('ui.agent.someoneElsePaid')}</span>
@@ -596,7 +598,10 @@ export default function AgentWeeklyFlow({
                   const costError = costErrors[row.transaction_id];
                   const errorId = `cost-error-${row.transaction_id}`;
                   const open = editingCost === row.transaction_id && editable;
-                  const verified = moneyNumber(row.verified_amount) > 0;
+                  const credit = moneyNumber(row.verified_amount) > 0;
+                  const verified = credit && row.verification_status === 'verified';
+                  const autoApplied = credit && !!row.auto_personal
+                    && row.verification_status === 'pending';
                   return (
                     <div className={`agent-item ${costError ? 'has-error' : ''}`}
                       key={row.transaction_id}>
@@ -608,17 +613,24 @@ export default function AgentWeeklyFlow({
                           </div>
                         </div>
                         <div className="text-md-end">
-                          <div className={`small fw-semibold ${verified ? 'text-success' : 'text-muted'}`}>
-                            {verified
-                              ? t('ui.agent.costVerified', { amount: amountLabel(row.verified_amount) })
-                              : t('ui.agent.costNoDeduction')}
+                          <div className={`small fw-semibold ${credit ? 'text-success' : 'text-muted'}`}>
+                            {autoApplied
+                              ? t('ui.agent.costApplied', { amount: amountLabel(row.verified_amount) })
+                              : verified
+                                ? t('ui.agent.costVerified', { amount: amountLabel(row.verified_amount) })
+                                : t('ui.agent.costNoDeduction')}
                           </div>
                           {row.claim_id && (
                             <div className="small text-muted">
-                              {row.verification_status === 'verified'
+                              {verified
                                 ? statusLabel('verified')
-                                : t('ui.agent.costPending')}
+                                : autoApplied
+                                  ? t('status.auto_applied')
+                                  : t('ui.agent.costPending')}
                             </div>
+                          )}
+                          {autoApplied && (
+                            <div className="small text-muted">{t('ui.agent.costAutoAppliedNote')}</div>
                           )}
                         </div>
                       </div>

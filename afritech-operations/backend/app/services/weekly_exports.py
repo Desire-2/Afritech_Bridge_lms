@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from xml.sax.saxutils import escape, unescape
 
 from .weekly_i18n import t
-from ..services.weekly_report_service import WeeklyReportError
+from ..services.weekly_report_service import (
+    WeeklyReportError, has_personal_cost_credit,
+)
 
 
 def _p(value):
@@ -26,9 +28,10 @@ def _header(report, lang):
 def _official_cost_rows(calc, lang):
     """Escaped detail for every official cost, including claim evidence.
 
-    Only a verified, personally paid claim exposes a non-zero deductible
-    amount. The server-side evidence path is never exported; the sender phone
-    is already masked by the claim serializer before it reaches this helper.
+    A verified personal claim or a guided own-funds answer awaiting report
+    approval exposes a non-zero deductible amount. The server-side evidence
+    path is never exported; the sender phone is already masked by the claim
+    serializer before it reaches this helper.
     """
     claims = {}
     for claim in calc.get('official_cost_payments', []):
@@ -49,8 +52,7 @@ def _official_cost_rows(calc, lang):
         claim = claims.get(row.get('id')) or {}
         company_funded = (bool(row.get('company_funded'))
                           or bool(claim.get('auto_company_funded')))
-        verified = (not company_funded and claim.get('personal_payment') is True
-                    and claim.get('verification_status') == 'verified')
+        verified = not company_funded and has_personal_cost_credit(claim)
         personal = claim.get('personal_payment')
         if company_funded:
             # Land Document costs are confirmed as company-paid automatically.
@@ -62,7 +64,10 @@ def _official_cost_rows(calc, lang):
             if claim.get('is_partial'):
                 label = f"{label} ({t('status.partial', lang)})"
             personal_label = f"{label}: {claim.get('amount', '0.00')}"
-        decision = t(f"status.{claim.get('verification_status', 'not_claimed')}", lang)
+        status = claim.get('verification_status', 'not_claimed')
+        if status == 'pending' and claim.get('auto_personal'):
+            status = 'auto_applied'
+        decision = t(f'status.{status}', lang)
         if claim.get('verification_note'):
             decision = f"{decision}: {claim['verification_note']}"
         joined = lambda *values: _p(' / '.join(str(v) for v in values if v) or '—')
