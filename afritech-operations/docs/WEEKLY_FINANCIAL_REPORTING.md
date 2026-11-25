@@ -104,6 +104,9 @@ Important rules:
   costs all contribute zero unless they have a verified personal claim. Company
   paid, other-source, unverified and rejected claims contribute zero. Partial
   personal payments deduct only the verified amount, never the full cost.
+  Land Document transactions are an automatic exception: their Service label
+  marks them as AfriTech Bridge-funded, their payer is confirmed as `company`
+  without agent input, and no verified personal claim can deduct them.
   An audited `provider_payment` adjustment remains a separate, explicit way to
   record other provider payments.
 - Only `approved`/`paid` expenses whose payment method is collection-funded are
@@ -176,7 +179,9 @@ captures:
   payment date/time within the Sunday–Saturday window, sender phone, evidence
   file and notes;
 - when the source is not personal: a zero-amount audit record with no evidence
-  requirement and no possible deduction;
+  requirement and no possible deduction. For a Land Document transaction the
+  `company` source is filled in automatically and cannot be changed to a
+  personal claim;
 - reviewer `pending`/`verified`/`rejected` status, verifier, timestamp and note.
 
 Evidence is mandatory for a personal claim and is validated for type/size by the
@@ -206,7 +211,12 @@ page is a single guided task with three stacked sections and no report queue:
    cost is listed with its known source preselected. The agent chooses `personal`,
    `company`, `someone_else` or `not_paid`. Only a `personal` claim with evidence
    and reviewer verification reduces the expected amount; pending claims are
-   labelled as pending and deduct nothing.
+   labelled as pending and deduct nothing. Transactions whose Service is a
+   **Land Document** (including "Land Document Apply") are confirmed
+   automatically as `company`: AfriTech Bridge pays that official cost, so the
+   row is locked, no evidence is requested and no amount is deducted. The same
+   rule is enforced on every calculation, overlay and export, even if an older
+   verified personal claim exists on the transaction.
 3. **Declare and submit** — the agent enters an RWF amount, sees the immediate
    match/short/surplus hint, answers the conditional question, optionally adds
    one or more transfers, reviews the short summary and submits. The declared
@@ -341,8 +351,10 @@ locked `calculation` used on screen:
 
 Both PDF and XLSX also include an official-cost detail table with the source
 customer status, personal-payment answer, verified amount, provider, reference,
-payment date/time, evidence name and reviewer note. Only the verified deductible
-amount is treated as money; user-authored text is XML/PDF escaped.
+payment date/time, evidence name and reviewer note. Land Document rows show
+"AfriTech Bridge paid (automatic)" and a zero deductible amount regardless of
+any legacy claim. Only the verified deductible amount is treated as money;
+user-authored text is XML/PDF escaped.
 
 `lang=en|rw` translates report headers, statement labels, statuses and table
 headings. User-authored text is copied verbatim and never translated.
@@ -466,7 +478,9 @@ Sunday–Saturday boundaries/deadline helper, the scheduler's completed-week
 selection, that only verified own-funds claims (including partial amounts)
 reduce remittance, duplicate and evidence validation, bilingual export of the
 claim/reference/provider/date/evidence/reviewer fields with masked phone
-numbers, and a continuous generate → claim → submit → verify cost → verify MoMo
+numbers, a Land Document cost being confirmed as company-paid automatically
+with no deduction in calculations, summaries, locked overlays or exports, and a
+continuous generate → claim → submit → verify cost → verify MoMo
 → approve → export flow that preserves the approved snapshot and audit trail. It
 also proves the Service Agent can generate only her own report, that the weekly
 submitted-amount/funding-source declaration saves, validates, submits and freezes

@@ -214,7 +214,8 @@ export default function AgentWeeklyFlow({
   }, [focusDeclaration, report?.id, editable, success]);
 
   const costForm = (row: any): CostForm => costForms[row.transaction_id] || {
-    source: row.payment_source || 'not_paid',
+    // Land Document costs are confirmed as AfriTech Bridge-paid by the backend.
+    source: row.company_funded ? 'company' : (row.payment_source || 'not_paid'),
     amount: row.claimed_amount && moneyNumber(row.claimed_amount) > 0
       ? String(moneyNumber(row.claimed_amount)) : '',
     provider: row.provider || providers[0] || 'momo',
@@ -238,6 +239,10 @@ export default function AgentWeeklyFlow({
   }
 
   async function saveCost(row: any) {
+    if (row.company_funded) {
+      setActionError(t('ui.agent.costAutoCompanyNote'));
+      return;
+    }
     const form = costForm(row);
     setBusy(true);
     setActionError('');
@@ -589,7 +594,7 @@ export default function AgentWeeklyFlow({
               <div className="agent-item-list">
                 {costs.map((row: any) => {
                   const form = costForm(row);
-                  const open = editingCost === row.transaction_id && editable;
+                  const open = editingCost === row.transaction_id && editable && !row.company_funded;
                   const verified = moneyNumber(row.verified_amount) > 0;
                   return (
                     <div className="agent-item" key={row.transaction_id}>
@@ -619,9 +624,16 @@ export default function AgentWeeklyFlow({
                       {!open ? (
                         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
                           <span className="agent-answer">
-                            {t(`ui.agent.costSource.${form.source}`)}
+                            {row.company_funded
+                              ? t('ui.agent.costAutoCompany')
+                              : t(`ui.agent.costSource.${form.source}`)}
                           </span>
-                          {editable && (
+                          {row.company_funded && (
+                            <span className="small text-muted d-block mt-1">
+                              {t('ui.agent.costAutoCompanyNote')}
+                            </span>
+                          )}
+                          {editable && !row.company_funded && (
                             <button type="button" className="btn btn-outline-secondary btn-sm agent-touch"
                               onClick={() => setEditingCost(row.transaction_id)}>
                               {row.claim_id ? t('ui.agent.changeAnswer') : t('ui.agent.saveAnswer')}

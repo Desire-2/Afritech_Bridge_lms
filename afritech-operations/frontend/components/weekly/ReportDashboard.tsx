@@ -906,7 +906,10 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
     const claimByTxn = new Map<number, any>(items.map((item) => [Number(item.transaction_id), item]));
     const transactions: any[] = (calc.transactions || [])
       .filter((row: any) => Number(row.official_cost) > 0);
-    const unclaimed = transactions.filter((row: any) => !claimByTxn.has(Number(row.id)));
+    // Land Document costs are auto-confirmed as AfriTech Bridge-paid; there is
+    // no agent-funded claim to record or verify for them.
+    const unclaimed = transactions.filter((row: any) =>
+      !claimByTxn.has(Number(row.id)) && !row.company_funded);
     const isPersonal = claimTxnId !== null && claimFormValue(claimTxnId, 'personal_payment') !== 'no';
     return (
       <div>
@@ -1036,7 +1039,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
               <tbody>
                 {transactions.map((row: any) => {
                   const claim = claimByTxn.get(Number(row.id));
-                  const verified = !!claim && claim.personal_payment
+                  const companyFunded = !!row.company_funded || !!claim?.auto_company_funded;
+                  const verified = !companyFunded && !!claim && claim.personal_payment
                     && claim.verification_status === 'verified';
                   return (
                     <tr key={row.id}>
@@ -1045,9 +1049,10 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                       <td><WeeklyBadge status={row.payment_status} /></td>
                       <td className="text-end small">{fmtMoney(row.official_cost)}</td>
                       <td className="small">
-                        {!claim ? t('status.not_claimed')
-                          : claim.personal_payment ? t('ui.label.personalPaymentYes')
-                            : t('ui.label.personalPaymentNo')}
+                        {companyFunded ? t('ui.agent.costAutoCompany')
+                          : !claim ? t('status.not_claimed')
+                            : claim.personal_payment ? t('ui.label.personalPaymentYes')
+                              : t('ui.label.personalPaymentNo')}
                       </td>
                       <td className="text-end small">
                         {!claim ? '—'
@@ -1063,6 +1068,9 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                             <div className="fw-semibold">{claim.reference}</div>
                             <div>{claim.sender_phone || t('ui.label.none')} · {fmtDateTime(claim.paid_at)}</div>
                             {claim.is_partial && <div>{t('ui.label.partialPayment')}</div>}
+                            {companyFunded && (
+                              <div className="text-muted">{t('ui.agent.costAutoCompanyNote')}</div>
+                            )}
                             {claim.evidence_path && (
                               <button type="button" className="btn btn-link btn-sm p-0"
                                 onClick={() => downloadCostEvidence(claim)}
@@ -1079,22 +1087,26 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                           </div>
                         )}
                       </td>
-                      <td className="text-end small">{fmtMoney(verified ? claim.amount : 0)}</td>
+                      <td className="text-end small">
+                        {companyFunded
+                          ? t('ui.agent.costNoDeduction')
+                          : fmtMoney(verified ? claim.amount : 0)}
+                      </td>
                       <td className="small">
                         <div className="d-flex flex-wrap gap-1">
-                          {editable && !claim && (
+                          {editable && !claim && !companyFunded && (
                             <button type="button" className="btn btn-sm btn-outline-primary"
                               disabled={busy} onClick={() => openClaimForm(Number(row.id))}>
                               {t('action.addCostPayment')}
                             </button>
                           )}
-                          {editable && claim && (
+                          {editable && claim && !companyFunded && (
                             <button type="button" className="btn btn-sm btn-outline-danger"
                               disabled={busy} onClick={() => removeCostClaim(claim.id)}>
                               {t('ui.label.remove')}
                             </button>
                           )}
-                          {canReview && reviewable && claim && (
+                          {canReview && reviewable && claim && !companyFunded && (
                             <div className="w-100 mt-1">
                               <TextInput aria-label={t('ui.label.costVerificationNote')}
                                 className="form-control-sm mb-1"

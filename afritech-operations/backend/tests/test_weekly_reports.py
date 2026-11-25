@@ -34,6 +34,7 @@ from app.services.weekly_policy import (
     require_week_start, submission_deadline, week_bounds, week_end_for,
     week_for_submission, week_window,
 )
+from app.services.weekly_exports import _official_cost_rows
 from app.services.weekly_report_service import WeeklyReportError, WeeklyReportService
 
 svc = WeeklyReportService()
@@ -118,7 +119,8 @@ def _assert_ok(response):
     return response.get_json()
 
 
-def _txn(employee, day, price=1000, cost=400, status='completed', paid=True, cash=True):
+def _txn(employee, day, price=1000, cost=400, status='completed', paid=True, cash=True,
+         service_name=None):
     service = Service.query.first()
     client = Client.query.first()
     pm = PaymentMethod.query.filter_by(code='cash' if cash else 'momo').first()
@@ -129,7 +131,7 @@ def _txn(employee, day, price=1000, cost=400, status='completed', paid=True, cas
         transaction_number=f'WKT-{uuid.uuid4().hex[:12]}',
         transaction_date=day, status=status, service_id=service.id,
         client_id=client.id, employee_id=employee.id, branch_id=employee.branch_id,
-        payment_method_id=pm.id, service_name=service.name,
+        payment_method_id=pm.id, service_name=service_name or service.name,
         official_cost=cost, customer_price=price, commission_rate_used=rate,
         commission_source='service', gross_profit=gross, commission_amount=commission,
         company_profit=gross - commission, is_cash=cash,
@@ -768,6 +770,72 @@ class TestOfficialCostPayments:
         assert statuses[company_claim['id']] == 'pending'
         assert statuses[pending_id] == 'pending'
         assert statuses[rejected_id] == 'rejected'
+
+    def test_land_document_cost_is_company_paid_and_never_deducted(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
+        """The Service shown in Transaction details drives automatic confirmation."""
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        emp = _agent()
+        land = _txn(emp, week + timedelta(days=1), price=1000, cost=400,
+                    service_name='Land Document')
+        ordinary = _txn(emp, week + timedelta(days=2), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+
+        # A legacy verified personal claim on a Land Document cost is ignored.
+        legacy = _claim_row(report, land, personal=True, verified=True, amount=400)
+        db.session.commit()
+
+        calc = svc.build_calculation(WeeklyReport.query.get(report.id))
+        land_row = next(row for row in calc['transactions'] if row['id'] == land.id)
+        assert land_row['company_funded'] is True
+        assert land_row['official_cost_payment_source'] == 'company'
+        assert land_row['personal_payment'] is False
+        calc_claim = next(row for row in calc['official_cost_payments']
+                          if row['id'] == legacy.id)
+        assert calc_claim['payment_source'] == 'company'
+        assert calc_claim['personal_payment'] is False
+        assert calc_claim['auto_company_funded'] is True
+        assert calc['components']['verified_service_costs'] == '0.00'
+        assert calc['components']['expected_remittance'] == '2000.00'
+
+        # Even a freshly submitted personal answer is auto-confirmed as company.
+        response = _claim_api(client, agent_hdr, report, ordinary, reference='WKP-LD-NORMAL')
+        assert response.status_code == 201, response.get_data(as_text=True)
+        assert response.get_json()['claim']['verification_status'] == 'pending'
+
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        c = _components(client, accountant_hdr, report.id)
+        assert c['verified_service_costs'] == '0.00'
+        assert c['expected_remittance'] == '2000.00'
+
+        assert _review(client, accountant_hdr, report.id, 'verify_cost_payment',
+                       claim_id=legacy.id, note='Should be refused').status_code == 409
+        listing = _assert_ok(client.get(
+            f'/api/weekly-reports/{report.id}/official-cost-payments',
+            headers=accountant_hdr))
+        assert listing['verified_total'] == '0.00'
+        ld_claim = next(row for row in listing['items'] if row['id'] == legacy.id)
+        assert ld_claim['payment_source'] == 'company'
+        assert ld_claim['personal_payment'] is False
+        assert ld_claim['auto_company_funded'] is True
+
+        summary = _detail(client, agent_hdr, report.id)['summary']
+        ld_cost = next(row for row in summary['official_costs']
+                       if row['transaction_id'] == land.id)
+        assert ld_cost['company_funded'] is True
+        assert ld_cost['payment_source'] == 'company'
+        assert ld_cost['verified_amount'] == '0.00'
+        assert summary['company_paid'] == '400.00'
+        assert summary['personal_paid_verified'] == '0.00'
+
+        export_rows = _official_cost_rows(
+            svc.calculation_view(WeeklyReport.query.get(report.id)), 'en')
+        exported_land = next(row for row in export_rows[1:]
+                             if row[0] == land.transaction_number)
+        assert 'AfriTech Bridge' in exported_land[3]
+        assert exported_land[8] == '0.00'
 
     def test_partial_claim_and_duplicate_protection(
             self, client, admin_hdr, agent_hdr, accountant_hdr, tmp_path, monkeypatch, no_email):
@@ -1970,6 +2038,37 @@ class TestGuidedAgentFlow:
         assert summary['not_paid'] == '400.00'
         assert {row['payment_source'] for row in summary['official_costs']} == {
             'company', 'someone_else', 'not_paid'}
+
+    def test_land_document_payer_is_confirmed_automatically_in_step_two(
+            self, client, admin_hdr, agent_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        week = _future_week()
+        land = _txn(_agent(), week + timedelta(days=1), price=1000, cost=400,
+                    service_name='Land Document Apply')
+        db.session.commit()
+        report = _generate(client, admin_hdr, _agent(), week)
+
+        summary = _detail(client, agent_hdr, report.id)['summary']
+        assert summary['expected_amount'] == '1000.00'
+        assert summary['company_paid'] == '400.00'
+        assert len(summary['official_costs']) == 1
+        cost = summary['official_costs'][0]
+        assert cost['payment_source'] == 'company'
+        assert cost['company_funded'] is True
+        assert cost['verified_amount'] == '0.00'
+
+        # A personal answer cannot override the automatic company confirmation.
+        created = _claim_api(client, agent_hdr, report, land, reference='WKP-LAND-AUTO')
+        assert created.status_code == 201, created.get_data(as_text=True)
+        claim = created.get_json()['claim']
+        assert claim['payment_source'] == 'company'
+        assert claim['personal_payment'] is False
+        assert claim['amount'] == 0.0
+        assert claim['evidence_name'] is None
+        after = _detail(client, agent_hdr, report.id)['summary']
+        assert after['expected_amount'] == '1000.00'
+        assert after['company_paid'] == '400.00'
+        assert after['personal_paid_verified'] == '0.00'
 
     def test_verified_personal_credit_deducts_but_pending_stays_visible(
             self, client, admin_hdr, agent_hdr):

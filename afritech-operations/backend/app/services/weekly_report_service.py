@@ -76,6 +76,31 @@ def _joined(*parts):
     return ' | '.join(str(p) for p in parts if p not in (None, ''))
 
 
+# Land Document applications are paid for by AfriTech Bridge. Their official
+# cost is never agent-funded, so it must never be confirmed as a personal
+# payment nor deducted from the expected remittance. Match the transaction's
+# snapshotted Service label (the one shown in Transaction details) and the
+# linked service code so older rows and renamed services are both covered.
+COMPANY_FUNDED_SERVICE_NAMES = ('land document',)
+COMPANY_FUNDED_SERVICE_CODES = ('ld',)
+
+
+def is_company_funded_service(service_name=None, service=None):
+    """True when a transaction's Service is an AfriTech Bridge-funded document."""
+    values = [service_name]
+    if service is not None:
+        values.extend((getattr(service, 'name', None), getattr(service, 'code', None)))
+    for value in values:
+        if not value:
+            continue
+        normalized = ' '.join(str(value).strip().casefold().split())
+        if normalized in COMPANY_FUNDED_SERVICE_CODES:
+            return True
+        if any(name in normalized for name in COMPANY_FUNDED_SERVICE_NAMES):
+            return True
+    return False
+
+
 class WeeklyReportService:
     # ── generation / lookup ────────────────────────────────────────────────
 
@@ -198,37 +223,55 @@ class WeeklyReportService:
         )
 
     @staticmethod
-    def _cost_claim_view(claim):
+    def _cost_claim_view(claim, transaction=None):
         """Data-only claim view. Phone numbers are masked at the boundary."""
         if claim is None:
-            return {
+            view = {
                 'id': None, 'payment_source': 'unknown', 'personal_payment': None,
                 'amount': '0.00', 'is_partial': False, 'provider': None, 'reference': None,
                 'paid_at': None, 'sender_phone': None, 'evidence_name': None,
                 'notes': None, 'verification_status': 'not_claimed',
                 'verification_note': None,
             }
-        data = claim.to_dict(include_sensitive=True)
-        return {
-            'id': data['id'],
-            'payment_source': data.get('payment_source') or 'not_paid',
-            'personal_payment': data['personal_payment'],
-            'amount': _str(data['amount']),
-            'is_partial': data['is_partial'],
-            'provider': data['provider'],
-            'reference': data['reference'],
-            'paid_at': data['paid_at'],
-            'sender_phone': data['sender_phone'],
-            'evidence_name': data['evidence_name'],
-            'notes': data['notes'],
-            'verification_status': data['verification_status'],
-            'verification_note': data['verification_note'],
-        }
+        else:
+            data = claim.to_dict(include_sensitive=True)
+            view = {
+                'id': data['id'],
+                'payment_source': data.get('payment_source') or 'not_paid',
+                'personal_payment': data['personal_payment'],
+                'amount': _str(data['amount']),
+                'is_partial': data['is_partial'],
+                'provider': data['provider'],
+                'reference': data['reference'],
+                'paid_at': data['paid_at'],
+                'sender_phone': data['sender_phone'],
+                'evidence_name': data['evidence_name'],
+                'notes': data['notes'],
+                'verification_status': data['verification_status'],
+                'verification_note': data['verification_note'],
+            }
+        if is_company_funded_service(
+                getattr(transaction, 'service_name', None),
+                getattr(transaction, 'service', None)):
+            # Land Document costs are confirmed as company-paid automatically;
+            # a legacy personal claim on one of them is never a deduction.
+            view.update({
+                'payment_source': 'company', 'personal_payment': False,
+                'amount': '0.00', 'is_partial': False, 'auto_company_funded': True,
+            })
+        else:
+            view['auto_company_funded'] = False
+        return view
 
     @classmethod
-    def _verified_cost_credit(cls, claim):
+    def _verified_cost_credit(cls, claim, transaction=None):
         """Only a personally paid, verified claim can reduce remittance."""
         if claim is None or not claim.personal_payment:
+            return Decimal('0')
+        txn = transaction or getattr(claim, 'transaction', None)
+        if is_company_funded_service(
+                getattr(txn, 'service_name', None), getattr(txn, 'service', None)):
+            # AfriTech Bridge pays Land Document costs; never credit the agent.
             return Decimal('0')
         if claim.verification_status != 'verified':
             return Decimal('0')
@@ -250,9 +293,21 @@ class WeeklyReportService:
 
         claims = OfficialCostPayment.query.filter_by(report_id=report.id).all()
         claims_by_txn = {}
+        claim_rows = []
         for claim in claims:
             claims_by_txn.setdefault(claim.transaction_id, []).append(claim)
-        claim_rows = [claim.to_dict() for claim in claims]
+            row = claim.to_dict()
+            row['auto_company_funded'] = is_company_funded_service(
+                getattr(claim.transaction, 'service_name', None),
+                getattr(claim.transaction, 'service', None))
+            if row['auto_company_funded']:
+                # A legacy personal claim on a Land Document cost must not
+                # reach the snapshot, calculation view or exports as deductible.
+                row.update({
+                    'payment_source': 'company', 'personal_payment': False,
+                    'amount': '0.00', 'is_partial': False,
+                })
+            claim_rows.append(row)
 
         txn_rows = []
         eligible = []
@@ -269,8 +324,10 @@ class WeeklyReportService:
             is_eligible = (txn.status in eligible_statuses
                            and txn.status not in ineligible_statuses
                            and payment_status in ('paid', 'partially_paid'))
+            company_funded = is_company_funded_service(
+                txn.service_name, getattr(txn, 'service', None))
             cost_claim = (claims_by_txn.get(txn.id) or [None])[0]
-            claim_view = self._cost_claim_view(cost_claim)
+            claim_view = self._cost_claim_view(cost_claim, txn)
             row = {
                 'id': txn.id,
                 'transaction_number': txn.transaction_number,
@@ -278,6 +335,8 @@ class WeeklyReportService:
                 'status': txn.status,
                 'payment_status': payment_status,
                 'service_name': txn.service_name,
+                'company_funded': company_funded,
+                'auto_company_funded': company_funded,
                 'client_name': txn.client.full_name if txn.client else None,
                 'customer_price': _str(txn.customer_price),
                 'official_cost': _str(txn.official_cost),
@@ -301,9 +360,9 @@ class WeeklyReportService:
                 collections += payment_total
                 service_costs += _dec(txn.official_cost)
                 commission += _dec(txn.commission_amount)
-                if policy['deduct_verified_service_costs']:
+                if policy['deduct_verified_service_costs'] and not company_funded:
                     for claim in claims_by_txn.get(txn.id, []):
-                        verified_cost_amount += self._verified_cost_credit(claim)
+                        verified_cost_amount += self._verified_cost_credit(claim, txn)
 
         # Daily closings: use the existing triage helper rather than a second
         # implementation of daily arithmetic. Missing closings stay `None`.
@@ -614,6 +673,21 @@ class WeeklyReportService:
         # exactly as for MoMo transfers.
         claim_rows = []
         claim_ids = set()
+
+        def company_funded_claim(claim, row):
+            txn = claim.transaction
+            if not is_company_funded_service(
+                    getattr(txn, 'service_name', None), getattr(txn, 'service', None)):
+                return False
+            # Snapshots stay frozen, but the displayed payer and any deduction
+            # are corrected for Land Document costs on every overlay pass.
+            row.update({
+                'payment_source': 'company', 'personal_payment': False,
+                'amount': '0.00', 'is_partial': False, 'auto_company_funded': True,
+                'service_name': getattr(txn, 'service_name', None),
+            })
+            return True
+
         for row in payload.get('official_cost_payments', []):
             claim = claim_by_id.get(row.get('id'))
             if claim is None:
@@ -625,6 +699,7 @@ class WeeklyReportService:
             claim_rows.append(row)
             claim_ids.add(claim.id)
             verified_cost_amount += self._verified_cost_credit(claim)
+            company_funded_claim(claim, row)
         for extra in report.cost_payment_claims:
             if extra.id in claim_ids:
                 continue
@@ -632,15 +707,27 @@ class WeeklyReportService:
             claim_rows.append(row)
             claim_ids.add(extra.id)
             verified_cost_amount += self._verified_cost_credit(extra)
+            company_funded_claim(extra, row)
         payload['official_cost_payments'] = claim_rows
         claim_by_txn = {}
         for row in claim_rows:
             claim_by_txn.setdefault(row.get('transaction_id'), row)
         for txn_row in payload.get('transactions', []):
             claim_row = claim_by_txn.get(txn_row.get('id'))
+            company_funded = bool(txn_row.get('company_funded')) or is_company_funded_service(
+                txn_row.get('service_name'))
+            txn = next((c.transaction for c in report.cost_payment_claims
+                        if claim_row and c.id == claim_row.get('id')), None)
             view = self._cost_claim_view(
                 next((c for c in report.cost_payment_claims
-                      if claim_row and c.id == claim_row.get('id')), None))
+                      if claim_row and c.id == claim_row.get('id')), None), txn)
+            txn_row['company_funded'] = company_funded
+            txn_row['auto_company_funded'] = company_funded
+            if company_funded:
+                view.update({
+                    'payment_source': 'company', 'personal_payment': False,
+                    'amount': '0.00', 'is_partial': False,
+                })
             txn_row['cost_payment_claim_id'] = view['id']
             txn_row['official_cost_payment_status'] = view['verification_status']
             txn_row['official_cost_payment_source'] = view['payment_source']
@@ -1128,6 +1215,8 @@ class WeeklyReportService:
         if txn is None or not in_week(txn.transaction_date, report.week_start):
             raise WeeklyReportError('Transaction not found in this reporting week',
                                     'weekly_report.claim_transaction_invalid', 404)
+        company_funded = is_company_funded_service(
+            txn.service_name, getattr(txn, 'service', None))
         if OfficialCostPayment.query.filter_by(report_id=report.id,
                                                transaction_id=txn.id).first():
             raise WeeklyReportError('This official cost already has a payment claim',
@@ -1150,6 +1239,12 @@ class WeeklyReportService:
         # The explicit source wins: a company-paid cost can never become a
         # personal credit just because a client sent the legacy boolean.
         personal = raw_source == 'personal'
+        if company_funded:
+            # Land Document applications are paid by AfriTech Bridge. Confirm
+            # the company payer automatically, ignoring any personal answer or
+            # evidence an old client may still send.
+            raw_source = 'company'
+            personal = False
 
         now = datetime.now(timezone.utc)
         if not personal:
@@ -1244,7 +1339,8 @@ class WeeklyReportService:
                                     'weekly_report.claim_duplicate', 409)
         audit('weekly_cost_payment_submitted', 'weekly_official_cost_payment', claim.id,
               new_value={'transaction_id': txn.id, 'amount': _str(amount),
-                         'personal_payment': personal}, user=actor)
+                         'personal_payment': personal,
+                         'auto_company_funded': company_funded}, user=actor)
         if personal:
             from .notifications import notify_weekly_reviewers
             notify_weekly_reviewers(
@@ -1272,6 +1368,12 @@ class WeeklyReportService:
         if decision not in COST_PAYMENT_VERIFICATION_STATUSES:
             raise WeeklyReportError('Invalid cost payment decision',
                                     'weekly_report.invalid_decision', 400)
+        txn = claim.transaction
+        if decision == 'verified' and is_company_funded_service(
+                getattr(txn, 'service_name', None), getattr(txn, 'service', None)):
+            raise WeeklyReportError(
+                'Land Document official costs are paid by AfriTech Bridge and cannot be verified as agent-funded',
+                'weekly_report.claim_not_personal', 409)
         if decision == 'verified' and not claim.personal_payment:
             raise WeeklyReportError(
                 'A cost not paid from the agent’s own funds cannot be verified for deduction',
@@ -1424,13 +1526,19 @@ class WeeklyReportService:
             if cost <= 0:
                 continue
             claim = claim_by_txn.get(row.get('id')) or {}
+            company_funded = bool(row.get('company_funded')) or is_company_funded_service(
+                row.get('service_name'))
             source = (claim.get('payment_source')
                       or row.get('official_cost_payment_source') or 'not_paid')
             if source not in source_totals:
                 source = 'not_paid'
-            verified = bool(claim.get('personal_payment')
-                            and claim.get('verification_status') == 'verified')
-            claimed_amount = _dec(claim.get('amount'))
+            if company_funded:
+                # Section 2 confirms this payer automatically: AfriTech Bridge
+                # funds Land Document costs, so the agent never owes a credit.
+                source = 'company'
+            verified = (not company_funded and bool(claim.get('personal_payment')
+                        and claim.get('verification_status') == 'verified'))
+            claimed_amount = _dec(claim.get('amount')) if not company_funded else Decimal('0')
             credit = claimed_amount if verified and source == 'personal' else Decimal('0')
             if source == 'personal':
                 source_totals['personal'] += credit
@@ -1440,6 +1548,8 @@ class WeeklyReportService:
                 'transaction_id': row.get('id'),
                 'transaction_number': row.get('transaction_number'),
                 'service_name': row.get('service_name'),
+                'company_funded': company_funded,
+                'auto_company_funded': company_funded,
                 'date': row.get('date'),
                 'official_cost': _str(cost),
                 'customer_payment_status': row.get('payment_status'),

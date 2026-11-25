@@ -18,7 +18,9 @@ from ..services.weekly_policy import (
     available_weeks, business_timezone, get_policy,
     normalize_week_start, week_bounds, week_end_for,
 )
-from ..services.weekly_report_service import WeeklyReportService, WeeklyReportError
+from ..services.weekly_report_service import (
+    WeeklyReportService, WeeklyReportError, is_company_funded_service,
+)
 from ..services.weekly_i18n import SUPPORTED_LANGUAGES, t
 from .helpers import json_error, paginate, paginate_response, parse_date, parse_json
 
@@ -416,12 +418,22 @@ def report_cost_payments(report_id):
     report, err = _report_or_404(report_id, user)
     if err:
         return err
-    claims = [c.to_dict() for c in report.cost_payment_claims]
-    verified_total = sum(
-        (Decimal(str(c['amount'])) for c in claims
-         if c['personal_payment'] and c['verification_status'] == 'verified'),
-        Decimal('0'),
-    )
+    claims = []
+    verified_total = Decimal('0')
+    for claim in report.cost_payment_claims:
+        row = claim.to_dict()
+        claims.append(row)
+        txn = claim.transaction
+        row['service_name'] = txn.service_name if txn else None
+        if is_company_funded_service(
+                getattr(txn, 'service_name', None), getattr(txn, 'service', None)):
+            # Land Document costs are already confirmed as AfriTech Bridge-paid.
+            row.update({
+                'payment_source': 'company', 'personal_payment': False,
+                'amount': 0.0, 'is_partial': False, 'auto_company_funded': True,
+            })
+        elif row['personal_payment'] and row['verification_status'] == 'verified':
+            verified_total += Decimal(str(row['amount']))
     return jsonify({
         'items': claims,
         'total': len(claims),

@@ -47,10 +47,15 @@ def _official_cost_rows(calc, lang):
     ]]
     for row in calc.get('transactions', []):
         claim = claims.get(row.get('id')) or {}
-        verified = (claim.get('personal_payment') is True
+        company_funded = (bool(row.get('company_funded'))
+                          or bool(claim.get('auto_company_funded')))
+        verified = (not company_funded and claim.get('personal_payment') is True
                     and claim.get('verification_status') == 'verified')
         personal = claim.get('personal_payment')
-        if personal is None:
+        if company_funded:
+            # Land Document costs are confirmed as company-paid automatically.
+            personal_label = t('export.companyFunded', lang)
+        elif personal is None:
             personal_label = t('status.not_claimed', lang)
         else:
             label = t('status.yes' if personal else 'status.no', lang)
