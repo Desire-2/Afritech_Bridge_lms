@@ -87,6 +87,8 @@ export default function AgentWeeklyFlow({
   const [loadError, setLoadError] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [weekStart, setWeekStart] = useState('');
+  const [weekLoading, setWeekLoading] = useState(false);
+  const [weekLoadingLabel, setWeekLoadingLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
@@ -153,6 +155,25 @@ export default function AgentWeeklyFlow({
       setLoading(false);
     }
   }, []);
+
+  // Switching weeks is the only navigation in this task. Keep the previous
+  // selection visible until the backend confirms the new one, and give the
+  // selected dates a deliberate loading treatment instead of a silent redraw.
+  const selectWeek = useCallback(async (value: string) => {
+    if (!value || value === weekStart) return;
+    const previous = weekStart;
+    const chosen = (bundle?.weeks || []).find((week: any) => week.week_start === value);
+    setWeekStart(value);
+    setWeekLoadingLabel(chosen
+      ? `${fmtDate(chosen.week_start)} – ${fmtDate(chosen.week_end)}`
+      : '');
+    setWeekLoading(true);
+    setActionError('');
+    setNotice('');
+    const data = await load({ week_start: value });
+    if (!data) setWeekStart(previous);
+    setWeekLoading(false);
+  }, [bundle?.weeks, load, weekStart]);
 
   useEffect(() => {
     load(initialReportId ? { report_id: initialReportId } : {});
@@ -483,7 +504,8 @@ export default function AgentWeeklyFlow({
                 <span className="agent-step-number">1</span>
                 <h2 className="h6 mb-0">{t('ui.agent.step.summary')}</h2>
               </div>
-              <div className="agent-hero mt-3">
+              <div className={`agent-hero mt-3 ${weekLoading ? 'is-loading' : ''}`}
+                aria-busy={weekLoading}>
                 <div className="agent-hero-main">
                   <div className="agent-eyebrow">{t('ui.agent.expected')}</div>
                   <div className="agent-amount">{fmtMoney(summary.expected_amount)}</div>
@@ -499,6 +521,17 @@ export default function AgentWeeklyFlow({
                   </div>
                   {summary.is_late && <div className="small text-danger mt-1">{statusLabel('late')}</div>}
                 </div>
+                {weekLoading && (
+                  <div className="agent-week-overlay" role="status" aria-live="polite">
+                    <span className="agent-week-spinner" aria-hidden="true">
+                      <span className="agent-week-spinner-core" />
+                    </span>
+                    <span className="agent-week-loading-copy">
+                      <strong>{t('ui.agent.loadingWeek')}</strong>
+                      {weekLoadingLabel && <small>{weekLoadingLabel}</small>}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="row g-3 mt-1 align-items-end">
@@ -507,8 +540,8 @@ export default function AgentWeeklyFlow({
                     {t('period.select')}
                   </label>
                   <select id="agent-week-select" className="form-select agent-touch"
-                    value={weekStart}
-                    onChange={(e) => { setWeekStart(e.target.value); load({ week_start: e.target.value }); }}>
+                    value={weekStart} disabled={weekLoading} aria-busy={weekLoading}
+                    onChange={(e) => { void selectWeek(e.target.value); }}>
                     {(bundle.weeks || []).map((week: any) => (
                       <option key={week.week_start} value={week.week_start}>
                         {fmtDate(week.week_start)} – {fmtDate(week.week_end)}
@@ -517,10 +550,16 @@ export default function AgentWeeklyFlow({
                       </option>
                     ))}
                   </select>
+                  {weekLoading && (
+                    <div className="agent-week-inline-status" aria-hidden="true">
+                      <span className="agent-week-dots"><i /><i /><i /></span>
+                      {t('ui.label.loading')}
+                    </div>
+                  )}
                 </div>
                 <div className="col-12 col-md-5 col-lg-6 text-md-end">
                   <button type="button" className="btn btn-outline-primary agent-touch w-100 w-md-auto"
-                    onClick={() => setDetailsOpen(true)}>
+                    disabled={weekLoading} onClick={() => setDetailsOpen(true)}>
                     <i className="bi bi-info-circle me-1" />{t('ui.agent.viewDetails')}
                   </button>
                 </div>
