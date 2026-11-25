@@ -4,13 +4,13 @@ import React, { useState, useEffect, useRef } from 'react';
 
 export function PageHeader({ title, subtitle, actions, eyebrow }: { title: string; subtitle?: string; actions?: React.ReactNode; eyebrow?: string }) {
   return (
-    <div className="page-header d-flex justify-content-between align-items-start flex-wrap gap-2">
-      <div>
+    <div className="page-header d-flex justify-content-between align-items-start flex-wrap gap-3">
+      <div className="min-w-0">
         {eyebrow && <div className="page-header-eyebrow">{eyebrow}</div>}
         <h1 className="page-header-title">{title}</h1>
         {subtitle && <p className="page-header-subtitle">{subtitle}</p>}
       </div>
-      {actions && <div className="d-flex gap-2 flex-wrap pt-1">{actions}</div>}
+      {actions && <div className="page-header-actions">{actions}</div>}
     </div>
   );
 }
@@ -68,13 +68,13 @@ export function StatCard({ label, value, sub, tone = 'primary', icon }: { label:
   return (
     <div className={`stat-card stat-${tone}`}>
       <div className="card">
-        <div className="card-body d-flex align-items-start">
+        <div className="card-body">
           {icon && (
-            <div className="stat-icon">
+            <div className="stat-icon" aria-hidden="true">
               <i className={`bi ${icon}`} />
             </div>
           )}
-          <div className="min-w-0">
+          <div className="min-w-0 flex-grow-1">
             <div className="stat-label">{label}</div>
             <div className="stat-value">{value}</div>
             {sub && <div className="stat-sub">{sub}</div>}

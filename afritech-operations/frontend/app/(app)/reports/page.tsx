@@ -56,15 +56,17 @@ export default function ReportsPage() {
   }
 
   return (
-    <div>
-      <PageHeader title="Reports" subtitle="Business performance reports" />
+    <div className="d-flex flex-column gap-3">
+      <PageHeader eyebrow="Reports" title="Reports" subtitle="Business performance reports based on real backend data. Visible only to authorized roles." />
 
-      <div className="card mb-3">
-        <div className="card-body d-flex flex-wrap gap-2 align-items-center">
+      <div className="filter-bar">
+        <div className="d-flex flex-wrap gap-2 align-items-end">
           <DateRange start={start} end={end} onStart={(v) => { setStart(v); setTab('summary'); }} onEnd={(v) => { setEnd(v); setTab('summary'); }} />
-          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => exportFile('csv')} disabled={!!exporting}><i className="bi bi-filetype-csv me-1" />CSV</button>
-          <button type="button" className="btn btn-sm btn-outline-success" onClick={() => exportFile('excel')} disabled={!!exporting}><i className="bi bi-file-earmark-excel me-1" />Excel</button>
-          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => exportFile('pdf')} disabled={!!exporting}><i className="bi bi-file-earmark-pdf me-1" />PDF</button>
+          <div className="d-flex gap-2 flex-wrap ms-md-auto">
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => exportFile('csv')} disabled={!!exporting}><i className="bi bi-filetype-csv me-1" aria-hidden="true" />CSV</button>
+            <button type="button" className="btn btn-sm btn-outline-success" onClick={() => exportFile('excel')} disabled={!!exporting}><i className="bi bi-file-earmark-excel me-1" aria-hidden="true" />Excel</button>
+            <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => exportFile('pdf')} disabled={!!exporting}><i className="bi bi-file-earmark-pdf me-1" aria-hidden="true" />PDF</button>
+          </div>
           {exporting && <span className="small text-muted"><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Preparing export…</span>}
         </div>
       </div>

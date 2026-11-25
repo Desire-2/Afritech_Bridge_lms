@@ -109,14 +109,22 @@ export default function EmployeesPage() {
     : e.salary_type === 'hourly' ? `${fmtMoney(e.hourly_rate)}/hr` : fmtMoney(e.base_salary);
 
   return (
-    <div>
-      <PageHeader title="Employees" subtitle="Staff, branches and departments"
-        actions={canManage && <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-person-plus me-1" /> New employee</button>} />
+    <div className="d-flex flex-column gap-3">
+      <PageHeader eyebrow="People" title="Employees" subtitle="Manage staff records, roles, assignments, and employment details."
+        actions={canManage && <button className="btn btn-primary btn-sm" onClick={openCreate}><i className="bi bi-person-plus me-1" aria-hidden="true" /> New employee</button>} />
 
-      <div className="card mb-3">
-        <div className="card-body py-2 d-flex align-items-center">
-          <i className="bi bi-search text-muted me-2" />
-          <input className="form-control form-control-sm border-0 shadow-none" placeholder="Search name, email, position, ID…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+      <div className="filter-bar">
+        <div className="row g-2 align-items-end">
+          <div className="col-md-5 col-lg-4">
+            <label className="form-label" htmlFor="employee-search">Search</label>
+            <div className="input-group input-group-sm">
+              <span className="input-group-text"><i className="bi bi-search" aria-hidden="true" /></span>
+              <input id="employee-search" className="form-control" placeholder="Name, email, position, ID…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+            </div>
+          </div>
+          <div className="col-md-7 col-lg-8">
+            <div className="small text-muted text-md-end"><strong className="text-body">{data?.total ?? 0}</strong> employees in scope</div>
+          </div>
         </div>
       </div>
 

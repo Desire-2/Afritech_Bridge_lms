@@ -251,26 +251,26 @@ export default function MeetingsPage() {
 
       {actionError && <ErrorAlert message={actionError} />}
 
-      <div className="card">
-        <div className="card-body d-flex flex-wrap align-items-end gap-2">
-          <div style={{ minWidth: 200 }}>
-            <label className="form-label small fw-semibold mb-1">Search</label>
-            <TextInput className="form-control form-control-sm" value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+      <div className="filter-bar">
+        <div className="row g-2 align-items-end">
+          <div className="col-md-4">
+            <label className="form-label" htmlFor="meeting-search">Search</label>
+            <input id="meeting-search" className="form-control form-control-sm" value={search} placeholder="Search meetings…" onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
           </div>
-          <div>
-            <label className="form-label small fw-semibold mb-1">Status</label>
-            <SelectInput className="form-select form-control-sm" value={status}
-              onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-              <option value="">All</option>
+          <div className="col-md-3">
+            <label className="form-label" htmlFor="meeting-status">Status</label>
+            <select id="meeting-status" className="form-select form-select-sm" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+              <option value="">All statuses</option>
               {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-            </SelectInput>
+            </select>
           </div>
-          <div className="form-check ms-2 mb-2">
-            <input className="form-check-input" type="checkbox" id="mineMeetings" checked={mine}
-              onChange={(e) => { setMine(e.target.checked); setPage(1); }} />
-            <label className="form-check-label small" htmlFor="mineMeetings">Meetings I'm in</label>
+          <div className="col-md-3 d-flex align-items-center pb-1">
+            <div className="form-check mb-0">
+              <input className="form-check-input" type="checkbox" id="mineMeetings" checked={mine} onChange={(e) => { setMine(e.target.checked); setPage(1); }} />
+              <label className="form-check-label small" htmlFor="mineMeetings">Meetings I&apos;m in</label>
+            </div>
           </div>
+          <div className="col-md-2 small text-muted text-md-end"><strong className="text-body">{data?.total ?? 0}</strong> meetings</div>
         </div>
       </div>
 

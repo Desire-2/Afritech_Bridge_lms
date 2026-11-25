@@ -62,33 +62,39 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div>
-      <PageHeader eyebrow="Notifications" title="Notifications"
-        subtitle={`${countData?.unread ?? 0} unread`}
-        actions={items.some((n: any) => !n.is_read) && (
+    <div className="d-flex flex-column gap-3">
+      <PageHeader eyebrow="Workspace" title="Notifications"
+        subtitle={`${countData?.unread ?? 0} unread notifications`}
+        actions={items.some((n: any) => !n.is_read) ? (
           <button className="btn btn-sm btn-outline-primary" onClick={markAll} disabled={busyAll || !!busyId}>
-            <i className="bi bi-check2-all me-1" />{busyAll ? 'Marking…' : 'Mark all read'}
+            <i className="bi bi-check2-all me-1" aria-hidden="true" />{busyAll ? 'Marking…' : 'Mark all read'}
           </button>
-        )} />
+        ) : undefined} />
 
       {actionErr && <ErrorAlert message={actionErr} />}
       {error && <ErrorAlert message={error} />}
-      {loading && <Loading />}
-      {!loading && !error && items.length === 0 && <EmptyState message="No notifications" icon="bi-bell-slash" />}
 
-      {!loading && !error && items.length > 0 && (
-        <>
-          <div className="card">
-            <div className="card-body p-0">
+      <div className="data-table-wrap">
+        <div className="data-table-toolbar">
+          <div>
+            <div className="panel-title">Inbox</div>
+            <div className="panel-subtitle">Only notifications for your account and permissions are shown.</div>
+          </div>
+        </div>
+        {loading && <div className="p-3"><Loading /></div>}
+        {!loading && !error && items.length === 0 && <div className="p-3"><EmptyState message="No notifications" icon="bi-bell-slash" /></div>}
+        {!loading && !error && items.length > 0 && (
+          <>
+            <div className="list-group list-group-flush">
               {items.map((n: any) => (
                 <button
                   key={n.id}
-                  className={`notif-row w-100 text-start ${n.is_read ? '' : 'notif-unread'}`}
+                  className={`notif-row ${n.is_read ? '' : 'notif-unread'}`}
                   onClick={() => markRead(n)}
                   disabled={busyId === n.id || busyAll}
                 >
                   <div className={`notif-sev bg-${SEVERITY_BG[n.severity] || 'info'}-subtle`}>
-                    <i className={`bi ${SEVERITY_ICON[n.severity] || SEVERITY_ICON.info}`} />
+                    <i className={`bi ${SEVERITY_ICON[n.severity] || SEVERITY_ICON.info}`} aria-hidden="true" />
                   </div>
                   <div className="flex-grow-1 min-w-0">
                     <div className="d-flex justify-content-between align-items-center gap-2">
@@ -104,10 +110,10 @@ export default function NotificationsPage() {
                 </button>
               ))}
             </div>
-          </div>
-          <Pagination page={page} pages={data?.pages || 1} total={data?.total} onPage={setPage} />
-        </>
-      )}
+            <div className="p-3 border-top"><Pagination page={page} pages={data?.pages || 1} total={data?.total} onPage={setPage} /></div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

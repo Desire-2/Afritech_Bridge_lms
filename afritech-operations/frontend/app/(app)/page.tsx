@@ -3,7 +3,8 @@
 import { useAuth } from '@/lib/auth';
 import { can, hasRole, isSuperAdmin } from '@/lib/api';
 import { P } from '@/lib/permissions';
-import ManagementDashboard from '@/components/dashboards/ManagementDashboard';
+import AdminDashboard from '@/components/dashboards/AdminDashboard';
+import ManagerDashboard from '@/components/dashboards/ManagerDashboard';
 import AgentDashboard from '@/components/dashboards/AgentDashboard';
 import InstructorDashboard from '@/components/dashboards/InstructorDashboard';
 import SecretaryDashboard from '@/components/dashboards/SecretaryDashboard';
@@ -14,22 +15,20 @@ export default function DashboardPage() {
   const { user } = useAuth();
 
   const isSuper = isSuperAdmin(user);
+  const isManager = hasRole(user, 'manager') && !isSuper;
   const isInstructor = hasRole(user, 'instructor') && !isSuper && !hasRole(user, 'manager');
   const isAgent = hasRole(user, 'service_agent') && !isSuper;
-  // A Company Secretary must never land on ManagementDashboard: that view is
-  // built around financial KPIs this role has no permission to read.
+  // A Company Secretary must never land on a financial management dashboard.
   const isSecretary = hasRole(user, 'company_secretary') && !isSuper && !hasRole(user, 'manager');
-  // ManagementDashboard reads /api/dashboard, which requires reports.view.
   const canReports = can(user, P.reportsView);
   const canShop = can(user, P.shopView);
 
   if (isInstructor) return <InstructorDashboard />;
   if (isAgent) return <AgentDashboard />;
   if (isSecretary) return <SecretaryDashboard />;
-  if (canReports) return <ManagementDashboard />;
-  // Shop roles (shop_manager / shop_attendant / storekeeper) hold no financial
-  // reporting permission: they used to fall through to ManagementDashboard and
-  // get a 403 error page instead of a home screen.
+  if (isSuper) return <AdminDashboard />;
+  if (isManager) return <ManagerDashboard />;
+  if (canReports) return <AdminDashboard />;
   if (canShop) return <ShopOverviewPage />;
   return <AccessDenied title="No dashboard for this account" />;
 }

@@ -187,28 +187,34 @@ export default function ClosingsPage() {
   }
 
   return (
-    <div>
-      <PageHeader title="Daily Closing" subtitle="End-of-day cash reconciliation and approval"
+    <div className="d-flex flex-column gap-3">
+      <PageHeader
+        eyebrow="Finance"
+        title="Daily closings"
+        subtitle="Review expected cash, submit counted cash, and resolve discrepancies with a clear audit trail."
         actions={
-          <button className="btn btn-primary"
+          <button className="btn btn-primary btn-sm"
             onClick={() => { setReRunning(null); setActualCash(''); setNotes(''); setError2(''); setSubmitOpen(true); }}>
-            <i className="bi bi-cash-coin me-1" /> Run closing
+            <i className="bi bi-cash-coin me-1" aria-hidden="true" /> Run closing
           </button>
-        } />
+        }
+      />
 
-      <div className="row g-4">
-        <div className="col-lg-5">
-          <div className="card mb-3">
-            <div className="card-body">
-              <h6 className="card-title fw-semibold">
-                Expected totals for {dateValid ? fmtDate(date) : '—'}
-                {selectedEmployeeName && (
-                  <span className="text-muted fw-normal small"> · {selectedEmployeeName}</span>
-                )}
-              </h6>
+      <div className="row g-3">
+        <div className="col-xl-5">
+          <div className="panel h-100">
+            <div className="panel-header">
+              <div>
+                <h2 className="panel-title">Expected totals</h2>
+                <p className="panel-subtitle">
+                  {dateValid ? fmtDate(date) : 'Select a date'}{selectedEmployeeName ? ` · ${selectedEmployeeName}` : ''}
+                </p>
+              </div>
+            </div>
+            <div className="panel-body">
               {canApprove && (
-                <div className="mb-2">
-                  <label className="form-label small text-muted mb-1" htmlFor="closingEmployee">Employee</label>
+                <div className="mb-3">
+                  <label className="form-label" htmlFor="closingEmployee">Employee</label>
                   <select id="closingEmployee" className="form-select form-select-sm"
                     value={selectedEmployeeId ?? ''}
                     onChange={(e) => {
@@ -223,7 +229,7 @@ export default function ClosingsPage() {
                   {employees.loading && <div className="small text-muted mt-1">Loading employees…</div>}
                 </div>
               )}
-              <div className="input-group mb-2">
+              <div className="d-flex gap-2 mb-3">
                 <input type="date" className="form-control form-control-sm" value={date}
                   aria-label="Closing date" onChange={(e) => pickDate(e.target.value)} />
                 <button className="btn btn-sm btn-outline-primary"
@@ -233,107 +239,107 @@ export default function ClosingsPage() {
                 </button>
               </div>
               {!dateValid && (
-                <div className="alert alert-warning py-2 small mb-2">
+                <div className="alert alert-warning py-2 small mb-0">
                   {date ? 'Date must be in YYYY-MM-DD format.' : 'Pick a date to load its totals.'}
                 </div>
               )}
-              {totalErr && <div className="alert alert-danger py-2 small">{totalErr}</div>}
+              {totalErr && <div className="alert alert-danger py-2 small mb-0">{totalErr}</div>}
               {loadingTotals && !totalsCurrent && <Loading />}
               {totalsCurrent && (
                 <>
                   {Number(totals.transaction_count) === 0 && (
-                    <p className="small text-muted mb-2">
-                      No completed transactions recorded for this employee on this date.
-                    </p>
+                    <p className="small text-muted mb-2">No completed transactions recorded for this employee on this date.</p>
                   )}
-                  <table className="table table-sm mb-0">
-                    <tbody>
-                      <tr><td className="text-muted">Transactions</td><td className="text-end fw-semibold">{totals.transaction_count}</td></tr>
-                      <tr><td className="text-muted">Customer payments</td><td className="text-end money">{fmtMoney(totals.customer_payments)}</td></tr>
-                      <tr><td className="text-muted">Cash payments</td><td className="text-end money">{fmtMoney(totals.cash_payments)}</td></tr>
-                      <tr><td className="text-muted">Non-cash payments</td><td className="text-end money">{fmtMoney(totals.non_cash_payments)}</td></tr>
-                      <tr><td className="text-muted">Service costs</td><td className="text-end money text-danger">− {fmtMoney(totals.service_costs)}</td></tr>
-                      <tr><td className="text-muted">Gross profit</td><td className="text-end money">{fmtMoney(totals.gross_profit)}</td></tr>
-                      <tr><td className="text-muted">Total commission</td><td className="text-end money text-warning">− {fmtMoney(totals.total_commission)}</td></tr>
-                      <tr><td className="text-muted">Company profit</td><td className="text-end money fw-semibold text-success">{fmtMoney(totals.company_profit)}</td></tr>
-                      <tr className="border-top">
-                        <td className="fw-semibold">Expected cash</td>
-                        <td className="text-end money fw-bold">{fmtMoney(totals.expected_cash)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
+                  <div className="table-responsive">
+                    <table className="table table-sm mb-0">
+                      <tbody>
+                        <tr><td className="text-muted">Transactions</td><td className="text-end fw-semibold">{totals.transaction_count}</td></tr>
+                        <tr><td className="text-muted">Customer payments</td><td className="text-end money">{fmtMoney(totals.customer_payments)}</td></tr>
+                        <tr><td className="text-muted">Cash payments</td><td className="text-end money">{fmtMoney(totals.cash_payments)}</td></tr>
+                        <tr><td className="text-muted">Non-cash payments</td><td className="text-end money">{fmtMoney(totals.non_cash_payments)}</td></tr>
+                        <tr><td className="text-muted">Service costs</td><td className="text-end money text-danger">− {fmtMoney(totals.service_costs)}</td></tr>
+                        <tr><td className="text-muted">Gross profit</td><td className="text-end money">{fmtMoney(totals.gross_profit)}</td></tr>
+                        <tr><td className="text-muted">Total commission</td><td className="text-end money text-warning">− {fmtMoney(totals.total_commission)}</td></tr>
+                        <tr><td className="text-muted">Company profit</td><td className="text-end money fw-semibold text-success">{fmtMoney(totals.company_profit)}</td></tr>
+                        <tr className="border-top"><td className="fw-semibold">Expected cash</td><td className="text-end money fw-bold">{fmtMoney(totals.expected_cash)}</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </>
               )}
             </div>
           </div>
         </div>
 
-        <div className="col-lg-7">
-          <div className="card mb-3">
-            <div className="card-body">
-              <div className="d-flex justify-content-between flex-wrap gap-2 mb-2">
-                <h6 className="card-title fw-semibold mb-0">
-                  Closings history
-                  <span className="text-muted fw-normal small ms-2">
-                    {showAllDates || !dateValid ? 'All dates' : fmtDate(date)}
-                  </span>
-                </h6>
-                <div className="d-flex align-items-center gap-2">
-                  <div className="form-check mb-0">
-                    <input className="form-check-input" type="checkbox" id="onlyThisDate"
-                      checked={!showAllDates}
-                      onChange={(e) => { setShowAllDates(!e.target.checked); setPage(1); }} />
-                    <label className="form-check-label small" htmlFor="onlyThisDate">This date only</label>
-                  </div>
-                  <select className="form-select form-select-sm" style={{ width: 180 }} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-                    <option value="">All statuses</option>
-                    <option value="submitted">Submitted</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="correction_requested">Correction requested</option>
-                  </select>
-                </div>
+        <div className="col-xl-7">
+          <div className="data-table-wrap h-100">
+            <div className="data-table-toolbar">
+              <div>
+                <div className="panel-title">Closings history</div>
+                <div className="panel-subtitle">{showAllDates || !dateValid ? 'All dates' : fmtDate(date)}</div>
               </div>
-              {error && <ErrorAlert message={error} onRetry={reload} />}
-              {loading && <Loading />}
-              {!loading && !error && items.length === 0 && (
-                <EmptyState message={showAllDates || !dateValid ? 'No closings yet' : `No closings for ${fmtDate(date)}`} />
-              )}
-              {items.map((c: any) => (
-                <div key={c.id} className="d-flex justify-content-between align-items-center py-2 border-bottom small">
-                  <div>
-                    <div className="fw-semibold">{fmtDate(c.closing_date)} · {c.employee_name}</div>
-                    <div className="text-muted">{c.transaction_count} txns · cash {fmtMoney(c.cash_payments)} · expected {fmtMoney(c.expected_cash)} · actual {fmtMoney(c.actual_cash)} · diff {fmtMoney(c.cash_difference)}</div>
-                  </div>
-                  <div className="d-flex align-items-center gap-2">
-                    <Badge status={c.reconciliation_class} />
-                    <Badge status={c.status} />
-                    {c.status === 'approved' && isAdmin && (
-                      <button className="btn btn-sm btn-outline-danger" onClick={() => openReview(c, true)}>
-                        <i className="bi bi-unlock me-1" />Fix status
-                      </button>
-                    )}
-                    {c.status === 'submitted' && canApprove && (
-                      <button className="btn btn-sm btn-outline-primary" onClick={() => openReview(c)}>Review</button>
-                    )}
-                    {c.status === 'correction_requested' && (
-                      <button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>
-                        <i className="bi bi-arrow-repeat me-1" />Re-run
-                      </button>
-                    )}
-                    {c.status === 'rejected' && (
-                      <>
-                        <button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>
-                          <i className="bi bi-arrow-repeat me-1" />Re-run
-                        </button>
-                        <button className="btn btn-sm btn-outline-secondary" onClick={() => openReview(c)}>View</button>
-                      </>
-                    )}
-                  </div>
+              <div className="toolbar-group">
+                <div className="form-check mb-0">
+                  <input className="form-check-input" type="checkbox" id="onlyThisDate"
+                    checked={!showAllDates}
+                    onChange={(e) => { setShowAllDates(!e.target.checked); setPage(1); }} />
+                  <label className="form-check-label small" htmlFor="onlyThisDate">This date only</label>
                 </div>
-              ))}
-              <Pagination page={page} pages={data?.pages || 1} total={data?.total} onPage={setPage} />
+                <select className="form-select form-select-sm" style={{ width: 180 }} value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Filter by status">
+                  <option value="">All statuses</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="correction_requested">Correction requested</option>
+                </select>
+              </div>
             </div>
+            {error && <div className="p-3"><ErrorAlert message={error} onRetry={reload} /></div>}
+            {loading && <div className="p-3"><Loading /></div>}
+            {!loading && !error && items.length === 0 && (
+              <div className="p-3"><EmptyState message={showAllDates || !dateValid ? 'No closings yet' : `No closings for ${fmtDate(date)}`} icon="bi-calendar-check" /></div>
+            )}
+            {!loading && !error && items.length > 0 && (
+              <>
+                <div className="table-responsive">
+                  <table className="table table-hover align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Date / Employee</th>
+                        <th className="text-end">Expected</th>
+                        <th className="text-end">Actual</th>
+                        <th className="text-end">Difference</th>
+                        <th>Status</th>
+                        <th className="text-end">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((c: any) => (
+                        <tr key={c.id}>
+                          <td>
+                            <div className="fw-semibold">{fmtDate(c.closing_date)}</div>
+                            <div className="small text-muted">{c.employee_name} · {c.transaction_count} txns</div>
+                          </td>
+                          <td className="text-end money">{fmtMoney(c.expected_cash)}</td>
+                          <td className="text-end money">{fmtMoney(c.actual_cash)}</td>
+                          <td className={`text-end money fw-semibold ${Number(c.cash_difference) < 0 ? 'text-danger' : Number(c.cash_difference) > 0 ? 'text-warning' : 'text-success'}`}>{fmtMoney(c.cash_difference)}</td>
+                          <td><div className="d-flex gap-1 flex-wrap"><Badge status={c.reconciliation_class} /><Badge status={c.status} /></div></td>
+                          <td>
+                            <div className="d-flex justify-content-end gap-1 flex-wrap">
+                              {c.status === 'approved' && isAdmin && <button className="btn btn-sm btn-outline-danger" onClick={() => openReview(c, true)}>Fix status</button>}
+                              {c.status === 'submitted' && canApprove && <button className="btn btn-sm btn-outline-primary" onClick={() => openReview(c)}>Review</button>}
+                              {c.status === 'correction_requested' && <button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>Re-run</button>}
+                              {c.status === 'rejected' && (<><button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>Re-run</button><button className="btn btn-sm btn-outline-secondary" onClick={() => openReview(c)}>View</button></>)}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="p-3 border-top"><Pagination page={page} pages={data?.pages || 1} total={data?.total} onPage={setPage} /></div>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -102,6 +102,13 @@ def dashboard():
     if user:
         unread = Notification.query.filter_by(recipient_id=user.id, is_read=False).count()
 
+    weekly_pending = 0
+    if user and user.has_permission('weekly_reports.review'):
+        from ..models import WeeklyReport
+        weekly_pending = WeeklyReport.query.filter(
+            WeeklyReport.status.in_(['submitted', 'under_financial_review'])
+        ).count()
+
     return jsonify({
         'period': {'today': today.isoformat()},
         'financial': {
@@ -147,6 +154,7 @@ def dashboard():
         },
         'closings_pending': DailyClosing.query.filter_by(status='submitted').count(),
         'expenses_pending': Expense.query.filter_by(status='pending').count(),
+        'weekly_reports_pending': weekly_pending,
         'unread_notifications': unread,
         'commission_default': float(default_rate()[0]),
         'branch_count': Branch.query.count(),
