@@ -388,9 +388,14 @@ class WeeklyReportService:
                 collections += payment_total
                 service_costs += _dec(txn.official_cost)
                 commission += _dec(txn.commission_amount)
-                if policy['deduct_verified_service_costs'] and not company_funded:
-                    for claim in claims_by_txn.get(txn.id, []):
-                        verified_cost_amount += self._verified_cost_credit(claim, txn)
+            # A personal cost is money the agent paid out. The customer's
+            # payment status decides whether the sale contributes collections,
+            # but it must not hide a cost the agent already funded. Use the same
+            # claim-based rule here as the post-submit overlay so the deduction
+            # appears immediately and never changes at submission.
+            if policy['deduct_verified_service_costs'] and not company_funded:
+                for claim in claims_by_txn.get(txn.id, []):
+                    verified_cost_amount += self._verified_cost_credit(claim, txn)
 
         # Daily closings: use the existing triage helper rather than a second
         # implementation of daily arithmetic. Missing closings stay `None`.
@@ -1232,10 +1237,11 @@ class WeeklyReportService:
         """Record who actually funded an official service cost.
 
         A ``False`` personal-payment answer is kept for audit but carries zero
-        credit. A ``True`` answer only becomes deductible after a reviewer has
-        verified it. When ``auto_personal`` is set, the full official cost is
+        credit. A manual ``True`` answer becomes deductible after a reviewer
+        verifies it. When ``auto_personal`` is set, the full official cost is
         recorded from the transaction and the employee's registered details,
-        so the agent does not have to supply payment fields or evidence.
+        is credited immediately, and is confirmed when the report is approved;
+        the agent does not supply payment fields or evidence.
         """
         self._require_editable(report)
         try:

@@ -787,6 +787,49 @@ class TestOfficialCostPayments:
             f'/api/weekly-reports/{report.id}/audit', headers=accountant_hdr))['items']}
         assert 'weekly_cost_payment_confirmed_on_approval' in actions
 
+    def test_auto_personal_credit_applies_when_customer_has_not_paid(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
+        """The agent's own funds deduct even for an unpaid customer sale."""
+        emp = _agent()
+        week = _future_week()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400, paid=False)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        report.opening_outstanding = Decimal('1000.00')
+        db.session.commit()
+
+        before = _detail(client, agent_hdr, report.id)['calculation']
+        assert before['eligible_transaction_count'] == 0
+        assert before['components']['verified_service_costs'] == '0.00'
+        assert before['components']['expected_remittance'] == '1000.00'
+
+        response = _claim_api(client, agent_hdr, report, txn, auto=True)
+        assert response.status_code == 201, response.get_data(as_text=True)
+
+        after = _detail(client, agent_hdr, report.id)['calculation']
+        assert after['eligible_transaction_count'] == 0
+        assert after['components']['verified_service_costs'] == '400.00'
+        assert after['components']['expected_remittance'] == '600.00'
+
+        summary = _detail(client, agent_hdr, report.id)['summary']
+        assert summary['personal_paid_applied'] == '400.00'
+        assert summary['expected_amount'] == '600.00'
+        cost_row = next(row for row in summary['official_costs']
+                        if row['transaction_id'] == txn.id)
+        assert cost_row['customer_payment_status'] == 'unpaid'
+        assert cost_row['verified_amount'] == '400.00'
+        assert cost_row['verification_status'] == 'pending'
+
+        # Submission must not change an already-applied deduction.
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        submitted = _components(client, accountant_hdr, report.id)
+        assert submitted['verified_service_costs'] == '400.00'
+        assert submitted['expected_remittance'] == '600.00'
+
+        approved = _review(client, accountant_hdr, report.id, 'approve')
+        assert approved.status_code == 200, approved.get_data(as_text=True)
+        assert _components(client, accountant_hdr, report.id)['expected_remittance'] == '600.00'
+
     def test_auto_personal_credit_stops_when_reviewer_rejects_it(
             self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
         """Auto credit is immediate but a reviewer can still reject the claim."""

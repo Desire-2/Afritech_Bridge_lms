@@ -146,6 +146,7 @@ export function Badge({ status, label }: { status: string; label?: string }) {
     sold: 'bg-info-subtle text-info border-info-subtle',
     counted: 'bg-info-subtle text-info border-info-subtle',
     applied: 'bg-success-subtle text-success border-success-subtle',
+    auto_applied: 'bg-success-subtle text-success border-success-subtle',
     closed: 'bg-secondary-subtle text-secondary border-secondary-subtle',
   };
   const cls = map[status] || 'bg-light-subtle text-body border-light-subtle';

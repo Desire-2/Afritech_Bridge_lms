@@ -54,6 +54,15 @@ function parseAmount(value: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+// A manual personal claim is not the guided own-funds answer. Keep an already
+// credited claim, but let pending/rejected manual claims be converted so the
+// deduction starts immediately.
+function guidedAnswerAlreadyApplied(row: any): boolean {
+  if (!row?.claim_id || row.payment_source !== 'personal') return false;
+  if (row.auto_personal) return row.verification_status !== 'rejected';
+  return row.verification_status === 'verified';
+}
+
 function evidenceProblem(file: File | null, t: (key: string) => string): string {
   if (!file) return '';
   const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -95,6 +104,7 @@ export default function AgentWeeklyFlow({
   const [explanation, setExplanation] = useState('');
   const [success, setSuccess] = useState(false);
   const submitting = useRef(false);
+  const savingCost = useRef(false);
 
   const report = bundle?.report;
   const summary = bundle?.summary || report?.summary;
@@ -241,36 +251,48 @@ export default function AgentWeeklyFlow({
     });
   }
 
-  function selectCostSource(row: any, source: string) {
-    if (busy) return;
+  async function selectCostSource(row: any, source: string) {
+    if (savingCost.current) return;
     updateCostForm(row, { source });
-    if (source === 'personal') void saveCost(row, source);
+    if (source === 'personal') await saveCost(row, source);
   }
 
-  async function afterMutation(messageKey: string) {
-    if (report?.id) await load({ report_id: report.id });
+  async function afterMutation(messageKey: string, savedReport?: any) {
+    if (savedReport) {
+      setBundle((old) => old ? {
+        ...old,
+        report: savedReport,
+        summary: savedReport.summary || old.summary,
+      } : old);
+    }
+    const payload = report?.id ? { report_id: report.id }
+      : summary?.week_start ? { week_start: summary.week_start } : {};
+    const refreshed = await load(payload);
+    if (!refreshed) throw new Error(t('ui.error.loadFailed'));
     setNotice(t(messageKey));
   }
 
   async function saveCost(row: any, selectedSource?: string) {
-    if (busy) return;
+    if (savingCost.current) return;
     if (row.company_funded || row.auto_company_funded) {
       setCostError(row.transaction_id, t('ui.agent.costAutoCompanyNote'));
       return;
     }
-    const source = selectedSource || costForm(row).source;
+    savingCost.current = true;
     setBusy(true);
     setActionError('');
     setNotice('');
     clearCostError(row.transaction_id);
     try {
+      const source = selectedSource || costForm(row).source;
       if (!COST_SOURCES.includes(source)) {
         setCostError(row.transaction_id, t('ui.error.required'));
         return;
       }
-      // The answer is already recorded. Do not delete and recreate a verified
-      // claim just because the agent reopened it and pressed save.
-      if (row.claim_id && row.payment_source === source) {
+      // Only a claim that is already credited should be left alone. A pending
+      // or rejected manual personal claim must be converted to the guided
+      // answer so the full cost is deducted immediately.
+      if (guidedAnswerAlreadyApplied(row)) {
         setEditingCost(null);
         setNotice(t('ui.label.costPaymentRecorded'));
         return;
@@ -289,7 +311,7 @@ export default function AgentWeeklyFlow({
         body.set('auto_personal', 'true');
         body.set('amount', String(moneyNumber(row.official_cost)));
       }
-      await api(`/api/weekly-reports/${report.id}/official-cost-payments`, {
+      const saved = await api<any>(`/api/weekly-reports/${report.id}/official-cost-payments`, {
         method: 'POST', formData: body,
       });
       setEditingCost(null);
@@ -298,10 +320,11 @@ export default function AgentWeeklyFlow({
         delete next[row.transaction_id];
         return next;
       });
-      await afterMutation('ui.label.costPaymentRecorded');
+      await afterMutation('ui.label.costPaymentRecorded', saved?.report);
     } catch (e) {
       setCostError(row.transaction_id, weeklyErrorMessage(e, t));
     } finally {
+      savingCost.current = false;
       setBusy(false);
     }
   }
@@ -668,7 +691,8 @@ export default function AgentWeeklyFlow({
                                     disabled={busy}
                                     aria-invalid={costError ? true : undefined}
                                     aria-describedby={costError ? errorId : undefined}
-                                    onChange={() => selectCostSource(row, source)} />
+                                    onChange={() => {}}
+                                    onClick={() => void selectCostSource(row, source)} />
                                   <span>{t(`ui.agent.costSource.${source}`)}</span>
                                 </label>
                               ))}
