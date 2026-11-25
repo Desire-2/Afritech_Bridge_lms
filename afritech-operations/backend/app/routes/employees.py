@@ -10,6 +10,7 @@ from ..auth.scope import (
     is_service_agent_employee, scope_error_status,
 )
 from ..services.audit import audit
+from ..services.organization import create_unit
 from .helpers import (
     json_error, parse_json, paginate, paginate_response, parse_date, parse_id, parse_code_list,
 )
@@ -407,17 +408,9 @@ def list_departments():
 @bp.post('/departments')
 @require_permission('departments.manage')
 def create_department():
-    data = parse_json()
-    from .helpers import required
-    missing = required(data, 'name', 'code')
-    if missing:
-        return json_error(f'Missing: {", ".join(missing)}')
-    if Department.query.filter_by(code=data['code']).first():
-        return json_error('Department code already exists')
-    dept = Department(name=data['name'], code=data['code'], description=data.get('description'), is_active=bool(data.get('is_active', True)))
-    db.session.add(dept)
-    db.session.commit()
-    audit('department_created', 'department', dept.id, new_value=data)
+    dept, err = create_unit('departments', parse_json())
+    if err:
+        return json_error(err)
     return jsonify({'message': 'Department created', 'department': dept.to_dict()}), 201
 
 
@@ -431,16 +424,7 @@ def list_branches():
 @bp.post('/branches')
 @require_permission('branches.manage')
 def create_branch():
-    data = parse_json()
-    from .helpers import required
-    missing = required(data, 'name', 'code')
-    if missing:
-        return json_error(f'Missing: {", ".join(missing)}')
-    if Branch.query.filter_by(code=data['code']).first():
-        return json_error('Branch code already exists')
-    br = Branch(name=data['name'], code=data['code'], city=data.get('city'), address=data.get('address'),
-                phone=data.get('phone'), is_active=bool(data.get('is_active', True)))
-    db.session.add(br)
-    db.session.commit()
-    audit('branch_created', 'branch', br.id, new_value=data)
+    br, err = create_unit('branches', parse_json())
+    if err:
+        return json_error(err)
     return jsonify({'message': 'Branch created', 'branch': br.to_dict()}), 201

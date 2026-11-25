@@ -4,6 +4,7 @@ from . import (
     dashboard, notifications, audit, settings, integrations,
     meetings, activities, announcements, memos, documents, requests,
     followups, escalations, calendar, leave, operational_reports, weekly_reports,
+    organization,
 )
 from .shop import register_shop_routes
 
@@ -17,7 +18,7 @@ def register_routes(app):
         settings.bp, integrations.bp, meetings.bp, activities.bp,
         announcements.bp, memos.bp, documents.bp, requests.bp,
         followups.bp, escalations.bp, calendar.bp, leave.bp,
-        operational_reports.bp, weekly_reports.bp,
+        operational_reports.bp, weekly_reports.bp, organization.bp,
     ]:
         app.register_blueprint(bp)
 

@@ -74,6 +74,26 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 - `POST /api/employees` · `GET/PUT /api/employees/{id}`
 - `GET /api/employees/{id}/{transactions|attendance|tasks|earnings|performance}`
 
+### Branches & departments
+The `/employees/branches` and `/employees/departments` lookups stay active-only
+for form pickers. Management uses a separate API (requires `branches.manage` or
+`departments.manage` respectively):
+
+- `GET /api/organization/summary` — totals for either management permission
+- `GET /api/organization/{branches|departments}?search=&is_active=all|active|inactive&page=&per_page=`
+  — paginated list with `employee_count`, including archived rows
+- `GET /api/organization/{branches|departments}/{id}` — detail with `employee_count`
+  and up to 8 recent employees
+- `POST /api/organization/{branches|departments}` — `{name, code, …}`; codes are
+  normalized to uppercase and must be unique
+- `PATCH /api/organization/{branches|departments}/{id}` — partial update
+- `DELETE /api/organization/{branches|departments}/{id}` — archive (`is_active=false`);
+  assignments and history are preserved
+- `POST /api/organization/{branches|departments}/{id}/restore` — reactivate
+
+Branches and departments are independent dimensions: a department does not
+belong to a branch. Every employee carries its own branch and department IDs.
+
 ## Daily closing
 
 - `GET /api/closings/today` — authoritative calendar date/timezone in the

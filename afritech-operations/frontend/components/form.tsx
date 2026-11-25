@@ -25,10 +25,10 @@ export function useStatic<T = any>(path: string) {
   return { data, error };
 }
 
-export function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
+export function Field({ label, required, hint, children, htmlFor }: { label: string; required?: boolean; hint?: string; children: React.ReactNode; htmlFor?: string }) {
   return (
     <div className="mb-3">
-      <label className="form-label small fw-semibold">
+      <label className="form-label small fw-semibold" htmlFor={htmlFor}>
         {label} {required && <span className="text-danger">*</span>}
       </label>
       {children}
