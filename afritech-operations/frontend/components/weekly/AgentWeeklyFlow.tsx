@@ -82,6 +82,7 @@ export default function AgentWeeklyFlow({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editingCost, setEditingCost] = useState<number | null>(null);
   const [costForms, setCostForms] = useState<Record<number, CostForm>>({});
+  const [costErrors, setCostErrors] = useState<Record<number, string>>({});
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferForm, setTransferForm] = useState<TransferForm>({
     provider: 'momo', reference: '', amount: '', submitted_at: '',
@@ -157,6 +158,7 @@ export default function AgentWeeklyFlow({
     setWeekLoading(true);
     setActionError('');
     setNotice('');
+    setCostErrors({});
     const data = await load({ week_start: value });
     if (!data) setWeekStart(previous);
     setWeekLoading(false);
@@ -184,6 +186,7 @@ export default function AgentWeeklyFlow({
     setTransferOpen(false);
     setEditingCost(null);
     setCostForms({});
+    setCostErrors({});
     setSuccess(['submitted', 'under_financial_review', 'approved', 'rejected']
       .includes(report.status));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,6 +203,20 @@ export default function AgentWeeklyFlow({
     field.focus({ preventScroll: true });
   }, [focusDeclaration, report?.id, editable, success]);
 
+  // Cost-answer failures belong to the row that caused them. Bring that row
+  // into view and focus its payer group as soon as the inline error appears.
+  useEffect(() => {
+    if (!editingCost || !costErrors[editingCost]) return;
+    const group = document.getElementById(`cost-source-${editingCost}`);
+    if (!group) return;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    group.scrollIntoView({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'center',
+    });
+    group.focus({ preventScroll: true });
+  }, [costErrors, editingCost]);
+
   const costForm = (row: any): CostForm => costForms[row.transaction_id] || {
     source: row.payment_source || 'not_paid',
   };
@@ -209,6 +226,19 @@ export default function AgentWeeklyFlow({
       ...old,
       [row.transaction_id]: { ...costForm(row), ...patch },
     }));
+  }
+
+  function setCostError(transactionId: number, message: string) {
+    setCostErrors((old) => ({ ...old, [transactionId]: message }));
+  }
+
+  function clearCostError(transactionId: number) {
+    setCostErrors((old) => {
+      if (!(transactionId in old)) return old;
+      const next = { ...old };
+      delete next[transactionId];
+      return next;
+    });
   }
 
   function selectCostSource(row: any, source: string) {
@@ -225,16 +255,17 @@ export default function AgentWeeklyFlow({
   async function saveCost(row: any, selectedSource?: string) {
     if (busy) return;
     if (row.company_funded || row.auto_company_funded) {
-      setActionError(t('ui.agent.costAutoCompanyNote'));
+      setCostError(row.transaction_id, t('ui.agent.costAutoCompanyNote'));
       return;
     }
     const source = selectedSource || costForm(row).source;
     setBusy(true);
     setActionError('');
     setNotice('');
+    clearCostError(row.transaction_id);
     try {
       if (!COST_SOURCES.includes(source)) {
-        setActionError(t('ui.error.required'));
+        setCostError(row.transaction_id, t('ui.error.required'));
         return;
       }
       // The answer is already recorded. Do not delete and recreate a verified
@@ -269,7 +300,7 @@ export default function AgentWeeklyFlow({
       });
       await afterMutation('ui.label.costPaymentRecorded');
     } catch (e) {
-      setActionError(weeklyErrorMessage(e, t));
+      setCostError(row.transaction_id, weeklyErrorMessage(e, t));
     } finally {
       setBusy(false);
     }
@@ -562,10 +593,13 @@ export default function AgentWeeklyFlow({
               <div className="agent-item-list">
                 {answerableCosts.map((row: any) => {
                   const form = costForm(row);
+                  const costError = costErrors[row.transaction_id];
+                  const errorId = `cost-error-${row.transaction_id}`;
                   const open = editingCost === row.transaction_id && editable;
                   const verified = moneyNumber(row.verified_amount) > 0;
                   return (
-                    <div className="agent-item" key={row.transaction_id}>
+                    <div className={`agent-item ${costError ? 'has-error' : ''}`}
+                      key={row.transaction_id}>
                       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
                         <div className="min-w-0">
                           <div className="fw-semibold small">{row.transaction_number}</div>
@@ -596,14 +630,19 @@ export default function AgentWeeklyFlow({
                           </span>
                           {editable && (
                             <button type="button" className="btn btn-outline-secondary btn-sm agent-touch"
-                              onClick={() => setEditingCost(row.transaction_id)}>
+                              onClick={() => {
+                                clearCostError(row.transaction_id);
+                                setEditingCost(row.transaction_id);
+                              }}>
                               {row.claim_id ? t('ui.agent.changeAnswer') : t('ui.agent.saveAnswer')}
                             </button>
                           )}
                         </div>
                       ) : (
                         <div className="agent-subform mt-3">
-                          <fieldset className="agent-source-fieldset">
+                          <fieldset id={`cost-source-${row.transaction_id}`} tabIndex={-1}
+                            className="agent-source-fieldset"
+                            aria-describedby={costError ? errorId : undefined}>
                             <legend className="form-label small fw-semibold">
                               {t('field.personalPayment')}
                             </legend>
@@ -615,6 +654,8 @@ export default function AgentWeeklyFlow({
                                     name={`cost-source-${row.transaction_id}`}
                                     value={source} checked={form.source === source}
                                     disabled={busy}
+                                    aria-invalid={costError ? true : undefined}
+                                    aria-describedby={costError ? errorId : undefined}
                                     onChange={() => selectCostSource(row, source)} />
                                   <span>{t(`ui.agent.costSource.${source}`)}</span>
                                 </label>
@@ -628,6 +669,25 @@ export default function AgentWeeklyFlow({
                             </p>
                           )}
 
+                          {costError && (
+                            <div id={errorId} className="agent-field-error"
+                              role="alert" aria-live="polite">
+                              <i className="bi bi-exclamation-circle-fill" aria-hidden="true" />
+                              <div className="min-w-0 flex-grow-1">
+                                <div className="fw-semibold small">
+                                  {t('ui.agent.costErrorTitle')}
+                                </div>
+                                <div className="small">{costError}</div>
+                              </div>
+                              <button type="button"
+                                className="btn btn-sm btn-outline-danger agent-touch"
+                                disabled={busy}
+                                onClick={() => void saveCost(row, form.source)}>
+                                {t('ui.agent.costErrorRetry')}
+                              </button>
+                            </div>
+                          )}
+
                           <div className="d-flex flex-wrap gap-2 mt-3">
                             {form.source !== 'personal' && (
                               <button type="button" className="btn btn-primary agent-touch"
@@ -636,7 +696,10 @@ export default function AgentWeeklyFlow({
                               </button>
                             )}
                             <button type="button" className="btn btn-outline-secondary agent-touch"
-                              disabled={busy} onClick={() => setEditingCost(null)}>
+                              disabled={busy} onClick={() => {
+                                clearCostError(row.transaction_id);
+                                setEditingCost(null);
+                              }}>
                               {t('ui.label.cancel')}
                             </button>
                           </div>
