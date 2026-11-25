@@ -207,16 +207,17 @@ page is a single guided task with three stacked sections and no report queue:
    status. `[View details]` opens an optional modal that explains the collections,
    opening balance, official costs and verified/pending credits. It never
    recalculates money in the browser.
-2. **Confirm official cost payers** — each in-week cost with a positive official
-   cost is listed with its known source preselected. The agent chooses `personal`,
-   `company`, `someone_else` or `not_paid`. Only a `personal` claim with evidence
-   and reviewer verification reduces the expected amount; pending claims are
-   labelled as pending and deduct nothing. Transactions whose Service is a
-   **Land Document** (including "Land Document Apply") are confirmed
+2. **Confirm official cost payers** — each in-week cost that still needs an
+   answer is listed with its known source preselected. The agent chooses
+   `personal`, `company`, `someone_else` or `not_paid`. Only a `personal` claim
+   with evidence and reviewer verification reduces the expected amount; pending
+   claims are labelled as pending and deduct nothing. Transactions whose Service
+   is a **Land Document** (including "Land Document Apply") are confirmed
    automatically as `company`: AfriTech Bridge pays that official cost, so the
-   row is locked, no evidence is requested and no amount is deducted. The same
-   rule is enforced on every calculation, overlay and export, even if an older
-   verified personal claim exists on the transaction.
+   row is omitted from this work list, no evidence is requested and no amount is
+   deducted. Their total still appears in the company-paid summary chip. The
+   same rule is enforced on every calculation, overlay and export, even if an
+   older verified personal claim exists on the transaction.
 3. **Declare and submit** — the agent enters an RWF amount, sees the immediate
    match/short/surplus hint, answers the conditional question, optionally adds
    one or more transfers, reviews the short summary and submits. The declared

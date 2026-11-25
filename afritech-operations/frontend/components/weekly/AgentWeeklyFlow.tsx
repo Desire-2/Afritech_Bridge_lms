@@ -214,8 +214,7 @@ export default function AgentWeeklyFlow({
   }, [focusDeclaration, report?.id, editable, success]);
 
   const costForm = (row: any): CostForm => costForms[row.transaction_id] || {
-    // Land Document costs are confirmed as AfriTech Bridge-paid by the backend.
-    source: row.company_funded ? 'company' : (row.payment_source || 'not_paid'),
+    source: row.payment_source || 'not_paid',
     amount: row.claimed_amount && moneyNumber(row.claimed_amount) > 0
       ? String(moneyNumber(row.claimed_amount)) : '',
     provider: row.provider || providers[0] || 'momo',
@@ -466,7 +465,13 @@ export default function AgentWeeklyFlow({
 
   const transfers: any[] = summary.momo_submissions || [];
   const costs: any[] = summary.official_costs || [];
-  const confirmedCosts = costs.filter((row) => row.claim_id).length;
+  // AfriTech Bridge-funded Land Document costs are already confirmed, so they
+  // do not need an answer and are kept out of the section 2 work list.
+  const autoCompanyCosts = costs.filter((row) =>
+    row.company_funded || row.auto_company_funded);
+  const answerableCosts = costs.filter((row) =>
+    !row.company_funded && !row.auto_company_funded);
+  const confirmedCosts = answerableCosts.filter((row) => row.claim_id).length;
 
   const details = [
     [t('ui.agent.collections'), summary.total_collected],
@@ -579,6 +584,9 @@ export default function AgentWeeklyFlow({
                 <h2 className="h6 mb-0">{t('ui.agent.step.costs')}</h2>
               </div>
               <p className="small text-muted mt-2 mb-3">{t('ui.agent.costIntro')}</p>
+              {autoCompanyCosts.length > 0 && (
+                <p className="small text-muted mb-3">{t('ui.agent.costAutoCompanyNote')}</p>
+              )}
 
               <div className="agent-chip-row mb-3">
                 <span className="agent-chip"><b>{fmtMoney(summary.personal_paid_verified)}</b> {t('ui.agent.verifiedCredits')}</span>
@@ -588,13 +596,13 @@ export default function AgentWeeklyFlow({
                 <span className="agent-chip"><b>{fmtMoney(summary.not_paid)}</b> {t('ui.agent.notPaid')}</span>
               </div>
 
-              {costs.length === 0 && (
+              {answerableCosts.length === 0 && (
                 <div className="alert alert-light border small mb-0">{t('ui.label.none')}</div>
               )}
               <div className="agent-item-list">
-                {costs.map((row: any) => {
+                {answerableCosts.map((row: any) => {
                   const form = costForm(row);
-                  const open = editingCost === row.transaction_id && editable && !row.company_funded;
+                  const open = editingCost === row.transaction_id && editable;
                   const verified = moneyNumber(row.verified_amount) > 0;
                   return (
                     <div className="agent-item" key={row.transaction_id}>
@@ -624,16 +632,9 @@ export default function AgentWeeklyFlow({
                       {!open ? (
                         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
                           <span className="agent-answer">
-                            {row.company_funded
-                              ? t('ui.agent.costAutoCompany')
-                              : t(`ui.agent.costSource.${form.source}`)}
+                            {t(`ui.agent.costSource.${form.source}`)}
                           </span>
-                          {row.company_funded && (
-                            <span className="small text-muted d-block mt-1">
-                              {t('ui.agent.costAutoCompanyNote')}
-                            </span>
-                          )}
-                          {editable && !row.company_funded && (
+                          {editable && (
                             <button type="button" className="btn btn-outline-secondary btn-sm agent-touch"
                               onClick={() => setEditingCost(row.transaction_id)}>
                               {row.claim_id ? t('ui.agent.changeAnswer') : t('ui.agent.saveAnswer')}
@@ -947,7 +948,7 @@ export default function AgentWeeklyFlow({
                 <div className="agent-kv"><span>{t('ui.agent.expected')}</span><b>{fmtMoney(summary.expected_amount)}</b></div>
                 <div className="agent-kv"><span>{t('ui.agent.declared')}</span><b>{declared === null ? t('ui.label.none') : fmtMoney(declared)}</b></div>
                 <div className="agent-kv"><span>{t('field.status')}</span><b>{statusLabel(summary.status)}</b></div>
-                <div className="agent-kv"><span>{t('ui.agent.reviewCosts')}</span><b>{confirmedCosts}/{costs.length}</b></div>
+                <div className="agent-kv"><span>{t('ui.agent.reviewCosts')}</span><b>{confirmedCosts}/{answerableCosts.length}</b></div>
                 <div className="agent-kv"><span>{t('ui.agent.reviewTransfers')}</span><b>{transfers.length}</b></div>
               </div>
 
