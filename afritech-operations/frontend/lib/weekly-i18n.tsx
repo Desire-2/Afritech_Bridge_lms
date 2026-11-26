@@ -1850,13 +1850,13 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "ui.agent.collections": "Amafaranga wakiriye ku bakiriya",
 
-    "ui.agent.previousOutstanding": "Amafaranga yatwarwa avuye mu cyumweru gishize",
+    "ui.agent.previousOutstanding": "Amafaranga atishyuwe mu cyumweru gishize",
 
     "ui.agent.thisWeekExpected": "Amafaranga ategerejwe muri iki cyumweru",
 
     "ui.agent.moneyToSubmit": "Amafaranga yose ugomba kohereza",
 
-    "ui.agent.remainingDeclared": "Amafaranga akiri ugomba kohereza (watangajwe)",
+    "ui.agent.remainingDeclared": "Amafaranga aroherezwa mukindi cyumweru bitewenuko atishyuwe",
 
     "ui.agent.remainingVerified": "Amafaranga akiri ugomba kohereza (yemejwe)",
 
