@@ -796,11 +796,57 @@ a:hover { color: var(--bs-link-hover-color); }
   0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
   40% { transform: translateY(-3px); opacity: 1; }
 }
+.agent-item.is-saving {
+  border-color: var(--brand-500);
+  box-shadow: inset 3px 0 0 var(--brand-700);
+}
+.agent-saving-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--brand-700);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.agent-saving-orbit {
+  position: relative;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 1.1rem;
+}
+.agent-saving-orbit i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--brand-700);
+  animation: agent-spin 0.85s linear infinite;
+}
+.agent-saving-orbit i:last-child {
+  inset: 0.22rem;
+  border-top-color: var(--brand-500);
+  animation-direction: reverse;
+  animation-duration: 1.15s;
+}
+.agent-btn-spinner {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.35rem;
+  vertical-align: -0.1rem;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  animation: agent-spin 0.8s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .agent-week-spinner::before,
   .agent-week-spinner::after,
   .agent-week-spinner-core,
-  .agent-week-dots i { animation: none; }
+  .agent-week-dots i,
+  .agent-saving-orbit i,
+  .agent-btn-spinner { animation: none; }
 }
 
 @media (max-width: 575.98px) {

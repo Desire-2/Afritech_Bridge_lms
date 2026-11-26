@@ -71,6 +71,15 @@ function evidenceProblem(file: File | null, t: (key: string) => string): string 
   return '';
 }
 
+function CostSavingStatus({ label }: { label: string }) {
+  return (
+    <span className="agent-saving-status" role="status" aria-live="polite">
+      <span className="agent-saving-orbit" aria-hidden="true"><i /><i /></span>
+      <span>{label}</span>
+    </span>
+  );
+}
+
 export default function AgentWeeklyFlow({
   initialReportId,
   focusDeclaration = false,
@@ -92,6 +101,7 @@ export default function AgentWeeklyFlow({
   const [editingCost, setEditingCost] = useState<number | null>(null);
   const [costForms, setCostForms] = useState<Record<number, CostForm>>({});
   const [costErrors, setCostErrors] = useState<Record<number, string>>({});
+  const [savingCostId, setSavingCostId] = useState<number | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferForm, setTransferForm] = useState<TransferForm>({
     provider: 'momo', reference: '', amount: '', submitted_at: '',
@@ -279,6 +289,7 @@ export default function AgentWeeklyFlow({
       return;
     }
     savingCost.current = true;
+    setSavingCostId(row.transaction_id);
     setBusy(true);
     setActionError('');
     setNotice('');
@@ -325,6 +336,7 @@ export default function AgentWeeklyFlow({
       setCostError(row.transaction_id, weeklyErrorMessage(e, t));
     } finally {
       savingCost.current = false;
+      setSavingCostId(null);
       setBusy(false);
     }
   }
@@ -621,13 +633,14 @@ export default function AgentWeeklyFlow({
                   const costError = costErrors[row.transaction_id];
                   const errorId = `cost-error-${row.transaction_id}`;
                   const open = editingCost === row.transaction_id && editable;
+                  const rowSaving = savingCostId === row.transaction_id;
                   const credit = moneyNumber(row.verified_amount) > 0;
                   const verified = credit && row.verification_status === 'verified';
                   const autoApplied = credit && !!row.auto_personal
                     && row.verification_status === 'pending';
                   return (
-                    <div className={`agent-item ${costError ? 'has-error' : ''}`}
-                      key={row.transaction_id}>
+                    <div className={`agent-item ${costError ? 'has-error' : ''} ${rowSaving ? 'is-saving' : ''}`}
+                      key={row.transaction_id} aria-busy={rowSaving}>
                       <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
                         <div className="min-w-0">
                           <div className="fw-semibold small">{row.transaction_number}</div>
@@ -663,7 +676,9 @@ export default function AgentWeeklyFlow({
                           <span className="agent-answer">
                             {t(`ui.agent.costSource.${form.source}`)}
                           </span>
-                          {editable && (
+                          {rowSaving ? (
+                            <CostSavingStatus label={t('ui.agent.costSaving')} />
+                          ) : editable ? (
                             <button type="button" className="btn btn-outline-secondary btn-sm agent-touch"
                               onClick={() => {
                                 clearCostError(row.transaction_id);
@@ -671,7 +686,7 @@ export default function AgentWeeklyFlow({
                               }}>
                               {row.claim_id ? t('ui.agent.changeAnswer') : t('ui.agent.saveAnswer')}
                             </button>
-                          )}
+                          ) : null}
                         </div>
                       ) : (
                         <div className="agent-subform mt-3">
@@ -719,15 +734,22 @@ export default function AgentWeeklyFlow({
                                 className="btn btn-sm btn-outline-danger agent-touch"
                                 disabled={busy}
                                 onClick={() => void saveCost(row, form.source)}>
+                                {rowSaving && <span className="agent-btn-spinner" aria-hidden="true" />}
                                 {t('ui.agent.costErrorRetry')}
                               </button>
                             </div>
                           )}
 
+                          {rowSaving && (
+                            <div className="mt-3">
+                              <CostSavingStatus label={t('ui.agent.costSaving')} />
+                            </div>
+                          )}
                           <div className="d-flex flex-wrap gap-2 mt-3">
                             {form.source !== 'personal' && (
                               <button type="button" className="btn btn-primary agent-touch"
-                                disabled={busy} onClick={() => saveCost(row)}>
+                                disabled={busy} onClick={() => void saveCost(row)}>
+                                {rowSaving && <span className="agent-btn-spinner" aria-hidden="true" />}
                                 {t('ui.agent.saveAnswer')}
                               </button>
                             )}
