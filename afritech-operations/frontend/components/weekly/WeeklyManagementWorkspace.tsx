@@ -27,9 +27,17 @@ const REVIEW_TABS: ReviewTab[] = ['overview', 'officialCosts', 'momo', 'closings
 type ViewMode = 'review' | 'all';
 type Flags = { shortage: boolean; pending: boolean; unverified: boolean; missing: boolean };
 const EMPTY_FLAGS: Flags = { shortage: false, pending: false, unverified: false, missing: false };
+// The week selector needs to distinguish "no week chosen yet" from an explicit
+// "All weeks" choice. An empty string means the former; this sentinel means the
+// latter. Only the sentinel is translated to an omitted `week_start` API param.
+const ALL_WEEKS = 'all';
 
 function asBool(value: string | null): boolean {
   return value === '1' || value === 'true';
+}
+
+function apiWeekStart(value: string): string | undefined {
+  return value && value !== ALL_WEEKS ? value : undefined;
 }
 
 export default function WeeklyManagementWorkspace() {
@@ -66,7 +74,7 @@ export default function WeeklyManagementWorkspace() {
     const requestedTab = params.get('tab');
     const requestedReport = Number(params.get('report'));
     setView(requestedView === 'all' && canReview ? 'all' : 'review');
-    setWeekStart(params.get('week') || '');
+    setWeekStart(params.get('week') === ALL_WEEKS ? ALL_WEEKS : params.get('week') || '');
     setBranchId(manager ? '' : params.get('branch') || '');
     setStatus(params.get('status') || '');
     setSearch(params.get('q') || '');
@@ -85,8 +93,9 @@ export default function WeeklyManagementWorkspace() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!ready || !weekStart && weeks.data?.current?.week_start) {
-      if (weeks.data?.current?.week_start) setWeekStart(weeks.data.current.week_start);
+    // Default only when no explicit week (including "All weeks") was chosen.
+    if (ready && !weekStart && weeks.data?.current?.week_start) {
+      setWeekStart(weeks.data.current.week_start);
     }
   }, [ready, weeks.data, weekStart]);
 
@@ -111,7 +120,7 @@ export default function WeeklyManagementWorkspace() {
   }, [ready, view, weekStart, branchId, status, search, flags, page, reportId, reportTab, manager, pathname]);
 
   const queueParams = useMemo(() => ({
-    week_start: weekStart || undefined,
+    week_start: apiWeekStart(weekStart),
     branch_id: !manager && branchId ? Number(branchId) : undefined,
     status: status || undefined,
     search: search.trim() || undefined,
@@ -128,7 +137,7 @@ export default function WeeklyManagementWorkspace() {
     queueParams);
   const all = useFetch<any>(view === 'all' ? '/api/weekly-reports' : '',
     [view, weekStart, status, page],
-    { week_start: weekStart || undefined, status: status || undefined, page, per_page: 20 });
+    { week_start: apiWeekStart(weekStart), status: status || undefined, page, per_page: 20 });
 
   const branchOptions: any[] = manager ? [] : branches.data?.branches || [];
 
@@ -150,7 +159,8 @@ export default function WeeklyManagementWorkspace() {
   const metrics = queue.data?.metrics || {};
 
   const activeFlags = (Object.keys(flags) as (keyof Flags)[]).filter((key) => flags[key]);
-  const hasFilters = !!(weekStart || branchId || status || search.trim() || activeFlags.length);
+  // "All weeks" is the absence of a week restriction, not an active filter.
+  const hasFilters = !!(apiWeekStart(weekStart) || branchId || status || search.trim() || activeFlags.length);
 
   const clearFilters = useCallback(() => {
     setWeekStart(weeks.data?.current?.week_start || '');
@@ -169,9 +179,14 @@ export default function WeeklyManagementWorkspace() {
   async function generate() {
     setBusy(true);
     try {
+      // Generating a report while "All weeks" is selected still targets the
+      // current week; the queue filter must never become a generation target.
+      const generateWeek = weekStart === ALL_WEEKS
+        ? weeks.data?.current?.week_start
+        : apiWeekStart(weekStart);
       await api('/api/weekly-reports/generate', {
         method: 'POST',
-        body: { week_start: weekStart || undefined },
+        body: { week_start: generateWeek },
       });
       toast.success(t('ui.label.generated'));
       queue.reload();
@@ -266,7 +281,7 @@ export default function WeeklyManagementWorkspace() {
             <Field label={t('period.select')}>
               <SelectInput className="form-select-sm" value={weekStart}
                 onChange={(e) => { setWeekStart(e.target.value); setPage(1); }}>
-                <option value="">{t('ui.label.allWeeks')}</option>
+                <option value={ALL_WEEKS}>{t('ui.label.allWeeks')}</option>
                 {(weeks.data?.weeks || []).map((w: WeekOption, index: number) => (
                   <option key={w.week_start} value={w.week_start}>{weekOptionLabel(w, t, index)}</option>
                 ))}
