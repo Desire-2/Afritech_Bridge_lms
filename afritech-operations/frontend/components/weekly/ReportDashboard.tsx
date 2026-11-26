@@ -18,6 +18,11 @@ import {
 } from './weekly-shared';
 
 const DRAFT_STATUSES = ['draft', 'ready_for_submission', 'late', 'returned_for_correction'];
+// Keep these mirrors of the backend state machine in one place so review forms
+// are never offered for a transition the API will refuse.
+const EDITABLE_STATUSES = DRAFT_STATUSES;
+const DECISION_STATUSES = ['submitted', 'under_financial_review'];
+const ADJUSTABLE_STATUSES = ['submitted', 'under_financial_review', 'returned_for_correction'];
 const ADJUSTMENT_KINDS = [
   'authorized_receipt', 'provider_payment', 'collection_expense', 'authorized_refund',
   'other_outflow', 'commission_retained', 'outstanding_correction', 'outstanding_waiver',
@@ -98,6 +103,9 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const editable = isOwner && canSubmit && DRAFT_STATUSES.includes(report?.status);
   const locked = ['submitted', 'under_financial_review', 'approved', 'rejected'].includes(report?.status);
   const reviewable = ['submitted', 'under_financial_review', 'returned_for_correction'].includes(report?.status);
+  const backendEditable = EDITABLE_STATUSES.includes(report?.status);
+  const canDecide = canReview && DECISION_STATUSES.includes(report?.status);
+  const canAdjustReport = canAdjust && ADJUSTABLE_STATUSES.includes(report?.status);
   const authorized = !!(report?.override_reason && report?.override_authorized_by);
 
   const tx = useFetch<any>(
@@ -207,26 +215,17 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
       setActionError(t('ui.error.required'));
       return;
     }
-    const shortage = Number(c.shortage_amount || 0);
+    // The backend owns the submission rules. A declared shortage needs a
+    // reason and explanation; evidence and a resolution date are optional
+    // extras, so the browser must not block an otherwise valid submission.
+    const askingShortage = Number(
+      c.declared_shortage_amount ?? c.shortage_amount ?? 0);
     const explained = !!shortageForm.shortage_reason_category && !!shortageForm.shortage_explanation?.trim();
-    const evidenced = !!report?.shortage_evidence_path || !!shortageEvidence
-      || policy?.shortage_requires_evidence === false;
-    const dated = !!shortageForm.expected_resolution_date;
-    if (shortage > 0 && !authorized) {
-      if (!explained) {
-        setActionError(shortageForm.override_reason?.trim()
-          ? t('error.unexplained_shortage')
-          : t('error.shortage_explanation'));
-        return;
-      }
-      if (!evidenced) {
-        setActionError(t('error.shortage_evidence'));
-        return;
-      }
-      if (!dated) {
-        setActionError(t('error.shortage_resolution'));
-        return;
-      }
+    if (askingShortage > 0 && !authorized && !explained) {
+      setActionError(shortageForm.override_reason?.trim()
+        ? t('error.unexplained_shortage')
+        : t('error.shortage_explanation'));
+      return;
     }
     const data = new FormData();
     data.set('shortage_reason_category', shortageForm.shortage_reason_category || '');
@@ -413,20 +412,24 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   }
 
   async function reviewAction(action: 'request_correction' | 'approve' | 'reject') {
-    if ((action === 'request_correction' || action === 'reject') && !reviewReason.trim()) {
+    if (!canDecide) return;
+    const reason = reviewReason.trim();
+    if ((action === 'request_correction' || action === 'reject') && !reason) {
       setActionError(t('ui.error.required'));
       return;
     }
     const result = await run(`/api/weekly-reports/${reportId}/review`, {
       method: 'POST',
-      body: { action, reason: reviewReason || undefined },
+      // `reason` drives the transition; `report_note` is the report-level note
+      // and is no longer polluted by per-item verification notes.
+      body: { action, reason: reason || undefined, report_note: reason || undefined },
     }, 'ui.label.reviewRecorded');
     if (result) setReviewReason('');
   }
 
   async function addAdjustment(e: React.FormEvent) {
     e.preventDefault();
-    if (!canAdjust) return;
+    if (!canAdjustReport) return;
     if ((adjustForm.reason || '').trim().length < 5) {
       setActionError(t('ui.error.required'));
       return;
@@ -446,7 +449,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
 
   async function authorizeOverride(e: React.FormEvent) {
     e.preventDefault();
-    if (!canAdjust || !overrideReason.trim()) {
+    if (!canAdjust || !backendEditable || !overrideReason.trim()) {
       setActionError(t('ui.error.required'));
       return;
     }
@@ -456,7 +459,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
 
   async function authorizeMissing(e: React.FormEvent) {
     e.preventDefault();
-    if (!canAdjust || !missingOverrideReason.trim()) {
+    if (!canAdjust || !backendEditable || !missingOverrideReason.trim()) {
       setActionError(t('ui.error.required'));
       return;
     }
@@ -473,9 +476,11 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   }
 
   async function downloadMoMoEvidence(m: any) {
-    const path = m.evidence_path?.startsWith('/') ? m.evidence_path : `/${m.evidence_path || ''}`;
+    // Never download the raw upload path: the protected endpoint re-checks
+    // report access and writes an audit entry.
     try {
-      await downloadFile(path, m.evidence_name || 'evidence');
+      await downloadFile(`/api/weekly-reports/${reportId}/momo/${m.id}/evidence`,
+        m.evidence_name || 'evidence');
     } catch (e: any) {
       setActionError(weeklyErrorMessage(e, t));
     }
@@ -827,7 +832,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
             </>
           )}
         </Modal>
-        {canAdjust && locked && (
+        {canAdjust && backendEditable && missing.length > 0 && (
           <div className="card mt-3">
             <div className="card-header py-2 small fw-semibold">{t('ui.label.missingOverride')}</div>
             <div className="card-body">
@@ -1253,7 +1258,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                   <th>{t('field.confirmation')}</th>
                   <th>{t('field.evidence')}</th>
                   <th>{t('field.verification')}</th>
-                  {canReview && <th>{t('ui.label.actions')}</th>}
+                  {canReview && reviewable && <th>{t('ui.label.actions')}</th>}
                   {editable && <th>{t('ui.label.actions')}</th>}
                 </tr>
               </thead>
@@ -1277,7 +1282,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                         : t('ui.label.none')}
                     </td>
                     <td><WeeklyBadge status={m.verification_status} /></td>
-                    {canReview && (
+                    {canReview && reviewable && (
                       <td className="small">
                         <TextInput aria-label={t('field.verification')} className="form-control-sm mb-1"
                           value={momoNote[m.id] || ''} placeholder={t('field.notes')}
@@ -1443,7 +1448,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
             )}
           </div>
         </div>
-        {canAdjust && (
+        {canAdjust && backendEditable && (
           <div className="card mt-3">
             <div className="card-header py-2 small fw-semibold">{t('ui.label.overrideAuthorized')}</div>
             <div className="card-body">
@@ -1483,7 +1488,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
           </div>
         )}
         <div className="row g-3">
-          {canReview && (
+          {canDecide && (
             <div className="col-lg-6">
               <div className="card h-100">
                 <div className="card-header py-2 small fw-semibold">{t('section.review')}</div>
@@ -1504,7 +1509,7 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
               </div>
             </div>
           )}
-          {canAdjust && (
+          {canAdjustReport && (
             <div className="col-lg-6">
               <div className="card h-100">
                 <div className="card-header py-2 small fw-semibold">{t('action.adjust')}</div>

@@ -226,6 +226,78 @@ class WeeklyReportService:
         prior = self._latest_approved_before(employee_id, week_start)
         return _dec(prior.closing_outstanding if prior else 0)
 
+    # Weekly reports are generated on Sunday, before the previous week can be
+    # approved. A report that was generated while its predecessor was still in
+    # review must be reconciled when that predecessor is finally approved.
+    # `returned_for_correction` keeps a frozen snapshot, so its opening cannot
+    # be recalculated without breaking that freeze; it is reconciled only when
+    # the agent starts a fresh report for the week.
+    _EDITABLE_FORWARD_STATUSES = ('draft', 'ready_for_submission', 'late')
+
+    def _reconcile_forward(self, report, actor):
+        """Carry an approved shortage into the next generated report.
+
+        Only reports that are still editable are changed: submitted, under
+        review, approved and rejected reports keep their frozen snapshot. The
+        allocation row is kept in sync so the statement and audit history agree
+        with the new opening balance.
+        """
+        balance = _dec(report.closing_outstanding or 0)
+        target = (WeeklyReport.query
+                  .filter_by(employee_id=report.employee_id)
+                  .filter(WeeklyReport.week_start > report.week_start)
+                  .filter(WeeklyReport.status.in_(self._EDITABLE_FORWARD_STATUSES))
+                  .order_by(WeeklyReport.week_start.asc())
+                  .first())
+        if target is None:
+            return None
+
+        previous_opening = _dec(target.opening_outstanding or 0)
+        allocation = next((a for a in target.allocations
+                           if a.kind == 'carry_forward'), None)
+        if previous_opening == balance and allocation is not None \
+                and _dec(allocation.amount) == balance \
+                and allocation.source_report_id == report.id:
+            return target  # Already reconciled; keep the operation idempotent.
+
+        target.opening_outstanding = balance
+        self.refresh(target, actor)
+        if allocation is None:
+            allocation = OutstandingAllocation(
+                employee_id=target.employee_id,
+                report_id=target.id,
+                source_report_id=report.id,
+                reference_key=f'carry:{report.id}:{target.id}',
+                kind='carry_forward',
+                actor_id=actor.id if actor else None,
+            )
+            db.session.add(allocation)
+        else:
+            # Generation created this row from an older approved report. Move
+            # it to the authoritative source and record the correction; the
+            # report itself was still editable, so nothing is silently
+            # rewritten on a locked report.
+            audit('weekly_carry_forward_reconciled', 'weekly_outstanding_allocation',
+                  allocation.id,
+                  previous_value={'source_report_id': allocation.source_report_id,
+                                  'amount': _str(_dec(allocation.amount))},
+                  new_value={'source_report_id': report.id, 'amount': _str(balance)},
+                  user=actor)
+            allocation.source_report_id = report.id
+            allocation.reference_key = f'carry:{report.id}:{target.id}'
+            if actor is not None:
+                allocation.actor_id = actor.id
+        allocation.amount = balance
+        allocation.reason = (
+            'Opening outstanding carried from the previous approved weekly '
+            f'report ({report.period_label}).')
+        audit('weekly_report_carry_forward', 'weekly_report', target.id,
+              previous_value={'opening_outstanding': _str(previous_opening)},
+              new_value={'opening_outstanding': _str(balance),
+                         'source_report_id': report.id},
+              user=actor, reason=report.period_label)
+        return target
+
     def generate_for_all_agents(self, reference_date=None, actor=None, employee_ids=None):
         week_start, _ = week_bounds(reference_date or date.today(), get_policy())
         ids = service_agent_employee_ids()
@@ -1512,17 +1584,25 @@ class WeeklyReportService:
         kind = data.get('kind')
         if kind not in ADJUSTMENT_KINDS:
             raise WeeklyReportError('Invalid adjustment kind',
-                                    'weekly_report.invalid_adjustment', 400)
+                                    'weekly_report.invalid_adjustment', 400,
+                                    field='kind')
         reason = (data.get('reason') or '').strip()
         if len(reason) < 5:
             raise WeeklyReportError('A documented adjustment reason is required',
-                                    'weekly_report.reason_required', 400)
+                                    'weekly_report.reason_required', 400,
+                                    field='reason')
         try:
             original = _dec(data.get('original_amount'))
             adjusted = _dec(data.get('adjusted_amount'))
         except Exception:
             raise WeeklyReportError('Invalid adjustment amount',
-                                    'weekly_report.invalid_amount', 400)
+                                    'weekly_report.invalid_amount', 400,
+                                    field='original_amount')
+        if original < 0 or adjusted < 0:
+            raise WeeklyReportError(
+                'Adjustment amounts cannot be negative',
+                'weekly_report.invalid_amount', 400,
+                field='original_amount' if original < 0 else 'adjusted_amount')
         adjustment = WeeklyReportAdjustment(
             report_id=report.id, kind=kind, label=data.get('label'),
             original_amount=original, adjusted_amount=adjusted,
@@ -1600,15 +1680,20 @@ class WeeklyReportService:
             audit('weekly_report_approved', 'weekly_report', report.id,
                   new_value={'closing_outstanding': _str(report.closing_outstanding)},
                   user=actor, reason=reason)
+            # Approval is the moment the shortage becomes authoritative. Push
+            # it into an already-generated next week instead of waiting for
+            # that week's generation, which may have happened earlier.
+            self._reconcile_forward(report, actor)
             if report.employee and report.employee.user_id:
                 from .notifications import notify
                 notify(report.employee.user_id, 'weekly_report_approved',
                        bilingual('notification.approved', period=report.period_label),
                        related_type='weekly_report', related_id=report.id)
         elif decision == 'reject':
-            if not reason:
+            if not (reason or '').strip():
                 raise WeeklyReportError('A rejection reason is required',
-                                        'weekly_report.reason_required', 400)
+                                        'weekly_report.reason_required', 400,
+                                        field='review_reason')
             self.transition(report, 'rejected', actor, reason=reason)
             if report.employee and report.employee.user_id:
                 from .notifications import notify

@@ -252,7 +252,11 @@ timestamp, IP and user agent. Submission locks the source snapshot, increments
 `current_version`, and links the expenses used. A returned report can be edited
 and resubmitted, creating another audited version.
 
-Review actions (`POST /api/weekly-reports/{id}/review`):
+Review actions (`POST /api/weekly-reports/{id}/review`) require `action`, plus
+`momo_id` for transfer decisions, `claim_id` for cost decisions and a nonblank
+`reason` for correction/rejection. `report_note` sets the report-level reviewer
+note; `note` stays with the individual transfer or cost claim being verified.
+Invalid or missing identifiers return a field-located 400/404 error.
 
 - `verify_momo` / `reject_momo` — moves `submitted` to `under_financial_review`,
   records verifier, note and timestamp; only verified transfers count as money
@@ -265,7 +269,10 @@ Review actions (`POST /api/weekly-reports/{id}/review`):
 - `request_correction` — returns the report with a mandatory reason.
 - `approve` — confirms pending guided `auto_personal` claims, computes the final
   carry-forward and writes the approval audit. Their amount is unchanged
-  because it was already deducted when the agent answered.
+  because it was already deducted when the agent answered. Approval also
+  reconciles the already-generated next report (if it is still a draft) so a
+  shortage is carried even when that week was generated before review finished.
+  Submitted/under-review/approved reports keep their frozen snapshot.
 - `reject` — requires a reason.
 
 Adjustments (`POST /api/weekly-reports/{id}/adjustments`) always store kind,
@@ -328,6 +335,7 @@ Base path: `/api/weekly-reports`
 | GET | `/{id}/official-cost-payments/{claim_id}/evidence` | Download claim evidence (audited) |
 | POST | `/{id}/momo` | Add transfer with optional evidence |
 | DELETE | `/{id}/momo/{submission_id}` | Remove transfer while editable |
+| GET | `/{id}/momo/{submission_id}/evidence` | Download transfer evidence (audited, report-scoped) |
 | GET | `/{id}/evidence` | Download shortage evidence (audited) |
 | POST | `/{id}/override` | Authorise unexplained shortage |
 | POST | `/{id}/missing-closings/override` | Acknowledge missing closings |

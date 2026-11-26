@@ -1284,6 +1284,78 @@ class TestAdjustmentsCarryForward:
         assert OutstandingAllocation.query.filter_by(report_id=report.id).count() == 2
 
 
+class TestCarryForwardReconciliation:
+    """A shortage must reach the next week even if that week was generated first."""
+
+    def _shortage_report(self, client, admin_hdr, agent_hdr):
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)  # expected remittance = 600
+        db.session.commit()
+        submitted = _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': 200,
+            'submission_funding_source': 'agent_phone',
+        })
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+        assert svc.calculation_view(report)['components'][
+            'closing_outstanding'] == '600.00'
+        return report
+
+    def test_approving_after_next_generation_carries_shortage(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        prior = self._shortage_report(client, admin_hdr, agent_hdr)
+        following = _generate(client, admin_hdr, _agent(),
+                              prior.week_start + timedelta(days=7))
+        assert following.opening_outstanding == 0
+
+        approved = _review(client, accountant_hdr, prior.id, 'approve')
+        assert approved.status_code == 200, approved.get_data(as_text=True)
+
+        following = WeeklyReport.query.get(following.id)
+        assert following.opening_outstanding == 600
+        assert _components(client, admin_hdr, following.id)[
+            'opening_outstanding'] == '600.00'
+        carry = [a for a in following.allocations if a.kind == 'carry_forward']
+        assert len(carry) == 1
+        assert carry[0].source_report_id == prior.id
+        assert carry[0].amount == 600
+
+        # A second reconciliation must not duplicate rows or change the amount.
+        svc._reconcile_forward(WeeklyReport.query.get(prior.id),
+                               _user('accountant@afritech.dev'))
+        db.session.commit()
+        assert OutstandingAllocation.query.filter_by(
+            report_id=following.id, kind='carry_forward').count() == 1
+        assert WeeklyReport.query.get(following.id).opening_outstanding == 600
+
+    def test_report_generated_after_approval_uses_carried_shortage(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        prior = self._shortage_report(client, admin_hdr, agent_hdr)
+        assert _review(client, accountant_hdr, prior.id, 'approve').status_code == 200
+        following = _generate(client, admin_hdr, _agent(),
+                              prior.week_start + timedelta(days=7))
+        assert following.opening_outstanding == 600
+        carry = [a for a in following.allocations if a.kind == 'carry_forward']
+        assert len(carry) == 1 and carry[0].source_report_id == prior.id
+        assert carry[0].amount == 600
+
+    def test_locked_following_report_is_not_rewritten(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        prior = self._shortage_report(client, admin_hdr, agent_hdr)
+        following = _generate(client, admin_hdr, _agent(),
+                              prior.week_start + timedelta(days=7))
+        assert _submit(client, agent_hdr, following.id).status_code == 200
+        frozen_snapshot = WeeklyReport.query.get(following.id).snapshot
+
+        assert _review(client, accountant_hdr, prior.id, 'approve').status_code == 200
+        following = WeeklyReport.query.get(following.id)
+        assert following.opening_outstanding == 0
+        assert following.snapshot == frozen_snapshot
+
+
 class TestRBACSecurity:
     def test_agent_is_scoped_to_own_report(self, client, admin_hdr, agent_hdr):
         mine = _generate(client, admin_hdr, _agent())
@@ -1589,7 +1661,7 @@ class TestExports:
                            note='Receipt matched <receipt.pdf>')
         assert reviewed.status_code == 200, reviewed.get_data(as_text=True)
 
-        for lang, expected in (('en', 'Yes (Partial)'), ('rw', 'Yego (Igice)')):
+        for lang, expected in (('en', 'Yes (Partial)'), ('rw', 'Yego (Igice gusa)')):
             response = client.get(f'/api/weekly-reports/{report.id}/export?format=xlsx&lang={lang}',
                                   headers=accountant_hdr)
             assert response.status_code == 200, response.get_data(as_text=True)
@@ -1990,7 +2062,8 @@ class TestReviewFindings:
                                             related_type='weekly_report',
                                             related_id=report.id).first()
         assert note is not None
-        assert 'Verified' in note.message and 'Yemejwe' in note.message
+        # Kinyarwanda now uses 'Byagenzuwe' (verified), not 'Yemejwe' (approved).
+        assert 'Verified' in note.message and 'Byagenzuwe' in note.message
 
     def test_short_phone_numbers_are_masked(self):
         assert MoMoSubmission.mask_phone('123') == '***'
@@ -2329,13 +2402,14 @@ class TestGuidedAgentFlow:
             assert t(f'reason.{reason}', 'en') != f'reason.{reason}'
             assert t(f'reason.{reason}', 'rw') != f'reason.{reason}'
         assert t('reason.customer_not_paid', 'en') == 'Customer has not paid fully'
-        assert t('reason.customer_not_paid', 'rw') == 'Umukiriya ntabwo yishyuye byuzuye'
+        assert t('reason.customer_not_paid', 'rw') == \
+            'Umukiriya ntiyishyuye amafaranga yose'
         assert t('error.shortage_explanation', 'rw') == \
-            'Impamvu n’ibisobanuro bivuga make birakenewe.'
+            'Hagomba gutangwa impamvu yemewe n’ibisobanuro bigufi.'
         assert t('error.surplus_explanation', 'en') == \
             'Please confirm or explain the extra amount.'
         assert t('error.surplus_explanation', 'rw') == \
-            'Emeza cyangwa usobanure amafaranga y’inyongera.'
+            'Emeza cyangwa usobanure impamvu hari amafaranga arenga ateganyijwe.'
 
 
 class TestFieldLocatedErrors:
@@ -2413,3 +2487,98 @@ class TestFieldLocatedErrors:
         body = duplicate.get_json()
         assert body['field'] == 'payment_source'
         assert body['details']['transaction_id'] == txn.id
+
+    def test_adjustment_errors_name_the_field(self, client, admin_hdr, agent_hdr,
+                                              accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        url = f'/api/weekly-reports/{report.id}/adjustments'
+        cases = [
+            ({'kind': 'nope', 'reason': 'A valid reason'},
+             'weekly_report.invalid_adjustment', 'kind'),
+            ({'kind': 'authorized_receipt', 'reason': 'x'},
+             'weekly_report.reason_required', 'reason'),
+            ({'kind': 'authorized_receipt', 'reason': 'A valid reason',
+              'original_amount': -1, 'adjusted_amount': 0},
+             'weekly_report.invalid_amount', 'original_amount'),
+        ]
+        for payload, code, field in cases:
+            response = client.post(url, headers=accountant_hdr, json=payload)
+            assert response.status_code == 400
+            body = response.get_json()
+            assert body['code'] == code and body['field'] == field
+
+
+class TestReviewActionWiring:
+    """Review endpoints require the right fields and keep notes separate."""
+
+    def test_child_note_does_not_overwrite_report_note(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
+        report = _generate(client, admin_hdr)
+        sub = _momo(client, agent_hdr, report.id)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+
+        first = _review(client, accountant_hdr, report.id, 'verify_momo',
+                        momo_id=sub['id'], note='receipt checked',
+                        report_note='finance overview')
+        assert first.status_code == 200, first.get_data(as_text=True)
+        assert WeeklyReport.query.get(report.id).reviewer_note == 'finance overview'
+        assert MoMoSubmission.query.get(sub['id']).verification_note == 'receipt checked'
+
+        # A later per-item note must never silently rewrite the report note.
+        second = _review(client, accountant_hdr, report.id, 'verify_momo',
+                         momo_id=sub['id'], note='second look')
+        assert second.status_code == 200, second.get_data(as_text=True)
+        assert WeeklyReport.query.get(report.id).reviewer_note == 'finance overview'
+        assert MoMoSubmission.query.get(sub['id']).verification_note == 'second look'
+        assert AuditLog.query.filter_by(
+            action='weekly_report_reviewer_note_updated',
+            entity='weekly_report', entity_id=str(report.id)).count() == 1
+
+    def test_review_actions_name_missing_fields(
+            self, client, admin_hdr, agent_hdr, accountant_hdr, no_email):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+
+        for action, field in (('verify_momo', 'momo_id'),
+                              ('reject_momo', 'momo_id'),
+                              ('verify_cost_payment', 'claim_id'),
+                              ('reject_cost_payment', 'claim_id'),
+                              ('request_correction', 'review_reason'),
+                              ('reject', 'review_reason')):
+            response = _review(client, accountant_hdr, report.id, action,
+                               reason='   ')
+            assert response.status_code == 400, response.get_data(as_text=True)
+            assert response.get_json()['field'] == field
+        assert WeeklyReport.query.get(report.id).status == 'submitted'
+
+    def test_momo_evidence_download_is_protected_and_audited(
+            self, client, admin_hdr, agent_hdr, manager_hdr, tmp_path, monkeypatch, no_email):
+        monkeypatch.setitem(client.application.config, 'UPLOAD_FOLDER', str(tmp_path))
+        report = _generate(client, admin_hdr)
+        response = client.post(f'/api/weekly-reports/{report.id}/momo',
+                               headers=agent_hdr,
+                               data={'provider': 'momo', 'reference': 'WKM-EVIDENCE',
+                                     'amount': '50',
+                                     'evidence': (io.BytesIO(b'%PDF-1.4\nmomo proof'),
+                                                  'momo-proof.pdf')},
+                               content_type='multipart/form-data')
+        assert response.status_code == 201, response.get_data(as_text=True)
+        sub_id = response.get_json()['submission']['id']
+        url = f'/api/weekly-reports/{report.id}/momo/{sub_id}/evidence'
+        assert client.get(url, headers=agent_hdr).data.startswith(b'%PDF')
+        assert client.get(url, headers=manager_hdr).status_code == 403
+        assert AuditLog.query.filter_by(
+            action='weekly_momo_evidence_downloaded',
+            entity='weekly_momo_submission', entity_id=str(sub_id)).count() == 1
+
+    def test_export_writes_audit(
+            self, client, admin_hdr, accountant_hdr, no_email):
+        report = _generate(client, admin_hdr)
+        response = client.get(f'/api/weekly-reports/{report.id}/export?format=pdf&lang=en',
+                              headers=accountant_hdr)
+        assert response.status_code == 200
+        log = AuditLog.query.filter_by(action='weekly_report_exported',
+                                       entity='weekly_report',
+                                       entity_id=str(report.id)).first()
+        assert log is not None and 'pdf' in log.new_value

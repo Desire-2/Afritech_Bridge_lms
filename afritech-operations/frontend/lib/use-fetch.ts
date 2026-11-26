@@ -6,6 +6,9 @@ import { api } from './api';
 export function useFetch<T = any>(path: string, deps: any[] = [], params?: Record<string, any>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
+  // Keep the structured API payload alongside the message so callers can use
+  // `field`/`details` without changing the existing string contract.
+  const [errorData, setErrorData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [fetchKey, setFetchKey] = useState(0);
   const paramsRef = useRef(params);
@@ -19,22 +22,28 @@ export function useFetch<T = any>(path: string, deps: any[] = [], params?: Recor
       setData(null);
       setLoading(false);
       setError('');
+      setErrorData(null);
       return;
     }
     setLoading(true);
     setError('');
+    setErrorData(null);
     api<T>(path, { params: paramsRef.current })
       .then((d) => {
         if (!cancelled) { setData(d); setLoading(false); }
       })
       .catch((e: any) => {
-        if (!cancelled) { setError(e.message); setLoading(false); }
+        if (!cancelled) {
+          setError(e.message);
+          setErrorData(e?.data || null);
+          setLoading(false);
+        }
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, fetchKey, ...deps]);
 
-  return { data, error, loading, reload, setData };
+  return { data, error, errorData, loading, reload, setData };
 }
 
 export function useMemoParams(params: Record<string, any> | undefined) {

@@ -511,6 +511,28 @@ def download_cost_payment_evidence(report_id, claim_id):
                      download_name=claim.evidence_name or 'evidence')
 
 
+@bp.get('/<int:report_id>/momo/<int:submission_id>/evidence')
+@require_permission('weekly_reports.view')
+def download_momo_evidence(report_id, submission_id):
+    """Protected MoMo evidence: the same RBAC/audit rules as cost evidence."""
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    submission = MoMoSubmission.query.filter_by(
+        id=submission_id, report_id=report.id).first()
+    if not submission or not submission.evidence_path:
+        return json_error('No money submission evidence was uploaded', 404)
+    path = os.path.join(current_app.config['UPLOAD_FOLDER'],
+                        submission.evidence_path.replace('/uploads/', ''))
+    if not os.path.isfile(path):
+        return json_error('Evidence file is missing', 410)
+    audit('weekly_momo_evidence_downloaded', 'weekly_momo_submission',
+          submission.id, new_value={'file': submission.evidence_name}, user=user)
+    return send_file(path, as_attachment=True,
+                     download_name=submission.evidence_name or 'evidence')
+
+
 @bp.post('/<int:report_id>/momo')
 @require_permission('weekly_reports.submit')
 def add_momo(report_id):
@@ -694,27 +716,34 @@ def review(report_id):
         return err
     data = parse_json()
     action = data.get('action')
-    note = data.get('note')
-    if note and note != report.reviewer_note:
-        previous_note = report.reviewer_note
-        report.reviewer_note = str(note)
-        audit('weekly_report_reviewer_note_updated', 'weekly_report', report.id,
-              previous_value={'reviewer_note': previous_note},
-              new_value={'reviewer_note': report.reviewer_note}, user=user)
+    # `note` belongs to the child being verified (MoMo/cost claim). A report
+    # note must be sent explicitly as `report_note` so a per-item decision never
+    # silently overwrites the report-level reviewer note.
+    report_note = data.get('report_note')
     try:
         if action in ('verify_momo', 'reject_momo'):
+            momo_id = data.get('momo_id')
+            if momo_id is None:
+                return json_error('A money submission is required', 400,
+                                  'weekly_report.momo_required', field='momo_id')
             submission = MoMoSubmission.query.filter_by(
-                id=data.get('momo_id'), report_id=report.id).first()
+                id=momo_id, report_id=report.id).first()
             if not submission:
-                return json_error('Money submission not found', 404)
+                return json_error('Money submission not found', 404,
+                                  field='momo_id')
             service.verify_momo(report, submission,
                                 'verified' if action == 'verify_momo' else 'rejected',
                                 user, data.get('note'))
         elif action in ('verify_cost_payment', 'reject_cost_payment'):
+            claim_id = data.get('claim_id')
+            if claim_id is None:
+                return json_error('An official cost payment is required', 400,
+                                  'weekly_report.claim_required', field='claim_id')
             claim = OfficialCostPayment.query.filter_by(
-                id=data.get('claim_id'), report_id=report.id).first()
+                id=claim_id, report_id=report.id).first()
             if not claim:
-                return json_error('Official cost payment not found', 404)
+                return json_error('Official cost payment not found', 404,
+                                  field='claim_id')
             service.verify_cost_payment(
                 report, claim,
                 'verified' if action == 'verify_cost_payment' else 'rejected',
@@ -722,12 +751,22 @@ def review(report_id):
         elif action == 'request_correction':
             if not (data.get('reason') or '').strip():
                 return json_error('A correction reason is required', 400,
-                                  'weekly_report.reason_required')
+                                  'weekly_report.reason_required',
+                                  field='review_reason')
             service.request_correction(report, data['reason'], user)
         elif action in ('approve', 'reject'):
             service.decide(report, action, user, data.get('reason'))
         else:
-            return json_error('Invalid review action', 400)
+            return json_error('Invalid review action', 400,
+                              field='action', details={'action': action})
+        # Only persist the report note after the action itself succeeded; a
+        # rejected request must not leave a half-written review behind.
+        if report_note and report_note != report.reviewer_note:
+            previous_note = report.reviewer_note
+            report.reviewer_note = str(report_note)
+            audit('weekly_report_reviewer_note_updated', 'weekly_report', report.id,
+                  previous_value={'reviewer_note': previous_note},
+                  new_value={'reviewer_note': report.reviewer_note}, user=user)
         db.session.commit()
     except WeeklyReportError as exc:
         db.session.rollback()
@@ -800,4 +839,6 @@ def export_report(report_id):
     except WeeklyReportError as exc:
         return _error(exc)
     filename = f'{report.report_number}_{lang}.{ "xlsx" if fmt == "xlsx" else "pdf"}'
+    audit('weekly_report_exported', 'weekly_report', report.id,
+          new_value={'format': fmt, 'language': lang}, user=user)
     return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
