@@ -96,6 +96,12 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
   const expected = Number(c.expected_remittance || 0);
   const verified = Number(c.verified_submitted || 0);
   const declared = Number(c.declared_submitted_amount || 0);
+  const carriedOutstanding = Number(c.opening_outstanding || 0);
+  const weekExpected = Number(c.week_expected_amount ?? expected - carriedOutstanding);
+  const totalToSubmit = Number(c.total_expected_amount ?? expected);
+  const remainingDeclared = Number(c.remaining_after_declaration ?? Math.max(0, expected - declared));
+  const remainingVerified = Number(c.remaining_after_verification ?? shortage);
+  const carryForward = Number(c.carry_forward_amount ?? c.closing_outstanding ?? 0);
 
   const chartData = useMemo(() => [
     { name: t('review.expected'), value: expected, tone: 'navy' },
@@ -311,6 +317,32 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
                       <span className="rv-trail-sign">=</span>
                       <span>{t('review.expected')}</span>
                       <strong>{fmtMoney(c.expected_remittance)}</strong>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="rv-panel">
+                <div className="rv-panel-head">
+                  <div>
+                    <h3>{t('review.remaining.title')}</h3>
+                    <p>{t('review.remaining.help')}</p>
+                  </div>
+                  <ReviewPill tone={carryForward > 0 ? 'warn' : 'good'}>
+                    {carryForward > 0 ? t('ui.agent.carryForward') : t('status.no')}
+                  </ReviewPill>
+                </div>
+                <div className="rv-panel-body">
+                  <div className="rv-sum-grid">
+                    <div><span>{t('review.remaining.thisWeek')}</span><strong>{fmtMoney(weekExpected)}</strong></div>
+                    <div><span>{t('ui.agent.previousOutstanding')}</span><strong>{fmtMoney(carriedOutstanding)}</strong></div>
+                    <div className="is-total"><span>{t('ui.agent.moneyToSubmit')}</span><strong>{fmtMoney(totalToSubmit)}</strong></div>
+                    <div><span>{t('ui.agent.declared')}</span><strong>{fmtMoney(declared)}</strong></div>
+                    <div><span>{t('review.remaining.stillDeclared')}</span><strong>{fmtMoney(remainingDeclared)}</strong></div>
+                    <div><span>{t('review.verified')}</span><strong>{fmtMoney(verified)}</strong></div>
+                    <div><span>{t('review.remaining.stillVerified')}</span><strong>{fmtMoney(remainingVerified)}</strong></div>
+                    <div className={carryForward > 0 ? 'is-warning' : ''}>
+                      <span>{t('ui.agent.carryForward')}</span><strong>{fmtMoney(carryForward)}</strong>
                     </div>
                   </div>
                 </div>

@@ -172,14 +172,26 @@ def agent_summary():
     week_rows = []
     for start in week_options:
         mine = WeeklyReport.query.filter_by(week_start=start, employee_id=emp.id).first()
-        week_rows.append({
+        row = {
             'week_start': start.isoformat(),
             'week_end': week_end_for(start, policy).isoformat(),
             'report_id': mine.id if mine else None,
             'status': mine.status if mine else None,
             'current': start == current_week_start,
             'selected': start == week_start,
-        })
+        }
+        if mine is not None:
+            # Stored authoritative columns keep the week picker cheap. The
+            # selected week's full overlay-aware breakdown is in `summary`.
+            opening = money(mine.opening_outstanding)
+            expected = money(mine.expected_remittance)
+            row.update({
+                'week_expected_amount': f'{expected - opening:.2f}',
+                'previous_outstanding': f'{opening:.2f}',
+                'money_to_submit': f'{expected:.2f}',
+                'closing_outstanding': f'{money(mine.closing_outstanding):.2f}',
+            })
+        week_rows.append(row)
     return jsonify({
         'message': 'Weekly report prepared',
         'created': created,

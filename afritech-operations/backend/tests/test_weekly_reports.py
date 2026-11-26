@@ -1355,6 +1355,57 @@ class TestCarryForwardReconciliation:
         assert following.opening_outstanding == 0
         assert following.snapshot == frozen_snapshot
 
+    def test_next_week_separates_current_expected_from_carried_outstanding(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        prior = self._shortage_report(client, admin_hdr, agent_hdr)
+        assert _review(client, accountant_hdr, prior.id, 'approve').status_code == 200
+
+        week = prior.week_start + timedelta(days=7)
+        _txn(_agent(), week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        response = client.post('/api/weekly-reports/agent-summary', headers=agent_hdr,
+                               json={'week_start': week.isoformat()})
+        assert response.status_code == 200, response.get_data(as_text=True)
+        body = response.get_json()
+        summary = body['summary']
+        assert summary['previous_outstanding'] == '600.00'
+        assert summary['week_expected_amount'] == '1000.00'
+        assert summary['money_to_submit'] == '1600.00'
+        assert summary['expected_amount'] == '1600.00'
+        selected = [row for row in body['weeks'] if row['selected']][0]
+        assert selected['previous_outstanding'] == '600.00'
+        assert selected['money_to_submit'] == '1600.00'
+
+    def test_submitted_week_explains_remaining_money_before_and_after_verification(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        report = _generate(client, admin_hdr, emp, week)
+        _claim_row(report, txn, verified=True)  # expected remittance = 600
+        transfer = _momo(client, agent_hdr, report.id, amount=200)
+        db.session.commit()
+        assert _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': 200,
+            'submission_funding_source': 'agent_phone',
+        }).status_code == 200
+
+        summary = _detail(client, admin_hdr, report.id)['summary']
+        assert summary['money_to_submit'] == '600.00'
+        assert summary['declared_amount'] == '200.00'
+        assert summary['remaining_after_declaration'] == '400.00'
+        # A declaration is not evidence: nothing has cleared the verified gap.
+        assert summary['remaining_after_verification'] == '600.00'
+        assert summary['carry_forward_amount'] == '600.00'
+
+        verified = _review(client, accountant_hdr, report.id, 'verify_momo',
+                           momo_id=transfer['id'])
+        assert verified.status_code == 200, verified.get_data(as_text=True)
+        summary = _detail(client, admin_hdr, report.id)['summary']
+        assert summary['remaining_after_declaration'] == '400.00'
+        assert summary['remaining_after_verification'] == '400.00'
+        assert summary['carry_forward_amount'] == '400.00'
+
 
 class TestRBACSecurity:
     def test_agent_is_scoped_to_own_report(self, client, admin_hdr, agent_hdr):
@@ -2189,7 +2240,10 @@ class TestGuidedAgentFlow:
         assert summary['total_collected'] == '1000.00'
         assert summary['official_costs_total'] == '400.00'
         assert summary['previous_outstanding'] == '0.00'
+        assert summary['week_expected_amount'] == '1000.00'
         assert summary['expected_amount'] == '1000.00'
+        assert summary['total_expected_amount'] == '1000.00'
+        assert summary['money_to_submit'] == '1000.00'
         assert summary['declared_amount'] == '0.00'
         assert summary['declared_shortage'] == '1000.00'
         assert summary['verified_shortage'] == '1000.00'

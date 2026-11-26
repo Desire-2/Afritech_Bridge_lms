@@ -125,6 +125,27 @@ Important rules:
   correction allocations)`. The opening balance is already inside `expected`,
   so it is never added twice.
 
+### Forward-looking display views
+
+The calculation payload and the guided `summary` expose read-only views so the
+agent and reviewer can see where the total comes from without recalculating it
+in the browser:
+
+| Field | Meaning |
+| --- | --- |
+| `week_expected_amount` | `expected_remittance - opening_outstanding`; what this week's own eligible records produced. |
+| `previous_outstanding` | `opening_outstanding`; authoritative balance carried from the previous approved week. |
+| `total_expected_amount` / `money_to_submit` | Full authoritative expected remittance, including carried outstanding. `expected_amount` remains as a compatibility alias. |
+| `remaining_after_declaration` | `max(0, expected - declared_submitted_amount)`; what the agent says is still outstanding. A declaration is not evidence. |
+| `remaining_after_verification` | `max(0, expected - verified_submitted)`; what remains before reviewer adjustments. |
+| `carry_forward_amount` | `closing_outstanding`; the verified amount that will be carried into the next report on approval. |
+
+Only `verified_submitted` and verified/guided cost credits reduce the authoritative
+balance. An unpaid declaration still carries forward in full until a transfer is
+verified. The next week's generated report includes that balance in
+`opening_outstanding`, so its `money_to_submit` is the sum of its own expected
+amount and the previous week's outstanding balance.
+
 The frozen submission stores both the full payload (`snapshot`) and the active
 overlay (`calculation`). Source collection/cost facts stay frozen; reviewer
 verification, rejection notes, MoMo verification, official-cost claims and

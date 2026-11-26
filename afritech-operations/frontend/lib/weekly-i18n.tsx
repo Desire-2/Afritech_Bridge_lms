@@ -770,6 +770,16 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.declaredGap": "Declared gap",
 
+    "review.remaining.title": "Money remaining and carry-forward",
+
+    "review.remaining.help": "This week's expected amount plus the previous outstanding balance is the total the agent must submit. Only verified payments reduce it.",
+
+    "review.remaining.thisWeek": "Expected from this week",
+
+    "review.remaining.stillDeclared": "Still to submit (declared)",
+
+    "review.remaining.stillVerified": "Still to submit (verified)",
+
     "review.verificationHelp": "Only verified transfers and verified or guided personal cost credits reduce the expected amount.",
 
     "review.pendingBadge": "Pending verification",
@@ -874,7 +884,19 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "ui.agent.collections": "Customer collections",
 
-    "ui.agent.previousOutstanding": "Previous outstanding balance",
+    "ui.agent.previousOutstanding": "Outstanding from previous week",
+
+    "ui.agent.thisWeekExpected": "Expected from this week",
+
+    "ui.agent.moneyToSubmit": "Total to submit",
+
+    "ui.agent.remainingDeclared": "Still to submit (declared)",
+
+    "ui.agent.remainingVerified": "Still to submit (verified)",
+
+    "ui.agent.carryForward": "Carried to next week",
+
+    "ui.agent.successCarryNote": "Only verified payments clear the balance. Any verified shortage is added to next week's total to submit after approval.",
 
     "ui.agent.officialCosts": "Official service costs",
 
@@ -1206,9 +1228,9 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "reason.other": "Indi mpamvu",
 
-    "error.shortage_explanation": "Ugomba gutanga impamvu n’ibisobanuro bigufi byumvikana.",
+    "error.shortage_explanation": "Hagomba gutangwa impamvu yemewe n’ibisobanuro bigufi.",
 
-    "error.surplus_explanation": "Emeza amafaranga y’inyongera cyangwa usobanure impamvu yayo.",
+    "error.surplus_explanation": "Emeza cyangwa usobanure impamvu hari amafaranga arenga ateganyijwe.",
 
     "error.shortage_evidence": "Iyo ugaragaje ko hari amafaranga abura, ugomba gutanga inyandiko cyangwa icyemezo kibihamya.",
 
@@ -1714,6 +1736,16 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.declaredGap": "Itandukaniro ryatangajwe n’umukozi",
 
+    "review.remaining.title": "Amafaranga asigaye no kuyatwara mu cyumweru gikurikira",
+
+    "review.remaining.help": "Amafaranga ategerejwe muri iki cyumweru yongerwa ku yari asigaye mu cyumweru gishize, akaba ari yo yose umukozi agomba kohereza. Amafaranga yemejwe gusa agabanya uyu mubare.",
+
+    "review.remaining.thisWeek": "Amafaranga ategerejwe muri iki cyumweru",
+
+    "review.remaining.stillDeclared": "Akiri ugomba kohereza (watangajwe)",
+
+    "review.remaining.stillVerified": "Akiri ugomba kohereza (yemejwe)",
+
     "review.verificationHelp": "Amafaranga ategerejwe koherezwa agabanywa gusa n’ihererekanya ryagenzuwe, hamwe n’ibiguzi umukozi yishyuriye ku mafaranga ye bwite byagenzuwe cyangwa byemejwe binyuze mu mahitamo yatanze muri sisitemu.",
 
     "review.pendingBadge": "Biracyategereje kugenzurwa",
@@ -1818,7 +1850,19 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "ui.agent.collections": "Amafaranga wakiriye ku bakiriya",
 
-    "ui.agent.previousOutstanding": "Amafaranga wari usigaje utaratanga mu mpera z’icyumweru gishize",
+    "ui.agent.previousOutstanding": "Amafaranga yatwarwa avuye mu cyumweru gishize",
+
+    "ui.agent.thisWeekExpected": "Amafaranga ategerejwe muri iki cyumweru",
+
+    "ui.agent.moneyToSubmit": "Amafaranga yose ugomba kohereza",
+
+    "ui.agent.remainingDeclared": "Amafaranga akiri ugomba kohereza (watangajwe)",
+
+    "ui.agent.remainingVerified": "Amafaranga akiri ugomba kohereza (yemejwe)",
+
+    "ui.agent.carryForward": "Yatwarwa mu cyumweru gikurikira",
+
+    "ui.agent.successCarryNote": "Amafaranga yemejwe gusa agabanya umubare usigaye. Ibura ryemejwe rizongerwa ku mafaranga ugomba kohereza mu cyumweru gikurikira nyuma yo kwemeza raporo.",
 
     "ui.agent.officialCosts": "Ibiciro byemewe bya serivisi",
 

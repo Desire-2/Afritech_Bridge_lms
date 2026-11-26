@@ -395,6 +395,9 @@ export default function WeeklyManagementWorkspace() {
                       <td className="wm-money">
                         <strong>{fmtMoney(row.verified_submitted)}</strong>
                         <small className="wm-sub">{t('field.expectedRemittance')}: {fmtMoney(row.expected_remittance)}</small>
+                        {Number(row.closing_outstanding || 0) > 0 && (
+                          <small className="wm-sub">{t('field.closingOutstanding')}: {fmtMoney(row.closing_outstanding)}</small>
+                        )}
                       </td>
                       <td>
                         <div className="wm-signal-row">

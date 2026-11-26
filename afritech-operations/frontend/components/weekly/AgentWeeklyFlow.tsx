@@ -611,9 +611,27 @@ export default function AgentWeeklyFlow({
     !row.company_funded && !row.auto_company_funded);
   const confirmedCosts = answerableCosts.filter((row) => row.claim_id).length;
 
+  // The backend owns every figure. These fallbacks only keep older cached
+  // responses readable; they never recalculate the total in the browser.
+  const weekExpected = Number(summary.week_expected_amount
+    ?? calc?.components?.week_expected_amount
+    ?? Number(summary.expected_amount || 0) - Number(summary.previous_outstanding || 0));
+  const carriedOutstanding = Number(summary.previous_outstanding
+    ?? calc?.components?.opening_outstanding ?? 0);
+  const moneyToSubmit = Number(summary.money_to_submit
+    ?? summary.total_expected_amount ?? summary.expected_amount ?? 0);
+  const remainingDeclared = Number(summary.remaining_after_declaration
+    ?? summary.declared_shortage ?? 0);
+  const remainingVerified = Number(summary.remaining_after_verification
+    ?? summary.verified_shortage ?? 0);
+  const carryForward = Number(summary.carry_forward_amount
+    ?? summary.closing_outstanding ?? 0);
+
   const details = [
     [t('ui.agent.collections'), summary.total_collected],
+    [t('ui.agent.thisWeekExpected'), summary.week_expected_amount],
     [t('ui.agent.previousOutstanding'), summary.previous_outstanding],
+    [t('ui.agent.moneyToSubmit'), summary.money_to_submit],
     [t('ui.agent.officialCosts'), summary.official_costs_total],
     [t('ui.agent.verifiedCredits'), summary.personal_paid_verified],
     [t('ui.agent.appliedCredits'), summary.personal_paid_applied],
@@ -621,6 +639,9 @@ export default function AgentWeeklyFlow({
     [t('ui.agent.companyPaid'), summary.company_paid],
     [t('ui.agent.someoneElsePaid'), summary.someone_else_paid],
     [t('ui.agent.notPaid'), summary.not_paid],
+    [t('ui.agent.remainingDeclared'), summary.remaining_after_declaration],
+    [t('ui.agent.remainingVerified'), summary.remaining_after_verification],
+    [t('ui.agent.carryForward'), summary.carry_forward_amount],
   ];
 
   return (
@@ -663,7 +684,20 @@ export default function AgentWeeklyFlow({
             <div className="agent-success-icon"><i className="bi bi-check2" /></div>
             <h2 className="h4 mt-3 mb-2">{t('ui.agent.success')}</h2>
             <p className="text-muted mb-3">{t('ui.agent.successDetail')}</p>
-            <p className="small fw-semibold mb-4">{report.report_number}</p>
+            <p className="small fw-semibold mb-3">{report.report_number}</p>
+            <div className="agent-success-breakdown">
+              <div><span>{t('ui.agent.moneyToSubmit')}</span><b>{fmtMoney(moneyToSubmit)}</b></div>
+              <div><span>{t('ui.agent.declared')}</span><b>{fmtMoney(summary.declared_amount)}</b></div>
+              <div className={remainingDeclared > 0 ? 'is-warning' : ''}>
+                <span>{t('ui.agent.remainingDeclared')}</span><b>{fmtMoney(remainingDeclared)}</b>
+              </div>
+              {carryForward > 0 && (
+                <div className="is-warning">
+                  <span>{t('ui.agent.carryForward')}</span><b>{fmtMoney(carryForward)}</b>
+                </div>
+              )}
+            </div>
+            <p className="small text-muted mt-3 mb-4">{t('ui.agent.successCarryNote')}</p>
             <div className="d-flex justify-content-center flex-wrap gap-2">
               <button type="button" className="btn btn-outline-secondary agent-touch"
                 onClick={() => setSuccess(false)}>
@@ -685,7 +719,13 @@ export default function AgentWeeklyFlow({
                 aria-busy={weekLoading}>
                 <div className="agent-hero-main">
                   <div className="agent-eyebrow">{t('ui.agent.expected')}</div>
-                  <div className="agent-amount">{fmtMoney(summary.expected_amount)}</div>
+                  <div className="agent-amount">{fmtMoney(moneyToSubmit)}</div>
+                  <div className="agent-amount-split" aria-label={t('ui.agent.detailsTitle')}>
+                    <span>{t('ui.agent.thisWeekExpected')}: <b>{fmtMoney(weekExpected)}</b></span>
+                    <span className={carriedOutstanding > 0 ? 'has-carry' : ''}>
+                      {t('ui.agent.previousOutstanding')}: <b>{fmtMoney(carriedOutstanding)}</b>
+                    </span>
+                  </div>
                   <div className="small text-muted">
                     {t('field.week')}:{' '}
                     {summary.period_label || `${fmtDate(summary.week_start)} – ${fmtDate(summary.week_end)}`}
@@ -1140,8 +1180,11 @@ export default function AgentWeeklyFlow({
 
               <div className="agent-review mt-3">
                 <div className="fw-semibold small mb-2">{t('ui.agent.quickReview')}</div>
-                <div className="agent-kv"><span>{t('ui.agent.expected')}</span><b>{fmtMoney(summary.expected_amount)}</b></div>
+                <div className="agent-kv"><span>{t('ui.agent.thisWeekExpected')}</span><b>{fmtMoney(weekExpected)}</b></div>
+                <div className="agent-kv"><span>{t('ui.agent.previousOutstanding')}</span><b>{fmtMoney(carriedOutstanding)}</b></div>
+                <div className="agent-kv"><span>{t('ui.agent.moneyToSubmit')}</span><b>{fmtMoney(moneyToSubmit)}</b></div>
                 <div className="agent-kv"><span>{t('ui.agent.declared')}</span><b>{declared === null ? t('ui.label.none') : fmtMoney(declared)}</b></div>
+                <div className="agent-kv"><span>{t('ui.agent.remainingDeclared')}</span><b>{fmtMoney(remainingDeclared)}</b></div>
                 <div className="agent-kv"><span>{t('field.status')}</span><b>{statusLabel(summary.status)}</b></div>
                 <div className="agent-kv"><span>{t('ui.agent.reviewCosts')}</span><b>{confirmedCosts}/{answerableCosts.length}</b></div>
                 <div className="agent-kv"><span>{t('ui.agent.reviewTransfers')}</span><b>{transfers.length}</b></div>

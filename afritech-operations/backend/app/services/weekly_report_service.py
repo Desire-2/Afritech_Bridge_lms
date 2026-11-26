@@ -692,8 +692,34 @@ class WeeklyReportService:
                 totals[kind] += _dec(row.get('adjusted_amount')) - _dec(row.get('original_amount'))
         return totals
 
+    @staticmethod
+    def _with_forward_views(payload):
+        """Expose the forward-looking breakdown without changing the formula.
+
+        `expected_remittance` already includes opening outstanding. These
+        read-only views make the split explicit for the agent and reviewer:
+        what this week produced, what was brought forward, the total to submit,
+        and what remains after a declaration or after verification. The closing
+        balance is the authoritative amount that can be carried into the next
+        week once the report is approved.
+        """
+        c = payload['components']
+        expected = _dec(c.get('expected_remittance'))
+        opening = _dec(c.get('opening_outstanding'))
+        declared = _dec(c.get('declared_submitted_amount'))
+        verified = _dec(c.get('verified_submitted'))
+        closing = _dec(c.get('closing_outstanding'))
+        c['week_expected_amount'] = _str(expected - opening)
+        c['total_expected_amount'] = _str(expected)
+        c['money_to_submit'] = _str(expected)
+        c['remaining_after_declaration'] = _str(max(Decimal('0'), expected - declared))
+        c['remaining_after_verification'] = _str(max(Decimal('0'), expected - verified))
+        c['carry_forward_amount'] = _str(closing)
+        return payload
+
     def _with_statement(self, payload):
         c = payload['components']
+        self._with_forward_views(payload)
         declaration = payload.get('declaration') or {}
         closing_rows = payload.get('daily_closings') or []
         present = sum(1 for row in closing_rows if row.get('closing_id'))
@@ -1808,8 +1834,18 @@ class WeeklyReportService:
             'company_paid': _str(source_totals['company']),
             'someone_else_paid': _str(source_totals['someone_else']),
             'not_paid': _str(source_totals['not_paid']),
+            # The total is deliberately explicit: money to submit includes the
+            # outstanding balance carried from the previous approved week.
+            'week_expected_amount': _str(c.get('week_expected_amount')),
+            'previous_outstanding': _str(c.get('opening_outstanding')),
+            'total_expected_amount': _str(c.get('total_expected_amount')),
+            'money_to_submit': _str(c.get('money_to_submit')),
+            # Kept for older screens; it is the same authoritative total.
             'expected_amount': _str(expected),
             'declared_amount': _str(declared),
+            'remaining_after_declaration': _str(c.get('remaining_after_declaration')),
+            'remaining_after_verification': _str(c.get('remaining_after_verification')),
+            'carry_forward_amount': _str(c.get('carry_forward_amount')),
             'submission_funding_source': c.get('submission_funding_source')
             or report.submission_funding_source,
             'agent_reported_submitted': _str(c.get('agent_reported_submitted')),
@@ -1848,6 +1884,9 @@ class WeeklyReportService:
             'verified_submitted', 'declared_submitted_amount',
             'shortage_amount', 'surplus_amount',
             'commission_earned', 'closing_outstanding',
+            'week_expected_amount', 'total_expected_amount', 'money_to_submit',
+            'remaining_after_declaration', 'remaining_after_verification',
+            'carry_forward_amount',
         )
         components = calc.get('components', {})
         for key in amounts:
