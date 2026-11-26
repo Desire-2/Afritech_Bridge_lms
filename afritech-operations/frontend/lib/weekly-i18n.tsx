@@ -380,6 +380,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "ui.agent.costPersonalAuto": "No extra details needed — we use your profile and this transaction, and record the full official cost. It reduces your expected amount now and is confirmed when the report is approved.",
     "ui.agent.costErrorTitle": "Answer not saved",
     "ui.agent.costErrorRetry": "Try again",
+    "ui.agent.errorSummaryTitle": "Please correct the following:",
     "ui.agent.costAutoCompany": "Confirmed automatically — AfriTech Bridge paid",
     "ui.agent.costAutoCompanyNote": "Land Document costs paid by AfriTech Bridge are already confirmed and are not listed here. They never reduce your expected amount.",
     "ui.agent.costAutoAppliedNote": "Deducted from your expected amount. Final confirmation happens when the weekly report is approved.",
@@ -419,6 +420,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "ui.agent.error.costAmount": "Enter an amount greater than zero and not more than the official cost.",
     "ui.agent.error.reference": "The reference must be at least 4 characters.",
     "ui.agent.error.transferAmount": "Enter a transfer amount greater than zero.",
+    "ui.agent.error.transferDate": "Use a date within this reporting week (or before the deadline).",
   },
   rw: {
     "nav.weeklyReports": "Raporo y’imari y’icyumweru",
@@ -781,6 +783,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "ui.agent.costPersonalAuto": "Nta bindi bisobanuro usabwa gutanga. Dukoresha umwirondoro wawe n’amakuru y’iki gikorwa kugira ngo twandike ko wishyuye ikiguzi cyose cya serivisi. Gihita gikurwa ku mafaranga utegerejweho kohereza, ariko cyemezwa burundu raporo imaze kwemezwa.",
     "ui.agent.costErrorTitle": "Igisubizo nticyabitswe",
     "ui.agent.costErrorRetry": "Ongera ugerageze",
+    "ui.agent.errorSummaryTitle": "Kosora ibikurikira:",
     "ui.agent.costAutoCompany": "Byemejwe mu buryo bwikora: AfriTech Bridge ni yo yishyuye",
     "ui.agent.costAutoCompanyNote": "Ibiciro bya serivisi zijyanye n’inyandiko z’ubutaka byishyuwe na AfriTech Bridge biba byaramaze kwemezwa, ni yo mpamvu bitagaragara kuri uru rutonde. Ntibigabanywa ku mafaranga utegerejweho kohereza.",
     "ui.agent.costAutoAppliedNote": "Aya mafaranga yamaze gukurwa ku yo utegerejweho kohereza. Ibyo bizemezwa burundu raporo y’icyumweru imaze kwemezwa.",
@@ -820,6 +823,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "ui.agent.error.costAmount": "Andika umubare urenze zeru kandi utarenze ikiguzi cya serivisi cyemewe.",
     "ui.agent.error.reference": "Kode iranga ihererekanya igomba kuba ifite nibura inyuguti 4.",
     "ui.agent.error.transferAmount": "Andika umubare w’amafaranga yoherejwe urenze zeru.",
+    "ui.agent.error.transferDate": "Koresha itariki iri muri iki cyumweru cya raporo (cyangwa mbere y’igihe ntarengwa).",
   },
 };
 

@@ -2074,10 +2074,15 @@ class TestAgentWeeklySubmissionWorkflow:
 
     def test_submit_validates_declaration(self, client, admin_hdr, agent_hdr):
         report = _generate(client, admin_hdr)
-        for bad in ({'declared_submitted_amount': -5},
-                    {'submission_funding_source': 'someone'}):
-            r = _submit(client, agent_hdr, report.id, payload=bad)
+        expected_fields = {
+            'declared_submitted_amount': 'declared_submitted_amount',
+            'submission_funding_source': 'submission_funding_source',
+        }
+        for bad, field in expected_fields.items():
+            r = _submit(client, agent_hdr, report.id, payload={bad: (
+                -5 if bad == 'declared_submitted_amount' else 'someone')})
             assert r.status_code == 400, r.get_data(as_text=True)
+            assert r.get_json()['field'] == field
             assert WeeklyReport.query.get(report.id).status in (
                 'draft', 'ready_for_submission', 'late')
 
@@ -2331,3 +2336,80 @@ class TestGuidedAgentFlow:
             'Please confirm or explain the extra amount.'
         assert t('error.surplus_explanation', 'rw') == \
             'Emeza cyangwa usobanure amafaranga y’inyongera.'
+
+
+class TestFieldLocatedErrors:
+    """Validation failures name the exact field (and row) the UI must show."""
+
+    def test_weekly_report_error_carries_location(self):
+        exc = WeeklyReportError('Bad amount', 'weekly_report.invalid_amount', 400,
+                                field='declared_submitted_amount',
+                                details={'transaction_id': 17})
+        assert exc.field == 'declared_submitted_amount'
+        assert exc.details['transaction_id'] == 17
+        assert exc.code == 'weekly_report.invalid_amount'
+        assert exc.status == 400
+
+    def test_empty_json_error_has_no_location(self):
+        exc = WeeklyReportError('Locked', 'weekly_report.locked', 409)
+        assert exc.field is None
+        assert exc.details == {}
+
+    def test_momo_validation_returns_field(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        base = {'provider': 'momo', 'reference': 'VALIDREF',
+                'amount': '1000', 'submitted_at': ''}
+        cases = [
+            ({**base, 'provider': 'wire'}, 'provider'),
+            ({**base, 'reference': 'x'}, 'reference'),
+            ({**base, 'amount': '0'}, 'amount'),
+            ({**base, 'submitted_at': 'not-a-date'}, 'submitted_at'),
+        ]
+        for payload, field in cases:
+            r = client.post(f'/api/weekly-reports/{report.id}/momo',
+                            headers=agent_hdr, json=payload)
+            assert r.status_code == 400, r.get_data(as_text=True)
+            assert r.get_json()['field'] == field
+
+    def test_momo_duplicate_reference_points_at_reference(self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        payload = {'provider': 'momo', 'reference': 'DUP12345', 'amount': '1000'}
+        first = client.post(f'/api/weekly-reports/{report.id}/momo',
+                            headers=agent_hdr, json=payload)
+        assert first.status_code == 201, first.get_data(as_text=True)
+        duplicate = client.post(f'/api/weekly-reports/{report.id}/momo',
+                                headers=agent_hdr, json=payload)
+        assert duplicate.status_code == 409
+        assert duplicate.get_json()['field'] == 'reference'
+
+    def test_shortage_explanation_error_points_at_first_missing_field(
+            self, client, admin_hdr, agent_hdr):
+        report = _generate(client, admin_hdr)
+        # An amount below the expected total asks for a reason; neither is given.
+        r = _submit(client, agent_hdr, report.id, payload={
+            'declared_submitted_amount': 1,
+            'submission_funding_source': 'agent_phone',
+        })
+        assert r.status_code == 400, r.get_data(as_text=True)
+        body = r.get_json()
+        assert body['code'] in ('weekly_report.shortage_explanation',
+                                'weekly_report.surplus_explanation')
+        assert body['field'] in ('shortage_reason_category', 'shortage_explanation')
+
+    def test_cost_claim_errors_include_transaction_row(
+            self, client, admin_hdr, agent_hdr):
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        report = _generate(client, admin_hdr, emp, week)
+        url = f'/api/weekly-reports/{report.id}/official-cost-payments'
+        data = {'transaction_id': str(txn.id), 'payment_source': 'personal',
+                'auto_personal': 'true'}
+        first = client.post(url, headers=agent_hdr, data=data)
+        assert first.status_code == 201, first.get_data(as_text=True)
+        duplicate = client.post(url, headers=agent_hdr, data=data)
+        assert duplicate.status_code == 409
+        body = duplicate.get_json()
+        assert body['field'] == 'payment_source'
+        assert body['details']['transaction_id'] == txn.id

@@ -33,7 +33,8 @@ VIEW_ANY = ('weekly_reports.view', 'weekly_reports.review', 'weekly_reports.adju
 
 
 def _error(exc):
-    return json_error(exc.message, exc.status, exc.code)
+    return json_error(exc.message, exc.status, exc.code,
+                      getattr(exc, 'field', None), getattr(exc, 'details', None))
 
 
 def _is_reviewer(user):
@@ -527,18 +528,19 @@ def add_momo(report_id):
     data = request.form.to_dict() or parse_json()
     provider = data.get('provider', 'momo')
     if provider not in MOMO_PROVIDERS:
-        return json_error('Invalid provider', 400)
+        return json_error('Invalid provider', 400, field='provider')
     reference = (data.get('reference') or '').strip().upper()
     if len(reference) < 4:
         return json_error('A money submission reference is required', 400,
-                          'weekly_report.reference_required')
+                          'weekly_report.reference_required', field='reference')
     try:
         amount = Decimal(str(data.get('amount')))
         if not amount.is_finite() or amount <= 0:
             raise InvalidOperation
         amount = amount.quantize(Decimal('0.01'))
     except (InvalidOperation, ValueError, TypeError):
-        return json_error('A positive amount is required', 400, 'weekly_report.invalid_amount')
+        return json_error('A positive amount is required', 400,
+                          'weekly_report.invalid_amount', field='amount')
     submitted_raw = data.get('submitted_at')
     try:
         if submitted_raw:
@@ -549,7 +551,8 @@ def add_momo(report_id):
         else:
             submitted_at = datetime.now(timezone.utc)
     except ValueError:
-        return json_error('Invalid submission date/time', 400, 'weekly_report.invalid_date')
+        return json_error('Invalid submission date/time', 400,
+                          'weekly_report.invalid_date', field='submitted_at')
 
     # A client-supplied transfer date must belong to the reported week (or the
     # submission window ending at its deadline). The default "now" is left
@@ -563,11 +566,11 @@ def add_momo(report_id):
         if not (report.week_start <= local_date <= due_at.astimezone(tz).date()):
             return json_error(
                 'Submission date must fall within the report week or before its deadline',
-                400, 'weekly_report.invalid_date')
+                400, 'weekly_report.invalid_date', field='submitted_at')
 
     if MoMoSubmission.query.filter_by(reference=reference).first():
         return json_error('That money submission reference already exists', 409,
-                          'weekly_report.duplicate_reference')
+                          'weekly_report.duplicate_reference', field='reference')
 
     submission = MoMoSubmission(
         report_id=report.id, provider=provider, reference=reference, amount=amount,
@@ -592,7 +595,7 @@ def add_momo(report_id):
     except Exception:
         db.session.rollback()
         return json_error('That money submission reference already exists', 409,
-                          'weekly_report.duplicate_reference')
+                          'weekly_report.duplicate_reference', field='reference')
     audit('weekly_momo_submitted', 'weekly_momo_submission', submission.id,
           new_value={'reference': reference, 'amount': str(amount), 'provider': provider},
           user=user)

@@ -75,6 +75,24 @@ export function weeklyErrorMessage(err: any, t: (key: string) => string): string
   return messages[message] ? t(messages[message]) : message || 'Request failed';
 }
 
+/** Structured location metadata the backend attaches to validation failures. */
+export type WeeklyFieldLocation = {
+  field: string;
+  message: string;
+  details?: Record<string, any>;
+};
+
+/**
+ * Read the `field`/`details` metadata from an API error. Older endpoints only
+ * send `error`/`code`, so this returns null and callers fall back to a general
+ * alert instead of guessing which control failed.
+ */
+export function weeklyFieldLocation(err: any, t: (key: string) => string): WeeklyFieldLocation | null {
+  const field = err?.data?.field;
+  if (!field || typeof field !== 'string') return null;
+  return { field, message: weeklyErrorMessage(err, t), details: err.data.details };
+}
+
 /** Bootstrap badge with a translated label (colour still comes from status). */
 export function WeeklyBadge({ status, text }: { status?: string | null; text?: string }) {
   const { statusLabel } = useWeeklyI18n();

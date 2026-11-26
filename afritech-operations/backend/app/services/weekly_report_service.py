@@ -29,11 +29,21 @@ from .weekly_i18n import bilingual, t
 
 
 class WeeklyReportError(Exception):
-    def __init__(self, message, code='weekly_report.error', status=400):
+    """A validation failure that can name the exact field it belongs to.
+
+    ``field`` is a stable frontend key (for example
+    ``declared_submitted_amount``); ``details`` carries the row id when the
+    error is attached to one transaction. Both travel in the JSON response so
+    the UI can show and scroll to the real control instead of a generic alert.
+    """
+    def __init__(self, message, code='weekly_report.error', status=400,
+                 field=None, details=None):
         super().__init__(message)
         self.message = message
         self.code = code
         self.status = status
+        self.field = field
+        self.details = details or {}
 
 
 def _dec(value):
@@ -965,10 +975,12 @@ class WeeklyReportService:
             amount = _dec(value)
         except (InvalidOperation, ValueError, TypeError):
             raise WeeklyReportError('Amount submitted must be a valid number',
-                                    'weekly_report.invalid_amount', 400)
+                                    'weekly_report.invalid_amount', 400,
+                                    field='declared_submitted_amount')
         if amount < 0:
             raise WeeklyReportError('Amount submitted cannot be negative',
-                                    'weekly_report.invalid_amount', 400)
+                                    'weekly_report.invalid_amount', 400,
+                                    field='declared_submitted_amount')
         return amount
 
     def update_draft(self, report, data, actor):
@@ -1001,7 +1013,8 @@ class WeeklyReportService:
                     value = date.fromisoformat(str(value))
                 except ValueError:
                     raise WeeklyReportError('Invalid expected resolution date',
-                                            'weekly_report.invalid_date', 400)
+                                            'weekly_report.invalid_date', 400,
+                                            field='expected_resolution_date')
             elif key == 'declared_submitted_amount':
                 value = self._parse_declared_amount(value)
             elif key == 'submission_funding_source':
@@ -1009,7 +1022,8 @@ class WeeklyReportService:
                 if value not in WEEKLY_SUBMISSION_SOURCES:
                     raise WeeklyReportError(
                         'Funding source must be agent_phone, company or someone_else',
-                        'weekly_report.invalid_submission_source', 400)
+                        'weekly_report.invalid_submission_source', 400,
+                        field='submission_funding_source')
             setattr(report, attr, value)
         if previous:
             audit('weekly_report_draft_updated', 'weekly_report', report.id,
@@ -1043,7 +1057,8 @@ class WeeklyReportService:
                 report.expected_resolution_date = date.fromisoformat(str(data['expected_resolution_date']))
             except ValueError:
                 raise WeeklyReportError('Invalid expected resolution date',
-                                        'weekly_report.invalid_date', 400)
+                                        'weekly_report.invalid_date', 400,
+                                        field='expected_resolution_date')
         if data.get('declared_submitted_amount') not in (None, ''):
             report.declared_submitted_amount = self._parse_declared_amount(
                 data['declared_submitted_amount'])
@@ -1052,7 +1067,8 @@ class WeeklyReportService:
             if source not in WEEKLY_SUBMISSION_SOURCES:
                 raise WeeklyReportError(
                     'Funding source must be agent_phone, company or someone_else',
-                    'weekly_report.invalid_submission_source', 400)
+                    'weekly_report.invalid_submission_source', 400,
+                    field='submission_funding_source')
             report.submission_funding_source = source
 
         evidence = (files or {}).get('evidence')
@@ -1082,13 +1098,17 @@ class WeeklyReportService:
                 # evidence and a resolution date can still be attached but are
                 # no longer a barrier to an honest, explained shortage.
                 if not explained:
+                    missing = ('shortage_reason_category'
+                               if report.shortage_reason_category not in SHORTAGE_REASON_CATEGORIES
+                               else 'shortage_explanation')
                     raise WeeklyReportError(
                         'A valid reason and brief explanation are required.',
-                        'weekly_report.shortage_explanation', 400)
+                        'weekly_report.shortage_explanation', 400, field=missing)
             elif declared_surplus > 0 and not report.shortage_explanation:
                 raise WeeklyReportError(
                     'Please confirm or explain the extra amount.',
-                    'weekly_report.surplus_explanation', 400)
+                    'weekly_report.surplus_explanation', 400,
+                    field='shortage_explanation')
 
         if evidence_provided:
             report.shortage_evidence_path = self._store_evidence(evidence, report, 'shortage')
@@ -1143,7 +1163,8 @@ class WeeklyReportService:
         ext = (file.filename.rsplit('.', 1)[-1] or '').lower()
         if ext not in ('pdf', 'png', 'jpg', 'jpeg', 'webp'):
             raise WeeklyReportError('Unsupported evidence file type',
-                                    'weekly_report.invalid_evidence', 400)
+                                    'weekly_report.invalid_evidence', 400,
+                                    field='evidence')
         folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'weekly_reports',
                               str(report.id))
         os.makedirs(folder, exist_ok=True)
@@ -1152,7 +1173,8 @@ class WeeklyReportService:
         file.seek(0)
         if size > 10 * 1024 * 1024:
             raise WeeklyReportError('Evidence file is too large (max 10 MB)',
-                                    'weekly_report.invalid_evidence', 400)
+                                    'weekly_report.invalid_evidence', 400,
+                                    field='evidence')
         name = f'{kind}_{uuid.uuid4().hex}_{secure_filename(file.filename)}'
         file.save(os.path.join(folder, name))
         return f'/uploads/weekly_reports/{report.id}/{name}'
@@ -1168,7 +1190,8 @@ class WeeklyReportService:
         self._require_editable(report)
         if not reason:
             raise WeeklyReportError('An override reason is required',
-                                    'weekly_report.override_reason_required', 400)
+                                    'weekly_report.override_reason_required', 400,
+                                    field='override_reason')
         policy = get_policy()
         if not policy['allow_override']:
             raise WeeklyReportError('Overrides are disabled by policy',
@@ -1248,18 +1271,25 @@ class WeeklyReportService:
             txn_id = int(data.get('transaction_id'))
         except (TypeError, ValueError):
             raise WeeklyReportError('A transaction is required',
-                                    'weekly_report.claim_transaction_required', 400)
+                                    'weekly_report.claim_transaction_required', 400,
+                                    field='transaction_id')
         txn = (ServiceTransaction.query
                .filter_by(id=txn_id, employee_id=report.employee_id).first())
         if txn is None or not in_week(txn.transaction_date, report.week_start):
             raise WeeklyReportError('Transaction not found in this reporting week',
-                                    'weekly_report.claim_transaction_invalid', 404)
+                                    'weekly_report.claim_transaction_invalid', 404,
+                                    field='transaction_id')
+
+        def claim_error(message, code, field, status=400):
+            return WeeklyReportError(message, code, status, field=field,
+                                     details={'transaction_id': txn.id})
+
         company_funded = is_company_funded_service(
             txn.service_name, getattr(txn, 'service', None))
         if OfficialCostPayment.query.filter_by(report_id=report.id,
                                                transaction_id=txn.id).first():
-            raise WeeklyReportError('This official cost already has a payment claim',
-                                    'weekly_report.claim_duplicate', 409)
+            raise claim_error('This official cost already has a payment claim',
+                              'weekly_report.claim_duplicate', 'payment_source', 409)
 
         calc = self.calculation_view(report)
         source_row = next((r for r in calc.get('transactions', []) if r.get('id') == txn.id), None)
@@ -1314,37 +1344,37 @@ class WeeklyReportService:
                     tzinfo=business_timezone(report.timezone_name),
                 ).astimezone(timezone.utc)
                 if not in_week(paid_at, report.week_start, get_policy()):
-                    raise WeeklyReportError(
+                    raise claim_error(
                         'Personal payment date must fall within the Sunday–Saturday reporting week',
-                        'weekly_report.claim_invalid_date', 400)
+                        'weekly_report.claim_invalid_date', 'paid_at')
                 normalized_sender = ''.join(
                     ch for ch in (sender_phone or '') if ch.isdigit() or ch == '+')
                 reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
                 if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
-                    raise WeeklyReportError('That personal payment reference already exists',
-                                            'weekly_report.claim_duplicate', 409)
+                    raise claim_error('That personal payment reference already exists',
+                                      'weekly_report.claim_duplicate', 'reference', 409)
             else:
                 try:
                     amount = _dec(data.get('amount'))
                 except Exception:
-                    raise WeeklyReportError('A valid personally paid amount is required',
-                                            'weekly_report.claim_invalid_amount', 400)
+                    raise claim_error('A valid personally paid amount is required',
+                                      'weekly_report.claim_invalid_amount', 'amount')
                 if amount <= 0 or amount > official_cost:
-                    raise WeeklyReportError(
+                    raise claim_error(
                         f'Personal payment must be greater than zero and at most {official_cost:.2f}',
-                        'weekly_report.claim_invalid_amount', 400)
+                        'weekly_report.claim_invalid_amount', 'amount')
                 provider = (data.get('provider') or '').strip().lower()
                 if provider not in MOMO_PROVIDERS:
-                    raise WeeklyReportError('Invalid personal payment provider',
-                                            'weekly_report.claim_invalid_provider', 400)
+                    raise claim_error('Invalid personal payment provider',
+                                      'weekly_report.claim_invalid_provider', 'provider')
                 reference = (data.get('reference') or '').strip().upper()
                 if len(reference) < 4:
-                    raise WeeklyReportError('A payment reference is required',
-                                            'weekly_report.claim_reference_required', 400)
+                    raise claim_error('A payment reference is required',
+                                      'weekly_report.claim_reference_required', 'reference')
                 sender_phone = (data.get('sender_phone') or '').strip() or None
                 if not sender_phone:
-                    raise WeeklyReportError('The sender phone used to pay the cost is required',
-                                            'weekly_report.claim_sender_required', 400)
+                    raise claim_error('The sender phone used to pay the cost is required',
+                                      'weekly_report.claim_sender_required', 'sender_phone')
                 paid_raw = data.get('paid_at')
                 try:
                     if paid_raw:
@@ -1355,20 +1385,20 @@ class WeeklyReportService:
                     else:
                         paid_at = now
                 except ValueError:
-                    raise WeeklyReportError('Invalid payment date/time',
-                                            'weekly_report.claim_invalid_date', 400)
+                    raise claim_error('Invalid payment date/time',
+                                      'weekly_report.claim_invalid_date', 'paid_at')
                 if not in_week(paid_at, report.week_start, get_policy()):
-                    raise WeeklyReportError(
+                    raise claim_error(
                         'Personal payment date must fall within the Sunday–Saturday reporting week',
-                        'weekly_report.claim_invalid_date', 400)
+                        'weekly_report.claim_invalid_date', 'paid_at')
                 normalized_sender = ''.join(ch for ch in sender_phone if ch.isdigit() or ch == '+')
                 reference_key = f'{provider}:{reference}:{normalized_sender}'.upper()
                 if OfficialCostPayment.query.filter_by(reference_key=reference_key).first():
-                    raise WeeklyReportError('That personal payment reference already exists',
-                                            'weekly_report.claim_duplicate', 409)
+                    raise claim_error('That personal payment reference already exists',
+                                      'weekly_report.claim_duplicate', 'reference', 409)
                 if evidence is None or not getattr(evidence, 'filename', None):
-                    raise WeeklyReportError('Evidence is required for a personal cost payment',
-                                            'weekly_report.claim_evidence_required', 400)
+                    raise claim_error('Evidence is required for a personal cost payment',
+                                      'weekly_report.claim_evidence_required', 'evidence')
                 evidence_path = self._store_evidence(evidence, report, 'official_cost')
                 evidence_name = evidence.filename[:255]
                 content_type = evidence.mimetype

@@ -7,6 +7,11 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 - **Auth:** `Authorization: Bearer <jwt>` for every endpoint except `auth/login`.
   `is_super_admin` users have all permissions (`*`).
 - **Errors:** `{"error": "message"}` with matching HTTP status (400/401/403/404/409/429/500).
+  Validation failures may add `code`, plus `field` (a stable field key such as
+  `declared_submitted_amount` or `reference`) and `details` (for example
+  `{"transaction_id": 42}`) so a form can show, scroll to and focus the exact
+  control or table row that failed. These keys are additive: older clients keep
+  reading `error`/`code`.
 - **Pagination:** list responses are `{items, total, page, per_page, pages, has_next, has_prev}`.
   Supported query params: `page`, `per_page` (max 100).
 - **Dates:** ISO `YYYY-MM-DD`; datetimes ISO-8601 with tz.

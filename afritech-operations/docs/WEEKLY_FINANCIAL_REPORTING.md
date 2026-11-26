@@ -336,6 +336,14 @@ Base path: `/api/weekly-reports`
 | GET | `/{id}/audit` | Report, MoMo, official-cost claim and adjustment audit history |
 | GET | `/{id}/export?format=pdf\|xlsx&lang=en\|rw` | Bilingual export |
 
+Validation errors are additive to the standard `{error, code}` response:
+`field` names the exact input (`declared_submitted_amount`, `reference`,
+`submission_funding_source`, …) and `details.transaction_id` identifies a cost
+row. The guided agent flow uses these to render an inline message, scroll to the
+control and move focus there, with a focusable summary as a fallback when the
+named control is not currently mounted. No error payload changes persisted
+report data or workflow state.
+
 ## 8. Exports
 
 `app/services/weekly_exports.py` renders the 21 statement items from the same

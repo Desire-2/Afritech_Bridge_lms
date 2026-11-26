@@ -13,11 +13,35 @@ import { api, fmtDate, fmtDateTime, fmtMoney } from '@/lib/api';
 import { useWeeklyI18n } from '@/lib/weekly-i18n';
 import { Modal, PageHeader } from '@/components/ui';
 import { TextArea, TextInput } from '@/components/form';
-import { WeeklyBadge, WeeklyExportButtons, weeklyErrorMessage } from './weekly-shared';
+import { WeeklyBadge, WeeklyExportButtons, weeklyErrorMessage, weeklyFieldLocation } from './weekly-shared';
 
 const EVIDENCE_TYPES = ['pdf', 'png', 'jpg', 'jpeg', 'webp'];
 const MAX_EVIDENCE_BYTES = 10 * 1024 * 1024;
 const COST_SOURCES = ['personal', 'company', 'someone_else', 'not_paid'];
+
+/**
+ * Backend field keys → the DOM id of the control the agent must correct.
+ * Keeping this map here means the API stays free of frontend id conventions
+ * while the guided form knows exactly where to scroll and place focus.
+ */
+const FIELD_INPUT_IDS: Record<string, string> = {
+  declared_submitted_amount: 'agent-declared-amount',
+  submission_funding_source: 'agent-funding-source',
+  shortage_reason_category: 'agent-reason',
+  shortage_explanation: 'agent-explanation',
+  expected_resolution_date: 'agent-reason',
+  override_reason: 'agent-explanation',
+  provider: 'agent-transfer-provider',
+  reference: 'agent-transfer-reference',
+  amount: 'agent-transfer-amount',
+  submitted_at: 'agent-transfer-date',
+  sender_phone: 'agent-transfer-sender',
+  evidence: 'agent-transfer-evidence',
+};
+
+function fieldTargetId(field: string): string {
+  return FIELD_INPUT_IDS[field] || `field-${field}`;
+}
 
 type CostForm = {
   source: string;
@@ -96,6 +120,7 @@ export default function AgentWeeklyFlow({
   const [weekLoadingLabel, setWeekLoadingLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editingCost, setEditingCost] = useState<number | null>(null);
@@ -115,6 +140,7 @@ export default function AgentWeeklyFlow({
   const [success, setSuccess] = useState(false);
   const submitting = useRef(false);
   const savingCost = useRef(false);
+  const errorSummaryRef = useRef<HTMLDivElement | null>(null);
 
   const report = bundle?.report;
   const summary = bundle?.summary || report?.summary;
@@ -176,7 +202,7 @@ export default function AgentWeeklyFlow({
       ? `${fmtDate(chosen.week_start)} – ${fmtDate(chosen.week_end)}`
       : '');
     setWeekLoading(true);
-    setActionError('');
+    resetErrors();
     setNotice('');
     setCostErrors({});
     const data = await load({ week_start: value });
@@ -207,6 +233,8 @@ export default function AgentWeeklyFlow({
     setEditingCost(null);
     setCostForms({});
     setCostErrors({});
+    setFieldErrors({});
+    setActionError('');
     setSuccess(['submitted', 'under_financial_review', 'approved', 'rejected']
       .includes(report.status));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -237,6 +265,26 @@ export default function AgentWeeklyFlow({
     group.focus({ preventScroll: true });
   }, [costErrors, editingCost]);
 
+  // A named backend field gets scrolled into view and focused so the agent can
+  // correct it without hunting through the page. If the control is not mounted
+  // (for example, the reason box is hidden by the current amount), the focusable
+  // summary takes focus instead and still links to every reported problem.
+  useEffect(() => {
+    const fields = Object.keys(fieldErrors);
+    if (fields.length === 0) return;
+    const target = document.getElementById(fieldTargetId(fields[0]));
+    const fallback = errorSummaryRef.current;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const behavior = reducedMotion ? 'auto' : 'smooth';
+    if (target) {
+      target.scrollIntoView({ behavior, block: 'center' });
+      target.focus({ preventScroll: true });
+    } else if (fallback) {
+      fallback.scrollIntoView({ behavior, block: 'center' });
+      fallback.focus({ preventScroll: true });
+    }
+  }, [fieldErrors]);
+
   const costForm = (row: any): CostForm => costForms[row.transaction_id] || {
     source: row.payment_source || 'not_paid',
   };
@@ -259,6 +307,63 @@ export default function AgentWeeklyFlow({
       delete next[transactionId];
       return next;
     });
+  }
+
+  function resetErrors() {
+    setActionError('');
+    setFieldErrors({});
+  }
+
+  function setFieldError(field: string, message: string) {
+    setFieldErrors((old) => ({ ...old, [field]: message }));
+  }
+
+  function clearFieldError(field: string) {
+    setFieldErrors((old) => {
+      if (!(field in old)) return old;
+      const next = { ...old };
+      delete next[field];
+      return next;
+    });
+  }
+
+  /** Route a failed request to the exact control (or cost row) that caused it. */
+  function reportApiError(error: unknown, costTransactionId?: number) {
+    let message = weeklyErrorMessage(error, t);
+    if (costTransactionId != null) {
+      setEditingCost(costTransactionId);
+      setCostError(costTransactionId, message);
+      return;
+    }
+    const location = weeklyFieldLocation(error, t);
+    if (location?.field) {
+      // The generic date code also serves shortage-resolution dates. In the
+      // transfer form it always means the submitted date is outside the week.
+      if (location.field === 'submitted_at'
+        && (error as any)?.data?.code === 'weekly_report.invalid_date') {
+        message = t('ui.agent.error.transferDate');
+      }
+      setFieldError(location.field, message);
+    } else {
+      setActionError(message);
+    }
+  }
+
+  function inlineError(field: string) {
+    const message = fieldErrors[field];
+    if (!message) return null;
+    return (
+      <div id={`field-error-${field}`} className="form-text text-danger" role="alert">
+        {message}
+      </div>
+    );
+  }
+
+  function errorProps(field: string) {
+    return {
+      'aria-invalid': fieldErrors[field] ? true : undefined,
+      'aria-describedby': fieldErrors[field] ? `field-error-${field}` : undefined,
+    };
   }
 
   async function selectCostSource(row: any, source: string) {
@@ -291,7 +396,7 @@ export default function AgentWeeklyFlow({
     savingCost.current = true;
     setSavingCostId(row.transaction_id);
     setBusy(true);
-    setActionError('');
+    resetErrors();
     setNotice('');
     clearCostError(row.transaction_id);
     try {
@@ -333,7 +438,7 @@ export default function AgentWeeklyFlow({
       });
       await afterMutation('ui.label.costPaymentRecorded', saved?.report);
     } catch (e) {
-      setCostError(row.transaction_id, weeklyErrorMessage(e, t));
+      reportApiError(e, row.transaction_id);
     } finally {
       savingCost.current = false;
       setSavingCostId(null);
@@ -343,21 +448,21 @@ export default function AgentWeeklyFlow({
 
   async function addTransfer() {
     setBusy(true);
-    setActionError('');
+    resetErrors();
     setNotice('');
     try {
       const amount = parseAmount(transferForm.amount);
       if (amount === null || amount <= 0) {
-        setActionError(t('ui.agent.error.transferAmount'));
+        setFieldError('amount', t('ui.agent.error.transferAmount'));
         return;
       }
       if (transferForm.reference.trim().length < 4) {
-        setActionError(t('ui.agent.error.reference'));
+        setFieldError('reference', t('ui.agent.error.reference'));
         return;
       }
       const fileProblem = evidenceProblem(transferForm.evidence, t);
       if (fileProblem) {
-        setActionError(fileProblem);
+        setFieldError('evidence', fileProblem);
         return;
       }
       const body = new FormData();
@@ -377,7 +482,7 @@ export default function AgentWeeklyFlow({
       setTransferOpen(false);
       await afterMutation('ui.label.momoAdded');
     } catch (e) {
-      setActionError(weeklyErrorMessage(e, t));
+      reportApiError(e);
     } finally {
       setBusy(false);
     }
@@ -385,12 +490,12 @@ export default function AgentWeeklyFlow({
 
   async function removeTransfer(id: number) {
     setBusy(true);
-    setActionError('');
+    resetErrors();
     try {
       await api(`/api/weekly-reports/${report.id}/momo/${id}`, { method: 'DELETE' });
       await afterMutation('ui.label.momoRemoved');
     } catch (e) {
-      setActionError(weeklyErrorMessage(e, t));
+      reportApiError(e);
     } finally {
       setBusy(false);
     }
@@ -410,12 +515,16 @@ export default function AgentWeeklyFlow({
   }
 
   async function saveDraft() {
+    resetErrors();
     if (declared === null) {
-      setActionError(t('ui.agent.error.money'));
+      setFieldError('declared_submitted_amount', t('ui.agent.error.money'));
       return;
     }
     if (needsReason && !reasonReady) {
-      setActionError(t(situation === 'more'
+      if (!reasonCategory && situation !== 'more') {
+        setFieldError('shortage_reason_category', t('ui.agent.error.reason'));
+      }
+      setFieldError('shortage_explanation', t(situation === 'more'
         ? 'ui.agent.error.surplus' : 'ui.agent.error.reason'));
       return;
     }
@@ -429,7 +538,7 @@ export default function AgentWeeklyFlow({
       body.set('shortage_explanation', explanation.trim());
     }
     setBusy(true);
-    setActionError('');
+    resetErrors();
     setNotice('');
     try {
       await api(`/api/weekly-reports/${report.id}`, {
@@ -438,7 +547,7 @@ export default function AgentWeeklyFlow({
       });
       await afterMutation('ui.label.saved');
     } catch (e) {
-      setActionError(weeklyErrorMessage(e, t));
+      reportApiError(e);
     } finally {
       setBusy(false);
     }
@@ -446,18 +555,21 @@ export default function AgentWeeklyFlow({
 
   async function submitReport() {
     if (submitting.current) return;
+    resetErrors();
     if (declared === null) {
-      setActionError(t('ui.agent.error.money'));
+      setFieldError('declared_submitted_amount', t('ui.agent.error.money'));
       return;
     }
     if (needsReason && !reasonReady) {
-      setActionError(t(situation === 'more'
+      if (!reasonCategory && situation !== 'more') {
+        setFieldError('shortage_reason_category', t('ui.agent.error.reason'));
+      }
+      setFieldError('shortage_explanation', t(situation === 'more'
         ? 'ui.agent.error.surplus' : 'ui.agent.error.reason'));
       return;
     }
     submitting.current = true;
     setBusy(true);
-    setActionError('');
     setNotice('');
     try {
       const result = await api<any>(`/api/weekly-reports/${report.id}/submit`, {
@@ -472,7 +584,7 @@ export default function AgentWeeklyFlow({
             report_number: result.report.report_number } }));
       }
     } catch (e) {
-      setActionError(weeklyErrorMessage(e, t));
+      reportApiError(e);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -514,6 +626,34 @@ export default function AgentWeeklyFlow({
   return (
     <div className="agent-weekly-flow">
       {actionError && <div className="alert alert-danger py-2 small">{actionError}</div>}
+      {Object.keys(fieldErrors).length > 0 && (
+        <div className="agent-error-summary" role="alert" tabIndex={-1}
+          ref={errorSummaryRef} aria-labelledby="agent-error-summary-title">
+          <div className="fw-semibold small" id="agent-error-summary-title">
+            <i className="bi bi-exclamation-triangle-fill me-2" aria-hidden="true" />
+            {t('ui.agent.errorSummaryTitle')}
+          </div>
+          <ul className="small mb-0 mt-1 ps-3">
+            {Object.entries(fieldErrors).map(([field, message]) => (
+              <li key={field}>
+                <a href={`#${fieldTargetId(field)}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    const target = document.getElementById(fieldTargetId(field));
+                    if (!target) return;
+                    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+                    target.scrollIntoView({
+                      behavior: reducedMotion ? 'auto' : 'smooth', block: 'center',
+                    });
+                    target.focus({ preventScroll: true });
+                  }}>
+                  {message}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {loadError && <div className="alert alert-warning py-2 small">{weeklyErrorMessage(loadError, t)}</div>}
       {notice && <div className="alert alert-success py-2 small">{notice}</div>}
 
@@ -791,12 +931,16 @@ export default function AgentWeeklyFlow({
                   <TextInput id="agent-declared-amount" className="agent-touch" type="number"
                     min="0" step="0.01" inputMode="decimal" disabled={!editable}
                     placeholder="0.00" value={declaration}
-                    onChange={(e) => setDeclaration(e.target.value)} />
+                    onChange={(e) => {
+                      setDeclaration(e.target.value);
+                      clearFieldError('declared_submitted_amount');
+                    }} {...errorProps('declared_submitted_amount')} />
                   <span className="input-group-text">RWF</span>
                 </div>
-                {declared === null && declaration !== '' && (
+                {declared === null && declaration !== '' && !fieldErrors.declared_submitted_amount && (
                   <div className="form-text text-danger">{t('ui.agent.error.money')}</div>
                 )}
+                {inlineError('declared_submitted_amount')}
               </div>
 
               <div className="mt-3">
@@ -805,12 +949,16 @@ export default function AgentWeeklyFlow({
                 </label>
                 <select id="agent-funding-source" className="form-select agent-touch"
                   disabled={!editable} value={fundingSource}
-                  onChange={(e) => setFundingSource(e.target.value)}>
+                  onChange={(e) => {
+                    setFundingSource(e.target.value);
+                    clearFieldError('submission_funding_source');
+                  }} {...errorProps('submission_funding_source')}>
                   {sources.map((source) => (
                     <option key={source} value={source}>{t(`ui.source.${source}`)}</option>
                   ))}
                 </select>
                 <div className="form-text">{t('ui.label.fundingSourceHelp')}</div>
+                {inlineError('submission_funding_source')}
               </div>
 
               {situation !== 'idle' && (
@@ -837,19 +985,27 @@ export default function AgentWeeklyFlow({
                       </label>
                       <select id="agent-reason" className="form-select agent-touch"
                         value={reasonCategory}
-                        onChange={(e) => setReasonCategory(e.target.value)}>
+                        onChange={(e) => {
+                          setReasonCategory(e.target.value);
+                          clearFieldError('shortage_reason_category');
+                        }} {...errorProps('shortage_reason_category')}>
                         <option value="">{t('ui.filter.status')}</option>
                         {reasonOptions.map((reason) => (
                           <option key={reason} value={reason}>{t(`ui.reason.${reason}`)}</option>
                         ))}
                       </select>
+                      {inlineError('shortage_reason_category')}
                     </>
                   )}
                   <label className="form-label small fw-semibold mt-2" htmlFor="agent-explanation">
                     {t('ui.agent.explanation')}
                   </label>
                   <TextArea id="agent-explanation" value={explanation}
-                    onChange={(e) => setExplanation(e.target.value)} />
+                    onChange={(e) => {
+                      setExplanation(e.target.value);
+                      clearFieldError('shortage_explanation');
+                    }} {...errorProps('shortage_explanation')} />
+                  {inlineError('shortage_explanation')}
                 </div>
               )}
 
@@ -908,43 +1064,67 @@ export default function AgentWeeklyFlow({
                         <label className="form-label small" htmlFor="agent-transfer-provider">{t('field.provider')}</label>
                         <select id="agent-transfer-provider" className="form-select agent-touch"
                           value={transferForm.provider}
-                          onChange={(e) => setTransferForm((old) => ({ ...old, provider: e.target.value }))}>
+                          onChange={(e) => {
+                            setTransferForm((old) => ({ ...old, provider: e.target.value }));
+                            clearFieldError('provider');
+                          }} {...errorProps('provider')}>
                           {providers.map((provider) => (
                             <option key={provider} value={provider}>{t(`ui.provider.${provider}`)}</option>
                           ))}
                         </select>
+                        {inlineError('provider')}
                       </div>
                       <div className="col-12 col-sm-6">
                         <label className="form-label small" htmlFor="agent-transfer-reference">{t('field.reference')}</label>
                         <TextInput id="agent-transfer-reference" className="agent-touch"
                           value={transferForm.reference}
-                          onChange={(e) => setTransferForm((old) => ({ ...old, reference: e.target.value }))} />
+                          onChange={(e) => {
+                            setTransferForm((old) => ({ ...old, reference: e.target.value }));
+                            clearFieldError('reference');
+                          }} {...errorProps('reference')} />
+                        {inlineError('reference')}
                       </div>
                       <div className="col-12 col-sm-6">
                         <label className="form-label small" htmlFor="agent-transfer-amount">{t('ui.agent.amountInRwf')}</label>
                         <TextInput id="agent-transfer-amount" className="agent-touch" type="number"
                           min="0" step="0.01" inputMode="decimal" value={transferForm.amount}
-                          onChange={(e) => setTransferForm((old) => ({ ...old, amount: e.target.value }))} />
+                          onChange={(e) => {
+                            setTransferForm((old) => ({ ...old, amount: e.target.value }));
+                            clearFieldError('amount');
+                          }} {...errorProps('amount')} />
+                        {inlineError('amount')}
                       </div>
                       <div className="col-12 col-sm-6">
                         <label className="form-label small" htmlFor="agent-transfer-date">{t('field.datetime')}</label>
                         <TextInput id="agent-transfer-date" className="agent-touch" type="datetime-local"
                           value={transferForm.submitted_at}
-                          onChange={(e) => setTransferForm((old) => ({ ...old, submitted_at: e.target.value }))} />
+                          onChange={(e) => {
+                            setTransferForm((old) => ({ ...old, submitted_at: e.target.value }));
+                            clearFieldError('submitted_at');
+                          }} {...errorProps('submitted_at')} />
+                        {inlineError('submitted_at')}
                       </div>
                       <div className="col-12 col-sm-6">
                         <label className="form-label small" htmlFor="agent-transfer-sender">{t('field.senderPhone')}</label>
                         <TextInput id="agent-transfer-sender" className="agent-touch" inputMode="tel"
                           value={transferForm.sender_phone}
-                          onChange={(e) => setTransferForm((old) => ({ ...old, sender_phone: e.target.value }))} />
+                          onChange={(e) => {
+                            setTransferForm((old) => ({ ...old, sender_phone: e.target.value }));
+                            clearFieldError('sender_phone');
+                          }} {...errorProps('sender_phone')} />
+                        {inlineError('sender_phone')}
                       </div>
                       <div className="col-12 col-sm-6">
                         <label className="form-label small" htmlFor="agent-transfer-evidence">{t('field.evidence')}</label>
                         <TextInput id="agent-transfer-evidence" className="agent-touch" type="file"
                           accept=".pdf,.png,.jpg,.jpeg,.webp"
-                          onChange={(e) => setTransferForm((old) => ({
-                            ...old, evidence: e.target.files?.[0] || null,
-                          }))} />
+                          onChange={(e) => {
+                            setTransferForm((old) => ({
+                              ...old, evidence: e.target.files?.[0] || null,
+                            }));
+                            clearFieldError('evidence');
+                          }} {...errorProps('evidence')} />
+                        {inlineError('evidence')}
                       </div>
                     </div>
                     <div className="form-text">{t('ui.label.evidenceHelp')}</div>

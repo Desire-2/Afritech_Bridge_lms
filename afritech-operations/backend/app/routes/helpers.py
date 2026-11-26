@@ -27,10 +27,16 @@ def paginate_response(items, pagination_obj):
     })
 
 
-def json_error(message, status=400, code=None):
+def json_error(message, status=400, code=None, field=None, details=None):
     payload = {'error': message}
     if code:
         payload['code'] = code
+    # Field metadata is additive: older clients keep reading `error`/`code`,
+    # while newer forms can mark and scroll to the exact invalid control.
+    if field:
+        payload['field'] = field
+    if details:
+        payload['details'] = details
     return jsonify(payload), status
 
 
