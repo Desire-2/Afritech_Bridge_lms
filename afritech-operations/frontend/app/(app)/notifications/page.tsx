@@ -1,8 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useFetch } from '@/lib/use-fetch';
 import { api, fmtDateTime } from '@/lib/api';
+import {
+  isWeeklyNotificationType, localizedWeeklyMessage, useWeeklyI18n, weeklyNotificationHref,
+} from '@/lib/weekly-i18n';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge } from '@/components/ui';
 
 const SEVERITY_ICON: Record<string, string> = {
@@ -22,6 +26,8 @@ const SEVERITY_BG: Record<string, string> = {
 };
 
 export default function NotificationsPage() {
+  const router = useRouter();
+  const { lang } = useWeeklyI18n();
   const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useFetch('/api/notifications', [page], { page, per_page: 30 });
   const { data: countData, reload: reloadCount } = useFetch('/api/notifications/unread-count');
@@ -90,7 +96,7 @@ export default function NotificationsPage() {
                 <button
                   key={n.id}
                   className={`notif-row ${n.is_read ? '' : 'notif-unread'}`}
-                  onClick={() => markRead(n)}
+                  onClick={() => { markRead(n); router.push(weeklyNotificationHref(n)); }}
                   disabled={busyId === n.id || busyAll}
                 >
                   <div className={`notif-sev bg-${SEVERITY_BG[n.severity] || 'info'}-subtle`}>
@@ -101,7 +107,11 @@ export default function NotificationsPage() {
                       <div className="fw-semibold text-capitalize small">{n.type.replace(/_/g, ' ')}</div>
                       <span className="small text-muted text-nowrap">{fmtDateTime(n.created_at)}</span>
                     </div>
-                    <div className="small text-muted text-truncate">{n.message}</div>
+                    <div className="small text-muted text-truncate">
+                      {isWeeklyNotificationType(n.type)
+                        ? localizedWeeklyMessage(n.message, lang) || n.type
+                        : n.message}
+                    </div>
                   </div>
                   <div className="d-flex flex-column align-items-end gap-1">
                     <Badge status={n.severity} />

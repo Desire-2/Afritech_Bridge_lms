@@ -20,7 +20,7 @@ export default function ManagerDashboard() {
   const queueItems = weeklyQueue.data?.items || [];
 
   const actionItems = [
-    { label: 'Weekly reports to review', value: data.weekly_reports_pending ?? weeklyQueue.data?.total ?? '—', href: '/finance/weekly-reports/review', detail: 'Submitted or under review', tone: ((data.weekly_reports_pending ?? weeklyQueue.data?.total) || 0) > 0 ? 'warn' : '' },
+    { label: 'Weekly reports to review', value: data.weekly_reports_pending ?? weeklyQueue.data?.total ?? '—', href: '/finance/weekly-reports?view=review', detail: 'Submitted or under review', tone: ((data.weekly_reports_pending ?? weeklyQueue.data?.total) || 0) > 0 ? 'warn' : '' },
     { label: 'Closings awaiting review', value: data.closings_pending || 0, href: '/closings', detail: 'Daily cash submissions', tone: (data.closings_pending || 0) > 0 ? 'warn' : '' },
     { label: 'Pending expenses', value: data.expenses_pending || 0, href: '/finance/expenses', detail: 'Approval queue', tone: (data.expenses_pending || 0) > 0 ? 'warn' : '' },
     { label: 'Overdue tasks', value: e.overdue_tasks || 0, href: '/tasks', detail: 'Needs follow-up', tone: (e.overdue_tasks || 0) > 0 ? 'danger' : '' },
@@ -34,7 +34,7 @@ export default function ManagerDashboard() {
         subtitle={`Operational and financial priorities for ${fmtDate(period.today)}.`}
         actions={
           <>
-            <Link href="/finance/weekly-reports/review" className="btn btn-primary btn-sm">
+            <Link href="/finance/weekly-reports?view=review" className="btn btn-primary btn-sm">
               <i className="bi bi-clipboard-check me-1" aria-hidden="true" />Review weekly reports
             </Link>
             <Link href="/closings" className="btn btn-outline-secondary btn-sm">
@@ -69,7 +69,7 @@ export default function ManagerDashboard() {
                 <h2 className="panel-title">Weekly financial reports</h2>
                 <p className="panel-subtitle">Submitted reports waiting for accounting review or decision.</p>
               </div>
-              <Link href="/finance/weekly-reports/review" className="btn btn-sm btn-outline-primary">Open review queue</Link>
+              <Link href="/finance/weekly-reports?view=review" className="btn btn-sm btn-outline-primary">Open review queue</Link>
             </div>
             <div className="panel-body flush">
               {weeklyQueue.loading && <div className="p-3"><Loading label="Loading review queue…" /></div>}
@@ -85,7 +85,7 @@ export default function ManagerDashboard() {
                       {queueItems.map((r: any) => (
                         <tr key={r.id}>
                           <td>
-                            <Link href="/finance/weekly-reports/review" className="fw-semibold text-decoration-none">{r.report_number}</Link>
+                            <Link href="/finance/weekly-reports?view=review" className="fw-semibold text-decoration-none">{r.report_number}</Link>
                             <div className="small text-muted">{r.branch_name || '—'}</div>
                           </td>
                           <td>{r.employee_name || '—'}</td>

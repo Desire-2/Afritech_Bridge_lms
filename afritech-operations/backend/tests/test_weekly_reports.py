@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import (
-    AuditLog, Client, DailyClosing, Employee, Expense, MoMoSubmission,
+    AuditLog, Branch, Client, DailyClosing, Employee, Expense, MoMoSubmission,
     MOMO_PROVIDERS, Notification, OfficialCostPayment, OutstandingAllocation,
     Payment, PaymentMethod, SHORTAGE_REASON_CATEGORIES, Service,
     ServiceTransaction, Setting, User, WEEKLY_REPORT_STATUSES, WeeklyReport,
@@ -2582,3 +2582,265 @@ class TestReviewActionWiring:
                                        entity='weekly_report',
                                        entity_id=str(report.id)).first()
         assert log is not None and 'pdf' in log.new_value
+
+
+# ── central management workspace (GET /queue) ───────────────────────────────
+
+
+def _queue_state(report, status, submitted_at, shortage=0, declared=0, verified=0,
+                 agent_reported=0, missing=(), override=None):
+    """Set the frozen review-facing state without touching source transactions."""
+    report.status = status
+    report.submitted_at = submitted_at
+    report.shortage_amount = shortage
+    report.declared_submitted_amount = declared
+    report.verified_submitted = verified
+    report.agent_reported_submitted = agent_reported
+    report.missing_closing_override_reason = override
+    payload = {
+        'missing_closings': list(missing),
+        'components': {'expected_remittance': '1000.00'},
+        'daily_closings': [
+            {'date': day, 'status': 'missing', 'closing_id': None}
+            for day in missing
+        ],
+    }
+    report.snapshot = json.dumps(payload)
+    report.calculation = json.dumps(payload)
+    db.session.flush()
+
+
+class TestReviewQueueWorkspace:
+    """Backend tests for the reviewer/manager/accountant queue workspace."""
+
+    def _seed(self, client, admin_hdr):
+        stamp = datetime.now(timezone.utc)
+        week_a = _future_week()
+        week_b = week_a + timedelta(days=7)
+        week_c = week_a + timedelta(days=14)
+        agent, agent2 = _agent(), _agent2()
+        r1 = _generate(client, admin_hdr, agent, week_a)
+        r2 = _generate(client, admin_hdr, agent2, week_a)
+        r3 = _generate(client, admin_hdr, agent, week_b)
+        r4 = _generate(client, admin_hdr, agent2, week_b)
+        r5 = _generate(client, admin_hdr, agent, week_c)
+        r6 = _generate(client, admin_hdr, agent2, week_c)
+
+        # r1 is the fully flagged report: shortage, unverified declaration,
+        # pending MoMo + pending personal cost claim, and real missing days.
+        _queue_state(r1, 'submitted', stamp, shortage=150, declared=1000,
+                     verified=400, agent_reported=1000,
+                     missing=[week_a.isoformat()])
+        _queue_state(r2, 'under_financial_review', stamp + timedelta(hours=1),
+                     declared=500, verified=500, agent_reported=500)
+        _queue_state(r3, 'submitted', stamp + timedelta(hours=2),
+                     declared=300, verified=300, agent_reported=300)
+        # r4 has missing days, but an authorized override makes them actionable
+        # nowhere; its legacy zero declaration still leaves agent funds unverified.
+        _queue_state(r4, 'submitted', stamp + timedelta(hours=3),
+                     declared=0, verified=0, agent_reported=200,
+                     missing=[week_b.isoformat()],
+                     override='Authorized for this test.')
+        _queue_state(r5, 'approved', stamp + timedelta(hours=4), shortage=25,
+                     declared=100, verified=100, agent_reported=100)
+        _queue_state(r6, 'rejected', stamp + timedelta(hours=5))
+
+        db.session.add(MoMoSubmission(
+            report_id=r1.id, provider='momo',
+            reference=f'WKM-QUEUE-{uuid.uuid4().hex[:8]}', amount=Decimal('500.00'),
+            submitted_at=stamp, verification_status='pending',
+            created_by=_user('agent@afritech.dev').id))
+        claim = _claim_row(r1, _txn(agent, week_a), amount=200,
+                           reference='WKP-QUEUE-1')
+        assert claim.verification_status == 'pending'
+        db.session.commit()
+
+        return {
+            'r1': r1, 'r2': r2, 'r3': r3, 'r4': r4, 'r5': r5, 'r6': r6,
+            'week_a': week_a, 'week_b': week_b, 'week_c': week_c,
+        }
+
+    def test_queue_filters_week_branch_search_and_flags(
+            self, client, admin_hdr, accountant_hdr):
+        s = self._seed(client, admin_hdr)
+
+        def ids(query=''):
+            body = _assert_ok(client.get(f'/api/weekly-reports/queue?{query}',
+                                         headers=accountant_hdr))
+            return {row['id'] for row in body['items']}
+
+        assert ids(f'week_start={s["week_a"].isoformat()}') == {
+            s['r1'].id, s['r2'].id}
+        assert ids(f'week_start={s["week_b"].isoformat()}') == {
+            s['r3'].id, s['r4'].id}
+
+        branch_id = _agent().branch_id
+        assert ids(f'week_start={s["week_a"].isoformat()}&branch_id={branch_id}') == {
+            s['r1'].id}
+        assert ids(f'branch_id={_agent2().branch_id}') == {
+            s['r2'].id, s['r4'].id}
+
+        assert ids(f'week_start={s["week_a"].isoformat()}&search=claude') == {
+            s['r1'].id}
+        assert ids(f'week_start={s["week_a"].isoformat()}&search=kigali%20branch') == {
+            s['r1'].id}
+        assert ids(f'search={s["r1"].report_number}') == {s['r1'].id}
+        assert ids('search=no-such-agent') == set()
+
+        assert ids('has_shortage=true') == {s['r1'].id}
+        assert ids('has_pending=true') == {s['r1'].id}
+        assert ids('has_unverified=true') == {s['r1'].id, s['r4'].id}
+        assert ids('missing_closings=true') == {s['r1'].id}
+        assert ids('has_shortage=false') == {
+            s['r1'].id, s['r2'].id, s['r3'].id, s['r4'].id}
+
+        bad_week = client.get('/api/weekly-reports/queue?week_start=2031-01-13',
+                              headers=accountant_hdr)
+        assert bad_week.status_code == 400
+        assert 'Sunday' in bad_week.get_json()['error']
+
+    def test_queue_row_signals_come_from_backend(
+            self, client, admin_hdr, accountant_hdr):
+        s = self._seed(client, admin_hdr)
+        body = _assert_ok(client.get('/api/weekly-reports/queue?per_page=50',
+                                     headers=accountant_hdr))
+        rows = {row['id']: row for row in body['items']}
+
+        flagged = rows[s['r1'].id]
+        assert flagged['pending_submission_count'] == 1
+        assert flagged['unverified_personal_payment_count'] == 1
+        assert flagged['missing_closing_count'] == 1
+        assert flagged['has_shortage'] is True
+
+        clean = rows[s['r2'].id]
+        assert clean['pending_submission_count'] == 0
+        assert clean['unverified_personal_payment_count'] == 0
+        assert clean['missing_closing_count'] == 0
+        assert clean['has_shortage'] is False
+
+        # The override does not erase the recorded days, only the review signal.
+        assert rows[s['r4'].id]['missing_closing_count'] == 1
+
+    def test_queue_metrics_use_scope_and_ignore_row_filters(
+            self, client, admin_hdr, accountant_hdr):
+        s = self._seed(client, admin_hdr)
+
+        body = _assert_ok(client.get(
+            f'/api/weekly-reports/queue?week_start={s["week_a"].isoformat()}',
+            headers=accountant_hdr))
+        assert body['metrics'] == {
+            'total': 2,
+            'submitted': 1,
+            'under_review': 1,
+            'returned': 0,
+            'approved': 0,
+            'rejected': 0,
+            'shortage_reports': 1,
+            'shortage_amount': '150.00',
+            'pending_submissions': 1,
+            'unverified_payments': 1,
+            'missing_closings': 1,
+            'total_shortage': '150.00',
+        }
+
+        # Search/status are row filters: they must never distort the dashboard.
+        filtered = _assert_ok(client.get(
+            f'/api/weekly-reports/queue?week_start={s["week_a"].isoformat()}'
+            '&status=approved&search=no-match', headers=accountant_hdr))
+        assert filtered['items'] == []
+        assert filtered['total'] == 0
+        assert filtered['metrics'] == body['metrics']
+
+        # A branch filter is part of the scope, so metrics must shrink with it.
+        scoped = _assert_ok(client.get(
+            f'/api/weekly-reports/queue?week_start={s["week_a"].isoformat()}'
+            f'&branch_id={_agent2().branch_id}', headers=accountant_hdr))
+        assert scoped['metrics']['total'] == 1
+        assert scoped['metrics']['submitted'] == 0
+        assert scoped['metrics']['under_review'] == 1
+        assert scoped['metrics']['shortage_amount'] == '0.00'
+        assert scoped['metrics']['pending_submissions'] == 0
+        assert scoped['metrics']['unverified_payments'] == 0
+        assert scoped['metrics']['missing_closings'] == 0
+        assert scoped['filters']['branch_id'] == _agent2().branch_id
+
+    def test_queue_manager_is_branch_scoped_and_cross_branch_denied(
+            self, client, admin_hdr, manager_hdr, accountant_hdr):
+        s = self._seed(client, admin_hdr)
+        manager_emp = _user('manager@afritech.dev').employee
+        own = _generate(client, admin_hdr, manager_emp, s['week_a'])
+        _queue_state(own, 'submitted', datetime.now(timezone.utc),
+                     declared=10, verified=10, agent_reported=10)
+        db.session.commit()
+
+        queue = _assert_ok(client.get('/api/weekly-reports/queue',
+                                      headers=manager_hdr))
+        ids = {row['id'] for row in queue['items']}
+        assert own.id in ids
+        assert s['r1'].id not in ids and s['r2'].id not in ids
+        assert queue['metrics']['total'] == 1
+
+        denied = client.get(f'/api/weekly-reports/queue?branch_id={_agent().branch_id}',
+                            headers=manager_hdr)
+        assert denied.status_code == 403
+        assert 'own branch' in denied.get_json()['error']
+
+        allowed = _assert_ok(client.get(
+            f'/api/weekly-reports/queue?branch_id={manager_emp.branch_id}',
+            headers=manager_hdr))
+        assert {row['id'] for row in allowed['items']} == {own.id}
+
+        # A non-manager reviewer is free to look across real branches.
+        cross = _assert_ok(client.get(
+            f'/api/weekly-reports/queue?branch_id={_agent2().branch_id}',
+            headers=accountant_hdr))
+        assert s['r2'].id in {row['id'] for row in cross['items']}
+        unknown = client.get('/api/weekly-reports/queue?branch_id=999999',
+                             headers=accountant_hdr)
+        assert unknown.status_code == 400
+
+    def test_queue_denies_company_secretary(self, client, admin_hdr, no_email):
+        self._seed(client, admin_hdr)
+        secretary = _hdr(client, 'secretary@afritech.dev')
+        for query in ('', '?status=submitted', '?has_pending=true'):
+            response = client.get(f'/api/weekly-reports/queue{query}',
+                                  headers=secretary)
+            assert response.status_code == 403
+
+    def test_queue_keeps_status_pagination_and_sort_contract(
+            self, client, admin_hdr, accountant_hdr):
+        s = self._seed(client, admin_hdr)
+
+        first = _assert_ok(client.get('/api/weekly-reports/queue?page=1&per_page=1',
+                                      headers=accountant_hdr))
+        for key in ('items', 'total', 'page', 'per_page', 'pages'):
+            assert key in first
+        assert first['page'] == 1 and first['per_page'] == 1
+        assert first['total'] == 4 and first['pages'] == 4
+        assert len(first['items']) == 1
+
+        second = _assert_ok(client.get('/api/weekly-reports/queue?page=2&per_page=1',
+                                       headers=accountant_hdr))
+        assert second['page'] == 2 and len(second['items']) == 1
+        assert second['items'][0]['id'] != first['items'][0]['id']
+
+        status_only = _assert_ok(client.get(
+            '/api/weekly-reports/queue?status=under_financial_review',
+            headers=accountant_hdr))
+        assert {row['id'] for row in status_only['items']} == {s['r2'].id}
+
+        newest = _assert_ok(client.get('/api/weekly-reports/queue?per_page=50',
+                                       headers=accountant_hdr))
+        assert [row['id'] for row in newest['items']] == [
+            s['r4'].id, s['r3'].id, s['r2'].id, s['r1'].id]
+        oldest = _assert_ok(client.get(
+            '/api/weekly-reports/queue?sort=oldest&per_page=50',
+            headers=accountant_hdr))
+        assert [row['id'] for row in oldest['items']] == [
+            s['r1'].id, s['r2'].id, s['r3'].id, s['r4'].id]
+        by_amount = _assert_ok(client.get(
+            '/api/weekly-reports/queue?sort=amount&per_page=50',
+            headers=accountant_hdr))
+        assert by_amount['items'][0]['id'] == s['r1'].id
+        assert client.get('/api/weekly-reports/queue?sort=sideways',
+                          headers=accountant_hdr).status_code == 400

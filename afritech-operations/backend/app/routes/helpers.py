@@ -15,8 +15,13 @@ def paginate(query):
     return p
 
 
-def paginate_response(items, pagination_obj):
-    return jsonify({
+def paginate_payload(items, pagination_obj):
+    """The JSON body behind :func:`paginate_response`.
+
+    Routes that need to add dashboard/context keys can extend this body without
+    re-inventing the pagination contract (items/total/page/per_page/pages).
+    """
+    return {
         'items': items,
         'total': pagination_obj.total,
         'page': pagination_obj.page,
@@ -24,7 +29,11 @@ def paginate_response(items, pagination_obj):
         'pages': pagination_obj.pages,
         'has_next': pagination_obj.has_next,
         'has_prev': pagination_obj.has_prev,
-    })
+    }
+
+
+def paginate_response(items, pagination_obj):
+    return jsonify(paginate_payload(items, pagination_obj))
 
 
 def json_error(message, status=400, code=None, field=None, details=None):

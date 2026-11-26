@@ -187,8 +187,7 @@ export const NAV: NavGroup[] = [
       { label: 'Clients', href: '/clients', icon: 'bi-people', perm: [P.clientsView, P.clientsManage] },
       { label: 'Daily Closing', href: '/closings', icon: 'bi-calendar-check', perm: [P.closingsView, P.closingsSubmit, P.closingsApprove] },
       { label: 'My Expenses', href: '/finance/expenses', icon: 'bi-receipt-cutoff', perm: [P.expensesView, P.expensesCreate] },
-      { label: 'Weekly Financial Report', href: '/finance/weekly-reports', icon: 'bi-graph-up-arrow', perm: P.weeklyReportsView, i18nKey: 'nav.weeklyReports' },
-      { label: 'Weekly Report Review', href: '/finance/weekly-reports/review', icon: 'bi-clipboard-check', perm: P.weeklyReportsReview, i18nKey: 'nav.weeklyReview' },
+      { label: 'Weekly Reports', href: '/finance/weekly-reports', icon: 'bi-clipboard-check', perm: P.weeklyReportsView, i18nKey: 'nav.weeklyWorkspace' },
     ],
   },
   {

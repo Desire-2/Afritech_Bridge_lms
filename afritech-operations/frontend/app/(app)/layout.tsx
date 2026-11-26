@@ -8,7 +8,9 @@ import AccessDenied from '@/components/AccessDenied';
 import { useAuth } from '@/lib/auth';
 import { api, fmtDateTime, logout } from '@/lib/api';
 import { routeDenied, pageIdentity, roleLabel } from '@/lib/permissions';
-import { isWeeklyNotificationType, localizedWeeklyMessage, useWeeklyI18n } from '@/lib/weekly-i18n';
+import {
+  isWeeklyNotificationType, localizedWeeklyMessage, useWeeklyI18n, weeklyNotificationHref,
+} from '@/lib/weekly-i18n';
 import { Loading, Badge } from '@/components/ui';
 
 interface NotifItem {
@@ -18,6 +20,8 @@ interface NotifItem {
   message: string;
   is_read: boolean;
   created_at: string | null;
+  related_type?: string | null;
+  related_id?: number | null;
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -136,7 +140,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   {notice.length === 0 && <div className="list-group-item small text-muted py-3">No notifications.</div>}
                   {notice.map((n) => (
                     <Link
-                      href="/notifications"
+                      href={weeklyNotificationHref(n)}
                       key={n.id}
                       onClick={() => markRead(n)}
                       className={`list-group-item list-group-item-action py-2 ${n.is_read ? '' : 'bg-primary-subtle'}`}

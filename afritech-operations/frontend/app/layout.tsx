@@ -4,6 +4,7 @@ import 'bootstrap-icons/font/bootstrap-icons.css';
 import './globals.css';
 import { AuthProvider } from '@/lib/auth';
 import BootstrapJS from '@/components/bootstrap';
+import { Toaster } from 'sonner';
 
 export const metadata: Metadata = {
   title: 'AfriTech Bridge Operations',
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <AuthProvider>
           <BootstrapJS />
+          <Toaster position="top-right" richColors closeButton />
           {children}
         </AuthProvider>
       </body>

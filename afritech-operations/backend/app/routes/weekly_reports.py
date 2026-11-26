@@ -1,4 +1,5 @@
 """Weekly financial report and money submission API (backend-authoritative)."""
+import json
 import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -7,7 +8,7 @@ from flask import Blueprint, request, jsonify, current_app, send_file
 
 from ..extensions import db
 from ..models import (
-    AuditLog, Employee, MoMoSubmission, OfficialCostPayment, Setting, User,
+    AuditLog, Branch, Employee, MoMoSubmission, OfficialCostPayment, Setting, User,
     WeeklyReport, MOMO_PROVIDERS, SHORTAGE_REASON_CATEGORIES,
     AGENT_SHORTAGE_REASON_CATEGORIES, OFFICIAL_COST_PAYMENT_SOURCES,
     WEEKLY_REPORT_STATUSES, WEEKLY_SUBMISSION_SOURCES,
@@ -15,15 +16,18 @@ from ..models import (
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
 from ..services.weekly_policy import (
-    available_weeks, business_timezone, get_policy,
-    normalize_week_start, week_bounds, week_end_for,
+    WeekPolicyError, available_weeks, business_timezone, get_policy, money,
+    normalize_week_start, require_week_start, week_bounds, week_end_for,
 )
 from ..services.weekly_report_service import (
     WeeklyReportService, WeeklyReportError, has_personal_cost_credit,
     is_company_funded_service,
 )
 from ..services.weekly_i18n import SUPPORTED_LANGUAGES, t
-from .helpers import json_error, paginate, paginate_response, parse_date, parse_json
+from .helpers import (
+    json_error, paginate, paginate_payload, paginate_response,
+    parse_date, parse_id, parse_json,
+)
 
 bp = Blueprint('weekly_reports', __name__, url_prefix='/api/weekly-reports')
 service = WeeklyReportService()
@@ -196,20 +200,294 @@ def agent_summary():
     })
 
 
+# ── central review workspace (GET /queue) helpers ────────────────────────────
+# The queue keeps its original default status window; the new filters and
+# metrics are additive and never change the authoritative report calculation.
+
+REVIEW_QUEUE_STATUSES = (
+    'submitted', 'under_financial_review', 'returned_for_correction',
+)
+_TRUE_ARGS = frozenset(('1', 'true', 'yes', 'on'))
+_FALSE_ARGS = frozenset(('', '0', 'false', 'no', 'off'))
+
+
+def _bool_arg(name):
+    """Return (bool, error) for an optional `?flag=true` query parameter."""
+    raw = request.args.get(name)
+    if raw is None:
+        return False, None
+    value = str(raw).strip().lower()
+    if value in _TRUE_ARGS:
+        return True, None
+    if value in _FALSE_ARGS:
+        return False, None
+    return False, json_error(f'{name} must be true or false', 400, field=name)
+
+
+def _queue_scope(user):
+    """Access scope shared by the queue rows and their dashboard metrics."""
+    q = WeeklyReport.query
+    if _is_manager_scoped(user):
+        emp = current_employee()
+        q = q.filter_by(branch_id=emp.branch_id if emp else -1)
+    return q
+
+
+def _pending_verification_exists():
+    """Real EXISTS predicates: any pending remittance or cost-payment claim."""
+    momo_pending = db.exists().where(
+        MoMoSubmission.report_id == WeeklyReport.id,
+        MoMoSubmission.verification_status == 'pending',
+    ).correlate(WeeklyReport)
+    claim_pending = db.exists().where(
+        OfficialCostPayment.report_id == WeeklyReport.id,
+        OfficialCostPayment.verification_status == 'pending',
+    ).correlate(WeeklyReport)
+    return db.or_(momo_pending, claim_pending)
+
+
+def _unverified_submission():
+    """Amount-based 'still unverified' signal on the submitted declaration.
+
+    A declared amount is the agent's own statement of what she sent. When a
+    declaration is present, anything below it is unverified; older reports with
+    no declaration fall back to the agent-reported MoMo total. This is a SQL
+    comparison on frozen report columns — no Python post-filtering and no
+    recomputation from source transactions.
+    """
+    declared = db.func.coalesce(WeeklyReport.declared_submitted_amount, 0)
+    verified = db.func.coalesce(WeeklyReport.verified_submitted, 0)
+    reported = db.func.coalesce(WeeklyReport.agent_reported_submitted, 0)
+    return db.or_(
+        db.and_(declared > 0, verified < declared),
+        db.and_(declared <= 0, verified < reported),
+    )
+
+
+def _frozen_payload(row):
+    """Prefer the frozen calculation (with overlays), then the snapshot."""
+    for raw in (row.calculation, row.snapshot):
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _missing_closing_entries(payload):
+    """Missing days recorded in the frozen calculation/snapshot JSON.
+
+    build_calculation() writes a top-level `missing_closings` list; older or
+    custom snapshots may nest it under `components`. Both shapes are accepted,
+    and an empty list (or absent key) means no missing closings. The daily
+    closing rows are a last-resort fallback for the same frozen payload.
+    """
+    if not isinstance(payload, dict):
+        return []
+    for container in (payload, payload.get('components')):
+        if not isinstance(container, dict):
+            continue
+        raw = container.get('missing_closings')
+        if isinstance(raw, list):
+            return [str(item) for item in raw if item not in (None, '')]
+        if isinstance(raw, dict):
+            return [str(key) for key in raw if key not in (None, '')]
+    daily = payload.get('daily_closings')
+    if isinstance(daily, list):
+        return [str(row.get('date')) for row in daily
+                if isinstance(row, dict)
+                and (row.get('status') == 'missing' or not row.get('closing_id'))]
+    return []
+
+
+def _missing_closing_counts(base_query):
+    """Count missing days on already-scoped rows, without recomputing figures.
+
+    `calculation`/`snapshot` are single TEXT JSON blobs, not relational tables.
+    SQLite (tests) and PostgreSQL (production) expose different JSON operators,
+    so there is no portable SQL predicate for this shape. The helper therefore
+    reads only the id/JSON/override columns of rows that have already passed
+    the access + week + branch scope filters, and returns both the raw per-row
+    counts and the ids still actionable (no reviewer override).
+    """
+    rows = base_query.with_entities(
+        WeeklyReport.id,
+        WeeklyReport.calculation,
+        WeeklyReport.snapshot,
+        WeeklyReport.missing_closing_override_reason,
+    ).all()
+    counts, actionable = {}, set()
+    for row in rows:
+        entries = _missing_closing_entries(_frozen_payload(row))
+        if not entries:
+            continue
+        counts[row.id] = len(entries)
+        if not row.missing_closing_override_reason:
+            actionable.add(row.id)
+    return counts, actionable
+
+
+def _queue_metrics(base_query, actionable_missing):
+    """Context counts from the access/week/branch scope, before row filters."""
+    status_counts = dict(base_query.with_entities(
+        WeeklyReport.status, db.func.count()).group_by(WeeklyReport.status).all())
+    shortage = base_query.filter(WeeklyReport.shortage_amount > 0)
+    shortage_amount = shortage.with_entities(
+        db.func.coalesce(db.func.sum(WeeklyReport.shortage_amount), 0)).scalar()
+    amount = str(money(shortage_amount))
+    return {
+        'total': base_query.count(),
+        'submitted': status_counts.get('submitted', 0),
+        'under_review': status_counts.get('under_financial_review', 0),
+        'returned': status_counts.get('returned_for_correction', 0),
+        'approved': status_counts.get('approved', 0),
+        'rejected': status_counts.get('rejected', 0),
+        'shortage_reports': shortage.count(),
+        'shortage_amount': amount,
+        'pending_submissions': base_query.filter(
+            _pending_verification_exists()).count(),
+        'unverified_payments': base_query.filter(_unverified_submission()).count(),
+        'missing_closings': len(actionable_missing),
+        'total_shortage': amount,  # alias for dashboards using the older label
+    }
+
+
+def _like_pattern(value):
+    escaped = str(value).replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f'%{escaped}%'
+
+
 @bp.get('/queue')
 @require_any_permission('weekly_reports.review', 'weekly_reports.manage')
 def review_queue():
     user = current_user()
-    q = WeeklyReport.query.filter(WeeklyReport.status.in_(
-        ['submitted', 'under_financial_review', 'returned_for_correction']))
+
+    week_start, err = parse_date(request.args.get('week_start'), 'week_start')
+    if err:
+        return err
+    if week_start:
+        try:
+            week_start = require_week_start(week_start)
+        except WeekPolicyError as exc:
+            return json_error(str(exc), 400, field='week_start')
+
+    branch_id, err = parse_id(request.args.get('branch_id'), 'branch_id')
+    if err:
+        return err
     if _is_manager_scoped(user):
         emp = current_employee()
-        q = q.filter_by(branch_id=emp.branch_id if emp else -1)
+        my_branch = emp.branch_id if emp else None
+        if branch_id is not None and branch_id != my_branch:
+            return json_error(
+                'Managers can only view weekly reports for their own branch', 403)
+    elif branch_id is not None and not Branch.query.get(branch_id):
+        return json_error('Unknown branch_id', 400, field='branch_id')
+
+    flags = {}
+    for name in ('has_shortage', 'has_pending', 'has_unverified', 'missing_closings'):
+        flags[name], err = _bool_arg(name)
+        if err:
+            return err
+
     status = request.args.get('status')
+    search = (request.args.get('search') or '').strip()
+    sort = (request.args.get('sort') or 'newest').strip().lower()
+    if sort not in ('newest', 'oldest', 'amount'):
+        return json_error('sort must be newest, oldest or amount', 400, field='sort')
+
+    # Scope is applied once and reused by both the rows and their metrics.
+    base = _queue_scope(user)
+    if week_start:
+        base = base.filter_by(week_start=week_start)
+    if branch_id is not None:
+        base = base.filter_by(branch_id=branch_id)
+    missing_counts, actionable_missing = _missing_closing_counts(base)
+    metrics = _queue_metrics(base, actionable_missing)
+
+    # The default queue stays backward compatible; every new filter is additive.
+    q = base.filter(WeeklyReport.status.in_(REVIEW_QUEUE_STATUSES))
     if status:
         q = q.filter_by(status=status)
-    p = paginate(q.order_by(WeeklyReport.submitted_at.desc()))
-    return paginate_response([r.to_dict() for r in p.items], p)
+    if search:
+        pattern = _like_pattern(search)
+        # employee_name is a Python property, so compose the stored columns with
+        # the portable SQL concatenation operator (SQLite and PostgreSQL agree).
+        full_name = (db.func.coalesce(Employee.first_name, '')
+                     .op('||')(' ')
+                     .op('||')(db.func.coalesce(Employee.last_name, '')))
+        q = (q.join(Employee, WeeklyReport.employee_id == Employee.id)
+             .outerjoin(Branch, WeeklyReport.branch_id == Branch.id)
+             .filter(db.or_(
+                 WeeklyReport.report_number.ilike(pattern, escape='\\'),
+                 full_name.ilike(pattern, escape='\\'),
+                 Branch.name.ilike(pattern, escape='\\'),
+             )))
+    if flags['has_shortage']:
+        q = q.filter(WeeklyReport.shortage_amount > 0)
+    if flags['has_pending']:
+        q = q.filter(_pending_verification_exists())
+    if flags['has_unverified']:
+        q = q.filter(_unverified_submission())
+    if flags['missing_closings']:
+        q = q.filter(WeeklyReport.id.in_(actionable_missing))
+
+    # 'amount' sorts by the shortage the reviewer must clear; null submission
+    # timestamps go last in both date directions on every supported database.
+    if sort == 'oldest':
+        ordering = (WeeklyReport.submitted_at.asc().nullslast(), WeeklyReport.id.asc())
+    elif sort == 'amount':
+        ordering = (WeeklyReport.shortage_amount.desc(), WeeklyReport.id.desc())
+    else:
+        ordering = (WeeklyReport.submitted_at.desc().nullslast(), WeeklyReport.id.desc())
+    p = paginate(q.order_by(*ordering))
+
+    # Two grouped queries over the page ids (never one query per row) supply the
+    # review signals. Counts stay scoped to rows this caller can actually see.
+    page_ids = [row.id for row in p.items]
+    pending_momo_counts = {}
+    pending_claim_counts = {}
+    if page_ids:
+        pending_momo_counts = dict(db.session.query(
+            MoMoSubmission.report_id, db.func.count()).filter(
+            MoMoSubmission.report_id.in_(page_ids),
+            MoMoSubmission.verification_status == 'pending',
+        ).group_by(MoMoSubmission.report_id).all())
+        pending_claim_counts = dict(db.session.query(
+            OfficialCostPayment.report_id, db.func.count()).filter(
+            OfficialCostPayment.report_id.in_(page_ids),
+            OfficialCostPayment.verification_status == 'pending',
+            OfficialCostPayment.personal_payment.is_(True),
+        ).group_by(OfficialCostPayment.report_id).all())
+
+    items = []
+    for report in p.items:
+        item = report.to_dict()
+        item['pending_submission_count'] = pending_momo_counts.get(report.id, 0)
+        item['unverified_personal_payment_count'] = pending_claim_counts.get(report.id, 0)
+        item['missing_closing_count'] = missing_counts.get(report.id, 0)
+        item['has_shortage'] = bool(
+            report.shortage_amount is not None and report.shortage_amount > 0)
+        items.append(item)
+
+    filters = {
+        'status': status or None,
+        'week_start': week_start.isoformat() if week_start else None,
+        'branch_id': branch_id,
+        'search': search or None,
+        'has_shortage': flags['has_shortage'],
+        'has_pending': flags['has_pending'],
+        'has_unverified': flags['has_unverified'],
+        'missing_closings': flags['missing_closings'],
+        'sort': sort,
+    }
+    payload = paginate_payload(items, p)
+    payload['metrics'] = metrics
+    payload['filters'] = filters
+    return jsonify(payload)
 
 
 @bp.get('')

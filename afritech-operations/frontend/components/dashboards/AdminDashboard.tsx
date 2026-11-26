@@ -23,7 +23,7 @@ export default function AdminDashboard() {
   const period = data.period || {};
 
   const attention = [
-    { label: 'Weekly reports to review', value: data.weekly_reports_pending || 0, href: '/finance/weekly-reports/review', tone: (data.weekly_reports_pending || 0) > 0 ? 'warn' : '' },
+    { label: 'Weekly reports to review', value: data.weekly_reports_pending || 0, href: '/finance/weekly-reports?view=review', tone: (data.weekly_reports_pending || 0) > 0 ? 'warn' : '' },
     { label: 'Closings awaiting review', value: data.closings_pending || 0, href: '/closings', tone: (data.closings_pending || 0) > 0 ? 'warn' : '' },
     { label: 'Pending expenses', value: data.expenses_pending || 0, href: '/finance/expenses', tone: (data.expenses_pending || 0) > 0 ? 'warn' : '' },
     { label: 'Overdue tasks', value: e.overdue_tasks || 0, href: '/tasks', tone: (e.overdue_tasks || 0) > 0 ? 'danger' : '' },
