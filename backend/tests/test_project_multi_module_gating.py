@@ -1,17 +1,15 @@
-"""A project only holds a student back in the LAST module it is assigned to.
+"""Project scoring and gating across multiple modules.
 
-When one project spans several modules (``Project.module_ids``), counting it
-toward every one of them meant a student could not clear an earlier module
-until the project — which sits at the end of the sequence — was graded. The
-rule under test:
+A project may cover several modules (``Project.module_ids``). Its grade is
+distributed to *every* covered module and, for collaborative work, to every
+team member. Progression is deliberately narrower: the project gates only the
+LAST covered module in course sequence order (``Module.order``, then id — not
+the order of the JSON list). An ungraded project therefore does not hold back
+earlier modules it also appears in, but the final covered module cannot be
+completed until the project has been graded at or above its passing score.
 
-  * the gate module is the last assigned module in course sequence order
-    (``Module.order``, then id — not the order of the JSON list);
-  * earlier assigned modules behave as if no project exists (no score blend,
-    no weight change, no stale score carried from before this rule);
-  * grading the project writes ``project_score`` only to that gate module;
-  * retaking an earlier module never wipes the shared submission the gate
-    module still counts, while retaking the gate module does.
+Retaking an earlier module never wipes the shared submission; retaking the
+gate module does.
 """
 
 import json
@@ -32,6 +30,26 @@ from src.models.student_models import ModuleProgress
 from src.models.user_models import User, Role, db
 
 
+@pytest.fixture(autouse=True)
+def _always_release_db(app):
+    """Release SQLite write locks even when an assertion fails mid-test.
+
+    A failed assertion skips the per-test ``_rollback()``, leaving the scoped
+    session in an open transaction that blocks every later fixture. A small
+    JWT leeway avoids flaky ``iat`` rejections from clock drift in long runs.
+    """
+    old_leeway = app.config.get("JWT_DECODE_LEEWAY")
+    app.config["JWT_DECODE_LEEWAY"] = 5
+    yield
+    with app.app_context():
+        db.session.rollback()
+        db.session.remove()
+    if old_leeway is None:
+        app.config.pop("JWT_DECODE_LEEWAY", None)
+    else:
+        app.config["JWT_DECODE_LEEWAY"] = old_leeway
+
+
 @pytest.fixture()
 def env(app):
     with app.app_context():
@@ -50,23 +68,20 @@ def env(app):
             db.session.add(instructor_role)
             db.session.flush()
 
-        student = User(
-            username=f"gt_{suffix}",
-            email=f"gt_{suffix}@example.test",
-            role_id=student_role.id,
-        )
-        student.set_password("Password123!")
-        db.session.add(student)
-        db.session.flush()
+        def make_user(prefix, role):
+            person = User(
+                username=f"{prefix}_{suffix}",
+                email=f"{prefix}_{suffix}@example.test",
+                role_id=role.id,
+            )
+            person.set_password("Password123!")
+            db.session.add(person)
+            db.session.flush()
+            return person
 
-        instructor = User(
-            username=f"gti_{suffix}",
-            email=f"gti_{suffix}@example.test",
-            role_id=instructor_role.id,
-        )
-        instructor.set_password("Password123!")
-        db.session.add(instructor)
-        db.session.flush()
+        student = make_user("gt", student_role)
+        teammate = make_user("gtt", student_role)
+        instructor = make_user("gti", instructor_role)
 
         course = Course(
             title=f"Gating {suffix}",
@@ -81,7 +96,10 @@ def env(app):
         enrollment = Enrollment(
             student_id=student.id, course_id=course.id, status="active"
         )
-        db.session.add(enrollment)
+        teammate_enrollment = Enrollment(
+            student_id=teammate.id, course_id=course.id, status="active"
+        )
+        db.session.add_all([enrollment, teammate_enrollment])
         db.session.flush()
 
         first = Module(
@@ -102,6 +120,8 @@ def env(app):
             is_published=True,
             submission_format="text",
             points_possible=100,
+            passing_score=60.0,
+            collaboration_allowed=True,
         )
         db.session.add(project)
         db.session.flush()
@@ -112,6 +132,7 @@ def env(app):
             text_content="my work",
             submitted_at=datetime.utcnow(),
         )
+        submission.set_team_members([teammate.id])
         db.session.add(submission)
         db.session.flush()
 
@@ -127,14 +148,30 @@ def env(app):
             enrollment_id=enrollment.id,
             status="unlocked",
         )
-        db.session.add_all([progress_first, progress_last])
+        teammate_first = ModuleProgress(
+            student_id=teammate.id,
+            module_id=first.id,
+            enrollment_id=teammate_enrollment.id,
+            status="unlocked",
+        )
+        teammate_last = ModuleProgress(
+            student_id=teammate.id,
+            module_id=last.id,
+            enrollment_id=teammate_enrollment.id,
+            status="unlocked",
+        )
+        db.session.add_all([
+            progress_first, progress_last, teammate_first, teammate_last,
+        ])
         db.session.flush()
 
         ids = {
             "student_id": student.id,
+            "teammate_id": teammate.id,
             "instructor_id": instructor.id,
             "course_id": course.id,
             "enrollment_id": enrollment.id,
+            "teammate_enrollment_id": teammate_enrollment.id,
             "m1_id": first.id,
             "m2_id": last.id,
             "project_id": project.id,
@@ -147,12 +184,22 @@ def env(app):
     yield ids
 
 
-def _load_progress(env, module_id):
+def _load_progress(env, module_id, student_id=None):
     return ModuleProgress.query.filter_by(
-        student_id=env["student_id"],
+        student_id=student_id or env["student_id"],
         module_id=module_id,
-        enrollment_id=env["enrollment_id"],
+        enrollment_id=(
+            env["teammate_enrollment_id"]
+            if student_id == env["teammate_id"]
+            else env["enrollment_id"]
+        ),
     ).one()
+
+
+def _rollback():
+    # End the fixture session's transaction: an open one survives context
+    # teardown here and blocks every later test with "database is locked".
+    db.session.rollback()
 
 
 def test_project_gates_only_its_last_assigned_module(env):
@@ -164,16 +211,21 @@ def test_project_gates_only_its_last_assigned_module(env):
     assert project.gates_module(env["m1_id"]) is False
     assert project.gates_module(env["m2_id"]) is True
 
-    assert scoring_prefetch.module_has_projects(env["course_id"], env["m1_id"]) is False
-    assert scoring_prefetch.module_has_projects(env["course_id"], env["m2_id"]) is True
+    # The score reaches both modules, but only the last one gates progression.
+    assert project.get_scoring_module_ids() == [env["m1_id"], env["m2_id"]]
+    assert scoring_prefetch.covered_project_ids(
+        env["course_id"], env["m1_id"]
+    ) == {env["project_id"]}
+    assert scoring_prefetch.covered_project_ids(
+        env["course_id"], env["m2_id"]
+    ) == {env["project_id"]}
     assert scoring_prefetch.gating_project_ids(env["course_id"], env["m1_id"]) == set()
     assert scoring_prefetch.gating_project_ids(
         env["course_id"], env["m2_id"]
     ) == {env["project_id"]}
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    _rollback()
+
 
 def test_course_sequence_beats_the_json_order(env):
     """module_ids listed last-first still gates the course-order last module."""
@@ -191,12 +243,12 @@ def test_course_sequence_beats_the_json_order(env):
     db.session.flush()
 
     assert reversed_project.get_gate_module_id() == env["m2_id"]
+    assert reversed_project.get_scoring_module_ids() == [env["m1_id"], env["m2_id"]]
     assert reversed_project.gates_module(env["m1_id"]) is False
-    db.session.commit()
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    db.session.commit()
+    _rollback()
+
 
 def test_course_level_project_gates_the_final_module(env):
     from src.services import scoring_prefetch
@@ -217,61 +269,76 @@ def test_course_level_project_gates_the_final_module(env):
     assert whole_course.get_gate_module_id() == env["m2_id"]
     assert whole_course.gates_module(env["m1_id"]) is False
     assert whole_course.gates_module(env["m2_id"]) is True
+    assert whole_course.get_scoring_module_ids() == [env["m1_id"], env["m2_id"]]
 
-    # The first module stays project-free even with a whole-course project.
-    assert scoring_prefetch.module_has_projects(env["course_id"], env["m1_id"]) is False
+    assert scoring_prefetch.gating_project_ids(env["course_id"], env["m1_id"]) == set()
+    assert scoring_prefetch.gating_project_ids(
+        env["course_id"], env["m2_id"]
+    ) == {env["project_id"], whole_course.id}
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    _rollback()
 
-def test_project_score_cannot_move_a_non_gate_module(env):
+
+def test_ungraded_project_does_not_block_an_earlier_module(env):
     progress_first = _load_progress(env, env["m1_id"])
-    progress_last = _load_progress(env, env["m2_id"])
+    submission = ProjectSubmission.query.get(env["submission_id"])
+    assert submission.grade is None
 
-    # Earlier module: a (stale) project score must have zero effect on the
-    # weighted module score — the module behaves as if no project exists.
-    progress_first.project_score = 0.0
     clean = progress_first.calculate_module_weighted_score()
     progress_first.project_score = 100.0
     with_stale = progress_first.calculate_module_weighted_score()
+
+    # An ungraded shared project is not a hands-on component in module 1.
     assert with_stale == pytest.approx(clean)
 
-    # Gate module: the project score is blended in, so it must move the score.
+    _rollback()
+
+
+def test_graded_project_counts_in_every_covered_module(env):
+    progress_first = _load_progress(env, env["m1_id"])
+    progress_last = _load_progress(env, env["m2_id"])
+    submission = ProjectSubmission.query.get(env["submission_id"])
+    submission.grade = 90.0
+
+    progress_first.project_score = 0.0
+    first_without = progress_first.calculate_module_weighted_score()
+    progress_first.project_score = 100.0
+    first_with = progress_first.calculate_module_weighted_score()
+    assert first_with > first_without
+
     progress_last.project_score = 0.0
-    without = progress_last.calculate_module_weighted_score()
+    last_without = progress_last.calculate_module_weighted_score()
     progress_last.project_score = 100.0
-    with_score = progress_last.calculate_module_weighted_score()
-    assert with_score > without
+    last_with = progress_last.calculate_module_weighted_score()
+    assert last_with > last_without
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    _rollback()
 
-def test_healing_keeps_only_the_gate_module_project_score(env):
+
+def test_healing_distributes_grade_to_every_covered_module(env):
     submission = ProjectSubmission.query.get(env["submission_id"])
     submission.grade = 90.0
 
     progress_first = _load_progress(env, env["m1_id"])
     progress_last = _load_progress(env, env["m2_id"])
-
-    # Simulate a score stored before this rule (or by the old covered-all
-    # propagation): the earlier module must shed it, the gate must gain it.
-    progress_first.project_score = 55.0
+    progress_first.project_score = 0.0
     progress_last.project_score = 0.0
     db.session.flush()
 
     progress_first.sync_scores_from_assessments()
     progress_last.sync_scores_from_assessments()
 
-    assert (progress_first.project_score or 0.0) == 0.0
+    assert progress_first.project_score == pytest.approx(90.0)
     assert progress_last.project_score == pytest.approx(90.0)
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    _rollback()
 
-def test_grade_propagates_only_to_the_gate_module(env, client, app):
+
+def test_grade_propagates_to_every_module_and_teammate(env, client, app):
+    submission = ProjectSubmission.query.get(env["submission_id"])
+    submission.set_team_members([env["teammate_id"]])
+    db.session.commit()
+
     with app.app_context():
         token = create_access_token(identity=str(env["instructor_id"]))
 
@@ -286,17 +353,71 @@ def test_grade_propagates_only_to_the_gate_module(env, client, app):
     # identity-map copies before reading the stored scores back.
     db.session.expire_all()
 
-    progress_first = _load_progress(env, env["m1_id"])
+    for module_id in (env["m1_id"], env["m2_id"]):
+        assert _load_progress(env, module_id).project_score == pytest.approx(90.0)
+        assert _load_progress(
+            env, module_id, env["teammate_id"]
+        ).project_score == pytest.approx(90.0)
+
+    teammate_row = ProjectSubmission.query.filter_by(
+        project_id=env["project_id"], student_id=env["teammate_id"]
+    ).one()
+    assert teammate_row.grade == pytest.approx(90.0)
+    assert teammate_row.can_resubmit is False
+
+    _rollback()
+
+
+def test_project_gate_blocks_gate_module_until_graded(env):
+    from src.services.project_scoring_service import project_gate_blocker
+
+    assert project_gate_blocker(
+        env["student_id"], env["m1_id"], env["course_id"]
+    ) is None
+    blocker = project_gate_blocker(
+        env["student_id"], env["m2_id"], env["course_id"]
+    )
+    assert blocker and "project" in blocker.lower()
+
+    submission = ProjectSubmission.query.get(env["submission_id"])
+    submission.grade = 90.0
+    db.session.flush()
+
+    assert project_gate_blocker(
+        env["student_id"], env["m2_id"], env["course_id"]
+    ) is None
+    # A teammate inherits the graded result for gate purposes too.
+    assert project_gate_blocker(
+        env["teammate_id"], env["m2_id"], env["course_id"]
+    ) is None
+
+    _rollback()
+
+
+def test_project_gate_blocks_completion_even_when_score_passes(env):
+    from src.services.progression_service import ProgressionService
+
     progress_last = _load_progress(env, env["m2_id"])
+    progress_last.course_contribution_score = 100.0
+    progress_last.quiz_score = 100.0
+    progress_last.assignment_score = 100.0
+    progress_last.final_assessment_score = 100.0
+    # Modules in this fixture have no lessons/quizzes, so the weight formula
+    # would recompute to 0 — set the cached score directly for the gate test.
+    progress_last.cumulative_score = 100.0
+    assert progress_last.cumulative_score >= 70.0
+    db.session.flush()
 
-    assert progress_last.project_score == pytest.approx(90.0)
-    assert (progress_first.project_score or 0.0) == 0.0
-    # The earlier module's row was never touched by the grade.
-    assert progress_first.cumulative_score in (None, 0.0)
+    ok, reason = ProgressionService.check_module_completion(
+        env["student_id"], env["m2_id"], env["enrollment_id"]
+    )
+    assert ok is False
+    assert "project" in reason.lower()
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    assert progress_last.status != "completed"
+
+    _rollback()
+
 
 def test_retaking_an_earlier_module_keeps_the_shared_submission(env):
     from src.services.progression_service import ProgressionService
@@ -335,6 +456,4 @@ def test_retaking_an_earlier_module_keeps_the_shared_submission(env):
         "retaking the gate module must invalidate its project submission"
     )
 
-    # End the fixture session's transaction: an open one survives context
-    # teardown here and blocks every later test with "database is locked".
-    db.session.rollback()
+    _rollback()

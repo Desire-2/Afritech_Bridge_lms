@@ -318,26 +318,31 @@ def request_project_modification(project_id):
         # Note: This would need to be adapted based on your actual project submission model
         # For now, we'll update the project record directly
         
-        # Check resubmission limits
+        # Revision state belongs to this student's submission (and their
+        # teammates), never to the shared project row.
+        from ..models.course_models import ProjectSubmission
+        from ..services.project_scoring_service import (
+            request_project_modification, team_member_ids,
+        )
+        primary = ProjectSubmission.query.filter_by(
+            project_id=project_id, student_id=student_id
+        ).first()
+        if not primary:
+            return jsonify({'error': 'No project submission found for this student'}), 404
+
+        member_rows = ProjectSubmission.query.filter(
+            ProjectSubmission.project_id == project_id,
+            ProjectSubmission.student_id.in_(team_member_ids(project, primary)),
+        ).all()
+
         max_resubmissions = getattr(project, 'max_resubmissions', 3)
-        current_resubmissions = getattr(project, 'resubmission_count', 0)
-        
+        current_resubmissions = max(
+            (row.resubmission_count or 0) for row in member_rows
+        )
         if current_resubmissions >= max_resubmissions:
             return jsonify({'error': f'Maximum resubmissions ({max_resubmissions}) reached'}), 400
-        
-        # Update project with modification request
-        project.modification_requested = True
-        project.modification_request_reason = reason
-        project.modification_requested_at = now_local()
-        project.modification_requested_by = user_id
-        project.can_resubmit = True
-        
-        # Increment resubmission count
-        if not hasattr(project, 'resubmission_count'):
-            project.resubmission_count = 1
-        else:
-            project.resubmission_count = (project.resubmission_count or 0) + 1
-        
+
+        request_project_modification(member_rows, reason, user_id)
         db.session.commit()
         
         # Send email notification to student
@@ -398,8 +403,8 @@ def request_project_modification(project_id):
                 'project_id': project_id,
                 'student_id': student_id,
                 'reason': reason,
-                'requested_at': project.modification_requested_at.isoformat(),
-                'resubmissions_remaining': max_resubmissions - project.resubmission_count
+                'requested_at': primary.modification_requested_at.isoformat(),
+                'resubmissions_remaining': max_resubmissions - (primary.resubmission_count or 0)
             }
         }), 200
         

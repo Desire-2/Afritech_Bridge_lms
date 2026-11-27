@@ -425,6 +425,8 @@ def _update_learning_progress(
     student_id: int,
     total_score: float,
     max_score: float,
+    *,
+    allow_lower: bool = False,
 ) -> bool:
     """
     After a passing auto-grade, update module progress and lesson completion
@@ -470,6 +472,26 @@ def _update_learning_progress(
         else:
             percentage_score = 0
         percentage_score = max(0, min(100, percentage_score))
+
+        # Projects have ``module_ids`` (not ``module_id``) and can cover
+        # several modules and several students. Use the shared distributor
+        # instead of the assignment-only single-module path below.
+        if submission_type == 'project':
+            from src.services.project_scoring_service import (
+                distribute_project_score, team_member_ids,
+            )
+            distributed = distribute_project_score(
+                parent,
+                team_member_ids(parent, submission),
+                percentage_score,
+                allow_lower=allow_lower,
+            )
+            db.session.commit()
+            logger.info(
+                f"📊 Project {parent.id} score {percentage_score:.1f}% distributed "
+                f"to modules {distributed} for the whole team"
+            )
+            return True
 
         # ── 1. Update ModuleProgress ──────────────────────────────
         module_id = getattr(parent, 'module_id', None)
@@ -601,12 +623,27 @@ def _update_learning_progress(
         # ── 3. Clear modification flags if passing ────────────────
         passing_score = getattr(parent, 'passing_score', None) or 60.0
         if percentage_score >= passing_score:
-            if getattr(parent, 'modification_requested', False):
+            cleared = False
+            if submission_type == 'project':
+                # Per-submission state: clearing one student's request must not
+                # depend on (or touch) the legacy shared-project flags.
+                from src.services.project_scoring_service import (
+                    clear_project_modification, team_member_ids,
+                )
+                rows = ProjectSubmission.query.filter(
+                    ProjectSubmission.project_id == parent.id,
+                    ProjectSubmission.student_id.in_(team_member_ids(parent, submission)),
+                ).all()
+                cleared = bool(rows)
+                clear_project_modification(rows)
+            elif getattr(parent, 'modification_requested', False):
                 parent.modification_requested = False
                 parent.modification_request_reason = None
                 parent.modification_requested_at = None
                 parent.modification_requested_by = None
                 parent.can_resubmit = False
+                cleared = True
+            if cleared:
                 db.session.commit()
                 logger.info(
                     f"✅ Cleared modification request — score "
@@ -717,12 +754,26 @@ def _auto_request_modification_if_needed(
 
         reason = "\n".join(reason_parts)
 
-        # Set modification request flags on the parent (assignment/project)
-        parent.modification_requested = True
-        parent.modification_request_reason = reason
-        parent.modification_requested_at = now_local()
-        parent.modification_requested_by = None  # System/AI initiated
-        parent.can_resubmit = True
+        # Revision state is per student. Setting it on the shared parent would
+        # give every student in the course a resubmission pass for one
+        # student's failed work.
+        if submission_type == 'project':
+            from src.services.project_scoring_service import (
+                request_project_modification, team_member_ids,
+            )
+            from src.models.course_models import ProjectSubmission
+            rows = ProjectSubmission.query.filter(
+                ProjectSubmission.project_id == parent.id,
+                ProjectSubmission.student_id.in_(team_member_ids(parent, submission)),
+            ).all()
+            request_project_modification(rows, reason, None)
+        else:
+            # Assignments keep their legacy parent-level policy.
+            parent.modification_requested = True
+            parent.modification_request_reason = reason
+            parent.modification_requested_at = now_local()
+            parent.modification_requested_by = None  # System/AI initiated
+            parent.can_resubmit = True
 
         # Keep the AI grade on the submission so the instructor can see the
         # score that triggered the modification request.  Only update the

@@ -99,17 +99,17 @@ class FullCreditService:
                     logger.error(f"Error awarding assignment {assignment.id} credit: {str(assignment_error)}")
                     raise assignment_error
             
-            # 3b. Award full credit for published projects that GATE this
-            # module — the last module each project is assigned to, so a grant
-            # here can never stand in for progress in the earlier ones.
-            from ..models.course_models import Project, ProjectSubmission
+            # 3b. Award full credit for published projects whose score reaches
+            # this module. The grade is distributed to every module the project
+            # covers (and to teammates); progression still gates at the last.
+            from ..models.course_models import Project
             ordered_modules = Module.query.filter_by(
                 course_id=module.course_id
             ).order_by(Module.order, Module.id).all()
             for project in Project.query.filter_by(
                 course_id=module.course_id, is_published=True
             ).all():
-                if not project.gates_module(module_id, ordered_modules):
+                if module_id not in project.get_scoring_module_ids(ordered_modules):
                     continue
                 try:
                     FullCreditService._award_project_full_credit(
@@ -353,9 +353,19 @@ class FullCreditService:
             )
             db.session.add(submission)
         
+        # The grade is an LMS fact shared by every module the project covers
+        # and every student on the team, not just the module being credited.
+        from ..services.project_scoring_service import (
+            distribute_project_score, team_member_ids,
+        )
+        db.session.flush()
+        distributed = distribute_project_score(
+            project, team_member_ids(project, submission), 100.0
+        )
         details["projects_updated"] += 1
         logger.debug(
-            f"Awarded project credit for project {project.id} to student {student_id}"
+            f"Awarded project credit for project {project.id} to student "
+            f"{student_id} across modules {distributed}"
         )
     
     @staticmethod

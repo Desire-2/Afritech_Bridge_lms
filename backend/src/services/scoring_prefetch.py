@@ -44,6 +44,7 @@ def activate(student_id: int, course_ids: List[int]) -> None:
         'ungraded_assignment_ids': None,
         'lesson_completions': {},
         'project_best_pct': {},
+        'graded_project_ids': set(),
     }
 
     course_ids = [cid for cid in course_ids if cid]
@@ -172,22 +173,30 @@ def activate(student_id: int, course_ids: List[int]) -> None:
             submissions = (
                 ProjectSubmission.query
                 .filter(
-                    ProjectSubmission.student_id == student_id,
                     ProjectSubmission.project_id.in_([p.id for p in projects]),
                     ProjectSubmission.grade.isnot(None),
                 )
                 .all()
             )
             bests = {}
+            graded_ids = set()
             for sub in submissions:
+                # A teammate inherits the team's grade even when only the
+                # submitter's row was graded (older teams keep the member ids
+                # on the submitter's row instead of propagating grade rows).
+                roster = {int(mid) for mid in (sub.get_team_members() or [])}
+                if int(sub.student_id) != int(student_id) and int(student_id) not in roster:
+                    continue
                 project = next((p for p in projects if p.id == sub.project_id), None)
                 if project is None:
                     continue
+                graded_ids.add(sub.project_id)
                 points = project.points_possible or 100
                 if points > 0:
                     pct = min(100.0, (sub.grade / points) * 100)
                     bests[sub.project_id] = max(bests.get(sub.project_id, 0.0), pct)
             _store['project_best_pct'] = bests
+            _store['graded_project_ids'] = graded_ids
 
     # Lesson completion rows for this student's lessons (module scoring)
     if lesson_ids:
@@ -367,25 +376,32 @@ def get_lesson_completion(student_id: int, lesson_id: int):
     ).first()
 
 
-def get_project_best_pct(project_id: int) -> float:
-    """Best graded percentage for the student on one project (0 if none)."""
+def get_project_best_pct(project_id: int, student_id: Optional[int] = None) -> float:
+    """Best graded percentage for one student on a project (0 if none).
+
+    ``student_id`` is optional only for callers inside an active prefetch
+    (already scoped to one student). Without both, the non-prefetch path
+    must never return another student's grade.
+    """
     if _prefetch_active:
         return _store.get('project_best_pct', {}).get(project_id, 0.0)
     from ..models.course_models import Project, ProjectSubmission
     project = Project.query.get(project_id)
-    if project is None:
+    if project is None or student_id is None:
         return 0.0
     points = project.points_possible or 100
     if points <= 0:
         return 0.0
-    best = 0.0
     subs = ProjectSubmission.query.filter(
         ProjectSubmission.project_id == project_id,
         ProjectSubmission.grade.isnot(None),
     ).all()
+    pcts = []
     for sub in subs:
-        best = max(best, min(100.0, (sub.grade / points) * 100))
-    return best
+        roster = {int(mid) for mid in (sub.get_team_members() or [])}
+        if int(sub.student_id) == int(student_id) or int(student_id) in roster:
+            pcts.append(min(100.0, (sub.grade / points) * 100))
+    return max(pcts or [0.0])
 
 
 def project_gate_map(course_id: int) -> dict:
@@ -424,11 +440,45 @@ def gating_project_ids(course_id: int, module_id: int) -> set:
     }
 
 
-def module_has_projects(course_id: int, module_id: int) -> bool:
-    """True only when a project GATES this module — i.e. the module is the
-    last module that project is assigned to.
+def covered_project_ids(course_id: int, module_id: int) -> set:
+    """Ids of published projects whose score is distributed to this module.
 
-    Earlier modules a project spans count as having no project, so a project
-    assigned to modules 1-3 can only hold a student back in module 3.
+    A project spanning several modules contributes its grade to every one of
+    them; only the gate module uses it as a completion requirement.
     """
-    return bool(gating_project_ids(course_id, module_id))
+    if not module_id:
+        return set()
+    return {
+        project.id
+        for project in get_course_projects(course_id)
+        if module_id in project.get_scoring_module_ids()
+    }
+
+
+def module_has_projects(course_id: int, module_id: int) -> bool:
+    """True when a project's score is distributed to this module."""
+    return bool(covered_project_ids(course_id, module_id))
+
+
+def module_has_graded_project(student_id: int, course_id: int, module_id: int) -> bool:
+    """True when this student has a graded project covering this module.
+
+    Used to keep earlier covered modules passable before the project is
+    graded, while still counting the grade once it exists.
+    """
+    covered = covered_project_ids(course_id, module_id)
+    if not covered:
+        return False
+    if _prefetch_active:
+        return bool(covered & _store.get('graded_project_ids', set()))
+    from ..models.course_models import ProjectSubmission
+
+    rows = ProjectSubmission.query.filter(
+        ProjectSubmission.project_id.in_(covered),
+        ProjectSubmission.grade.isnot(None),
+    ).all()
+    return any(
+        int(row.student_id) == int(student_id)
+        or int(student_id) in {int(mid) for mid in (row.get_team_members() or [])}
+        for row in rows
+    )

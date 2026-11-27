@@ -688,6 +688,7 @@ def write_through_grade(result: EvaluationResult, *,
             loaded.student_id,
             result.final_score,
             100.0,
+            allow_lower=(publication_mode == "manual"),
         )
 
     try:

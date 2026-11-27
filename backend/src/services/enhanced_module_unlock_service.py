@@ -90,11 +90,16 @@ class EnhancedModuleUnlockService:
             )
             
             # Determine unlock status based on PREVIOUS module completion
-            can_unlock_fully = (
-                lesson_requirements["all_lessons_passed"] and 
-                scoring_breakdown["total_score"] >= EnhancedModuleUnlockService.MODULE_PASSING_SCORE
+            from .project_scoring_service import project_gate_blocker
+            gate_blocker = project_gate_blocker(
+                student_id, previous_module.id, previous_module.course_id
             )
-            
+            can_unlock_fully = (
+                lesson_requirements["all_lessons_passed"] and
+                scoring_breakdown["total_score"] >= EnhancedModuleUnlockService.MODULE_PASSING_SCORE and
+                not gate_blocker
+            )
+
             # Check preview eligibility
             can_preview = (
                 scoring_breakdown["total_score"] >= EnhancedModuleUnlockService.PREVIEW_UNLOCK_THRESHOLD
@@ -107,6 +112,8 @@ class EnhancedModuleUnlockService:
                 scoring_breakdown,
                 previous_module
             )
+            if gate_blocker:
+                recommendations.insert(0, gate_blocker)
             
             return {
                 "eligible": can_unlock_fully,
@@ -781,7 +788,21 @@ class EnhancedModuleUnlockService:
                     "failed_lessons": [],
                     "validation_errors": ["Module not found"]
                 }
-            
+
+            # The project gate is a hard requirement, not just a score blend.
+            from .project_scoring_service import project_gate_blocker
+            gate_blocker = project_gate_blocker(student_id, module_id, module.course_id)
+            if gate_blocker:
+                return {
+                    "can_complete": False,
+                    "message": gate_blocker,
+                    "total_score": 0.0,
+                    "breakdown": {},
+                    "failed_lessons": [],
+                    "validation_errors": [gate_blocker],
+                    "project_gate": {"completed": False, "reason": gate_blocker},
+                }
+
             # Published lessons only — drafts must not block completion
             lessons = [
                 lesson for lesson in module.lessons.order_by(Lesson.order).all()
@@ -932,7 +953,16 @@ class EnhancedModuleUnlockService:
             
             if not module_progress:
                 return {"success": False, "error": "Module progress not found"}
-            
+
+            from .project_scoring_service import project_gate_blocker
+            module = Module.query.get(module_id)
+            gate_blocker = (
+                project_gate_blocker(student_id, module_id, module.course_id)
+                if module else None
+            )
+            if gate_blocker:
+                return {"success": False, "error": gate_blocker}
+
             # Calculate final score
             final_score = module_progress.calculate_module_weighted_score()
             

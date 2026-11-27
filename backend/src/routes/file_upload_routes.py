@@ -397,18 +397,24 @@ def submit_project_with_files(project_id):
                 "error": "Your enrollment is not active, so you cannot submit this project"
             }), 403
         
-        # Check if already submitted
+        # A submitted project can be handed in again only after a revision
+        # was requested on that student's submission. Instructor-scaffolded
+        # team rows (submitted_at NULL) are filled in normally.
         existing = ProjectSubmission.query.filter_by(
             project_id=project_id,
             student_id=current_user_id
         ).first()
-        
-        if existing:
-            return jsonify({
-                "success": False,
-                "error": "Project already submitted"
-            }), 400
-        
+        is_resubmission = False
+        if existing and existing.submitted_at is not None:
+            from ..services.project_scoring_service import resubmission_check
+            allowed, reason = resubmission_check(project, existing)
+            if not allowed:
+                return jsonify({
+                    "success": False,
+                    "error": reason,
+                }), 400
+            is_resubmission = True
+
         # Validate submission data
         if not data:
             return jsonify({
@@ -435,43 +441,65 @@ def submit_project_with_files(project_id):
                     "error": f"Total file size exceeds limit of {project.max_file_size_mb or 50}MB"
                 }), 400
         
-        # Create submission record
-        submission = ProjectSubmission(
-            project_id=project_id,
-            student_id=current_user_id,
-            text_content=data.get('text_content'),
-            file_path=json.dumps(files_data) if files_data else None,  # Store file metadata as JSON
-            submitted_at=now_local()
-        )
-        
-        # Handle team members if collaboration is allowed
+        # Handle team members if collaboration is allowed. team_members holds
+        # the OTHER members, so the submitter is one more than the list.
         team_members = data.get('team_members', [])
+        if not isinstance(team_members, list):
+            return jsonify({
+                "success": False,
+                "error": "team_members must be a list of student ids"
+            }), 400
         if project.collaboration_allowed and team_members:
-            # team_members holds the OTHER members (the submitter is not in the
-            # list), so the real team size is one more. The previous check
-            # compared the list length alone and let a team of max+1 through.
             total_team_size = len(team_members) + 1
-            if total_team_size > project.max_team_size:
+            if total_team_size > (project.max_team_size or 1):
                 return jsonify({
                     "success": False,
                     "error": f"Team size exceeds maximum of {project.max_team_size} members"
                 }), 400
-            submission.set_team_members(team_members)
-        
-        db.session.add(submission)
-        db.session.flush()
+
+        if existing:
+            from ..services.project_scoring_service import (
+                prepare_project_resubmission, team_member_ids,
+            )
+            member_ids = team_member_ids(project, existing) if is_resubmission else set(team_members)
+            if is_resubmission:
+                prepare_project_resubmission(project, existing, data)
+            submission = existing
+            submission.text_content = data.get('text_content')
+            submission.file_path = json.dumps(files_data) if files_data else None
+            if not is_resubmission:
+                submission.submitted_at = now_local()
+            if project.collaboration_allowed and team_members:
+                submission.set_team_members(team_members)
+        else:
+            # Create submission record
+            submission = ProjectSubmission(
+                project_id=project_id,
+                student_id=current_user_id,
+                text_content=data.get('text_content'),
+                file_path=json.dumps(files_data) if files_data else None,
+                submitted_at=now_local()
+            )
+            if project.collaboration_allowed and team_members:
+                submission.set_team_members(team_members)
+            member_ids = set(team_members or [])
+            db.session.add(submission)
+            db.session.flush()
 
         # Submitting a project is evidence even before it is graded. Team
         # submissions remain capped in the Passport capability engine.
         from ..talent_passport.hooks import notify_talent_passport
+        project_event = "project.resubmitted" if is_resubmission else "project.submitted"
         notify_talent_passport(
-            "project.submitted", current_user_id,
+            project_event, current_user_id,
             "project_submission", submission.id,
             course_id=project.course_id,
         )
-        for member_id in set(team_members or []):
+        for member_id in set(member_ids or []):
+            if int(member_id) == current_user_id:
+                continue
             notify_talent_passport(
-                "project.submitted", int(member_id),
+                project_event, int(member_id),
                 "project_submission", submission.id,
                 course_id=project.course_id,
                 suffix="team-member",
@@ -488,6 +516,7 @@ def submit_project_with_files(project_id):
             submission_type='project',
             submission_id=submission.id,
             student_id=current_user_id,
+            force=is_resubmission,
         )
         auto_grading_triggered = aage_job is not None
 
@@ -499,13 +528,16 @@ def submit_project_with_files(project_id):
                 files_count=len(files_data),
                 has_text=bool(data.get('text_content')),
                 team_size=len(team_members),
+                is_resubmission=is_resubmission,
+                submission_notes=data.get('resubmission_notes'),
             )
         except Exception as notif_err:
             logger.warning(f"Instructor project submission notification failed (non-blocking): {notif_err}")
 
         return jsonify({
             "success": True,
-            "message": "Project submitted successfully",
+            "message": "Project resubmitted successfully" if is_resubmission
+                       else "Project submitted successfully",
             "submission": {
                 "id": submission.id,
                 "project_id": project_id,

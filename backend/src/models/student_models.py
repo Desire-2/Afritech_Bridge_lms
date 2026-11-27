@@ -1022,6 +1022,7 @@ class ModuleProgress(db.Model):
         from ..services.scoring_prefetch import (
             has_published_assignment_for_lessons, has_published_quiz_for_lessons,
             module_has_final_assessment, module_has_projects,
+            module_has_graded_project, gating_project_ids,
         )
         lesson_ids = [
             lesson.id for lesson in self.module.lessons
@@ -1038,14 +1039,22 @@ class ModuleProgress(db.Model):
             module_has_final_assessment(self.module_id) if self.module else False
         )
         
-        # Published projects that GATE this module: the last module each
-        # project is assigned to (see Project.get_gate_module_id). A project
-        # spanning modules 1-3 counts only in module 3, so the earlier ones
-        # are never held back by it.
+        # Project grades are distributed to every module a project covers.
+        # Only the last covered module gates progression; earlier modules
+        # ignore an ungraded project so a student can keep moving through
+        # modules that the same project also belongs to.
         has_projects = (
             module_has_projects(self.module.course_id, self.module_id)
             if self.module else False
         )
+        if has_projects and self.module:
+            is_gate_module = bool(
+                gating_project_ids(self.module.course_id, self.module_id)
+            )
+            if not is_gate_module and not module_has_graded_project(
+                self.student_id, self.module.course_id, self.module_id
+            ):
+                has_projects = False
         
         # Projects share the hands-on (assignments) bucket: blend with lesson
         # assignments when both exist, otherwise stand in for them entirely.
@@ -1145,10 +1154,10 @@ class ModuleProgress(db.Model):
 
         Policy: best-attempt across published assessments only. Draft lessons
         and unpublished assessments never influence student scores. Safe to
-        run repeatedly; only raises stored scores, never lowers them — except
-        a ``project_score`` left in a module the project no longer gates (it
-        only gates the last module it is assigned to), which is stale and gets
-        cleared instead of counted.
+        run repeatedly and only raises stored scores, never lowers them. A
+        project grade is distributed to every module the project covers; a
+        ``project_score`` for a project that no longer covers the module is
+        stale and is cleared instead of counted.
         """
         from .course_models import (
             Assignment, AssignmentSubmission, Project, ProjectSubmission
@@ -1201,20 +1210,22 @@ class ModuleProgress(db.Model):
                 if best_final > (self.final_assessment_score or 0.0):
                     self.final_assessment_score = best_final
 
-            # Only the LAST module a project is assigned to is held to it, so
-            # earlier modules it spans never count it — and any score stored
-            # there from before that rule is cleared rather than dragged along.
-            gating = scoring_prefetch.gating_project_ids(
+            # A project's grade is distributed to every module it covers, not
+            # only the gate module. The gate still controls progression, but
+            # earlier modules must show and use a grade once one exists.
+            covered = scoring_prefetch.covered_project_ids(
                 self.module.course_id, self.module_id
             )
             best_project = 0.0
             for project in scoring_prefetch.get_course_projects(self.module.course_id):
-                if project.id not in gating:
+                if project.id not in covered:
                     continue
-                pct = scoring_prefetch.get_project_best_pct(project.id)
+                pct = scoring_prefetch.get_project_best_pct(
+                    project.id, self.student_id
+                )
                 if pct > best_project:
                     best_project = pct
-            if gating:
+            if covered:
                 if best_project > (self.project_score or 0.0):
                     self.project_score = best_project
             elif self.project_score:
@@ -1288,32 +1299,36 @@ class ModuleProgress(db.Model):
         if best_final > (self.final_assessment_score or 0.0):
             self.final_assessment_score = best_final
 
-        # ── projects: only the LAST module a project is assigned to counts ──
-        # A project spanning modules 1-3 must not hold a student back in 1 or
-        # 2, so only the module it ends at is held to it; stale scores stored
-        # in earlier modules are cleared instead of counted.
+        # ── projects: every module the project covers receives the grade ──
+        # Progression is still gated only at the last covered module, but the
+        # score itself is distributed so each module's breakdown is accurate.
         ordered_modules = Module.query.filter_by(
             course_id=self.module.course_id
         ).order_by(Module.order, Module.id).all()
-        gating_projects = [
+        covered_projects = [
             project
             for project in Project.query.filter_by(
                 course_id=self.module.course_id, is_published=True
             ).all()
-            if project.gates_module(self.module_id, ordered_modules)
+            if self.module_id in project.get_scoring_module_ids(ordered_modules)
         ]
         best_project = 0.0
-        for project in gating_projects:
+        for project in covered_projects:
             submissions = ProjectSubmission.query.filter_by(
-                project_id=project.id,
-                student_id=self.student_id
+                project_id=project.id
             ).filter(ProjectSubmission.grade.isnot(None)).all()
             points_possible = project.points_possible or 100
             if points_possible > 0:
                 for submission in submissions:
+                    # A teammate inherits the grade even on legacy rows where
+                    # only the primary submitter's row was graded.
+                    roster = {int(mid) for mid in (submission.get_team_members() or [])}
+                    if int(submission.student_id) != int(self.student_id) and \
+                            int(self.student_id) not in roster:
+                        continue
                     percentage = (submission.grade / points_possible) * 100
                     best_project = max(best_project, min(100.0, percentage))
-        if gating_projects:
+        if covered_projects:
             if best_project > (self.project_score or 0.0):
                 self.project_score = best_project
         elif self.project_score:
@@ -1397,7 +1412,17 @@ class ModuleProgress(db.Model):
             gap = 70.0 - current_score
             blockers.append(f"Module score {current_score:.1f}% is below 70% requirement")
             recommendations.append(f"Increase module score by {gap:.1f}% points")
-        
+
+        # A project spanning modules gates only the last one. That gate is a
+        # hard completion requirement even if the score already passes.
+        from ..services.project_scoring_service import project_gate_blocker
+        gate_blocker = project_gate_blocker(
+            self.student_id, self.module_id, self.module.course_id
+        ) if self.module else None
+        if gate_blocker:
+            blockers.append(gate_blocker)
+            recommendations.append(gate_blocker)
+
         # Check lesson-level requirements
         from ..services.lesson_completion_service import LessonCompletionService
         

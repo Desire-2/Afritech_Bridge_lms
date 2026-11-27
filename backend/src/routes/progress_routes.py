@@ -315,16 +315,20 @@ def get_module_score_breakdown(module_id):
             Quiz.is_published == True
         ).first() is not None
         
-        # Check for published projects that GATE this module (the last module
-        # each project is assigned to). Earlier modules a project spans count
-        # as having none, so the project never holds a student back there.
-        has_projects = False
-        ordered_modules = Module.query.filter_by(course_id=module.course_id) \
-            .order_by(Module.order, Module.id).all()
-        for project in Project.query.filter_by(course_id=module.course_id, is_published=True).all():
-            if project.gates_module(module_id, ordered_modules):
-                has_projects = True
-                break
+        # Project grades are distributed to every module a project covers.
+        # Only the last covered module gates progression; earlier modules count
+        # the project once it has been graded, but an ungraded project must
+        # not hold them back.
+        from ..services.scoring_prefetch import (
+            covered_project_ids, gating_project_ids, module_has_graded_project,
+        )
+        from ..services.project_scoring_service import project_gate_status
+        covered = covered_project_ids(module.course_id, module_id)
+        has_projects = bool(covered)
+        if has_projects and not gating_project_ids(module.course_id, module_id):
+            has_projects = module_has_graded_project(
+                student_id, module.course_id, module_id
+            )
         
         # Projects share the hands-on (assignments) bucket for weight selection
         has_assignments_raw = has_assignments
@@ -546,6 +550,12 @@ def get_module_score_breakdown(module_id):
                 "is_passing": cumulative_score >= passing_threshold,
                 "points_needed": round(points_needed, 2),
                 "breakdown": breakdown,
+                "project_gate": {
+                    "required": bool(gating_project_ids(module.course_id, module_id)),
+                    "status": project_gate_status(
+                        student_id, module_id, module.course_id
+                    ),
+                },
                 "recommendations": recommendations,
                 "attempts": {
                     "used": module_progress.attempts_count,

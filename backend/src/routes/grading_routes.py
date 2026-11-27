@@ -1042,6 +1042,16 @@ def get_project_submissions():
         if student_id:
             query = query.filter(ProjectSubmission.student_id == student_id)
         
+        # Revision state is per submission. For rows that never had a local
+        # revision, still honour the legacy shared-project flag (read-only).
+        revision_requested = or_(
+            ProjectSubmission.modification_requested == True,
+            and_(
+                ProjectSubmission.resubmission_count == 0,
+                Project.modification_requested == True,
+            ),
+        )
+
         # Enhanced status filter
         if status == 'pending':
             # Regular pending submissions (not resubmissions, not modification
@@ -1052,7 +1062,7 @@ def get_project_submissions():
                 and_(
                     ProjectSubmission.grade.is_(None),
                     ProjectSubmission.is_resubmission == False,
-                    Project.modification_requested == False,
+                    ~revision_requested,
                     ProjectSubmission.submitted_at.isnot(None)
                 )
             )
@@ -1065,10 +1075,10 @@ def get_project_submissions():
                 )
             )
         elif status == 'modification_requested':
-            # Projects with modification requests (but no new submission yet)
+            # Submissions with a pending revision request (no new work yet)
             query = query.filter(
                 and_(
-                    Project.modification_requested == True,
+                    revision_requested,
                     ProjectSubmission.is_resubmission == False
                 )
             )
@@ -1083,7 +1093,7 @@ def get_project_submissions():
             # High priority: Overdue submissions
             (and_(Project.due_date < datetime.utcnow(), ProjectSubmission.grade.is_(None)), 4),
             # Medium priority: Modification requests (waiting for student)
-            (Project.modification_requested == True, 3),
+            (revision_requested, 3),
             # Medium priority: Due soon
             (Project.due_date < datetime.utcnow() + timedelta(days=1), 2),
             else_=1
@@ -1109,12 +1119,18 @@ def get_project_submissions():
             submission_dict['course_id'] = submission.project.course_id
             submission_dict['due_date'] = submission.project.due_date.isoformat()
             
-            # Add project-level modification request information
-            submission_dict['modification_requested'] = submission.project.modification_requested
-            submission_dict['modification_request_reason'] = submission.project.modification_request_reason
-            submission_dict['modification_requested_at'] = submission.project.modification_requested_at.isoformat() if submission.project.modification_requested_at else None
-            submission_dict['modification_requested_by'] = submission.project.modification_requested_by
-            submission_dict['can_resubmit'] = submission.project.can_resubmit
+            # Revision state belongs to this submission (and its teammates),
+            # not to the shared project row. to_dict() already includes it;
+            # keep these keys consistent with that per-submission state.
+            revision = submission.modification_state()
+            submission_dict['modification_requested'] = revision['modification_requested']
+            submission_dict['modification_request_reason'] = revision['modification_request_reason']
+            submission_dict['modification_requested_at'] = (
+                revision['modification_requested_at'].isoformat()
+                if revision['modification_requested_at'] else None
+            )
+            submission_dict['modification_requested_by'] = revision['modification_requested_by']
+            submission_dict['can_resubmit'] = revision['can_resubmit']
             
             # Calculate days late
             if submission.submitted_at:
@@ -1331,12 +1347,10 @@ def grade_project_submission(submission_id):
                     else:
                         percentage_score = 0
                     
-                    # A project counts toward the LAST module it is assigned
-                    # to only — grading it must not move the score of the
-                    # earlier modules it spans, or those could not be passed
-                    # before the project is done.
-                    gate_module_id = project.get_gate_module_id()
-                    project_module_ids = [gate_module_id] if gate_module_id else []
+                    # The grade is distributed to every module the project
+                    # covers and to every team member. Progression gating is
+                    # handled separately at the last covered module.
+                    project_module_ids = project.get_scoring_module_ids()
                     
                     for member_id in team_ids:
                         # Skip the primary submitter — already graded above
@@ -1367,67 +1381,33 @@ def grade_project_submission(submission_id):
             except Exception as team_error:
                 logger.error(f"❌ Error propagating grade to team members: {str(team_error)}")
         
-        # ===== Update ModuleProgress for the primary submitter =====
+        # ===== Distribute the grade to every covered module =====
         try:
-            from ..models.student_models import ModuleProgress
-            
+            from ..services.project_scoring_service import (
+                distribute_project_score, team_member_ids,
+            )
+
             project = submission.project
-            student_id = submission.student_id
-            course_id = project.course_id
-            
-            # Calculate percentage score
             points_possible = project.points_possible or 100
-            if points_possible > 0:
-                percentage_score = round((grade / points_possible) * 100, 2)
-                percentage_score = max(0, min(100, percentage_score))
-            else:
-                percentage_score = 0
-            
-            # A project (including a course-level one with no module
-            # assignment) counts toward the LAST module it is assigned to
-            # only, so earlier modules it spans are free to proceed.
-            gate_module_id = project.get_gate_module_id()
-            project_module_ids = [gate_module_id] if gate_module_id else []
-            
-            # Get student's enrollment
-            enrollment = Enrollment.query.filter_by(
-                student_id=student_id,
-                course_id=course_id
-            ).first()
-            
-            if enrollment and project_module_ids:
-                for module_id in project_module_ids:
-                    module_progress = ModuleProgress.query.filter_by(
-                        student_id=student_id,
-                        module_id=module_id,
-                        enrollment_id=enrollment.id
-                    ).first()
-                    
-                    if not module_progress:
-                        # Create missing progress via the standard initializer
-                        # (ModuleProgress has no course_id column; creating it
-                        # directly with invalid kwargs always failed silently)
-                        from ..services.progression_service import ProgressionService
-                        module_progress = ProgressionService._initialize_module_progress(
-                            student_id, module_id, enrollment.id
-                        )
-                    
-                    # Use best project score (keep the higher score)
-                    current_project_score = module_progress.project_score or 0.0
-                    new_score = max(current_project_score, percentage_score)
-                    module_progress.project_score = new_score
-                    
-                    # Recalculate cumulative score (projects share the hands-on bucket)
-                    if hasattr(module_progress, 'calculate_cumulative_score'):
-                        module_progress.calculate_cumulative_score()
-                    
-                    logger.info(f"✅ Updated module {module_id} project score for student {student_id}: {new_score}%")
-                
-                db.session.commit()
-                logger.info(f"📊 Updated project scores across {len(project_module_ids)} module(s)")
-            elif not enrollment:
-                logger.warning(f"⚠️ Enrollment not found for student {student_id}, course {course_id}")
-                
+            percentage_score = (
+                round((grade / points_possible) * 100, 2)
+                if points_possible > 0 else 0
+            )
+            percentage_score = max(0, min(100, percentage_score))
+
+            # Manual grading is authoritative: a corrected lower score must
+            # replace the old one everywhere it was recorded.
+            updated_modules = distribute_project_score(
+                project,
+                team_member_ids(project, submission),
+                percentage_score,
+                allow_lower=True,
+            )
+            db.session.commit()
+            logger.info(
+                f"📊 Distributed project score {percentage_score:.1f}% across "
+                f"{len(updated_modules)} module(s) for the whole team"
+            )
         except Exception as mp_error:
             logger.error(f"❌ Error updating module progress after project grading: {str(mp_error)}")
             # Don't fail the whole request
@@ -1444,54 +1424,58 @@ def grade_project_submission(submission_id):
             passing_threshold = project.passing_score if project.passing_score is not None else DEFAULT_PASSING_PERCENTAGE
             
             # Check if score is below passing threshold
+            member_submissions = [
+                result.get('submission') for result in team_grading_results
+                if result.get('success')
+            ]
+            all_submissions = [submission] + member_submissions
+            max_resubs = project.max_resubmissions or 3
+
             if percentage_score < passing_threshold:
-                max_resubs = project.max_resubmissions or 3
-                current_resubs = project.resubmission_count or 0
-                
-                if current_resubs < max_resubs:
+                eligible = [
+                    sub for sub in all_submissions
+                    if (sub.resubmission_count or 0) < max_resubs
+                ]
+                if eligible:
                     modification_reason = (
                         f"Your project score of {grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
                         f"passing threshold of {passing_threshold}%. "
                         f"Please review the instructor feedback and resubmit your project with improvements."
                     )
-                    
+
                     instructor_feedback = data.get('feedback', '').strip()
                     if instructor_feedback:
                         modification_reason += f"\n\nInstructor Feedback: {instructor_feedback}"
-                    
-                    project.modification_requested = True
-                    project.modification_request_reason = modification_reason
-                    project.modification_requested_at = now_local()
-                    project.modification_requested_by = current_user_id
-                    project.can_resubmit = True
-                    project.resubmission_count = current_resubs + 1
-                    
+
+                    from ..services.project_scoring_service import request_project_modification
+                    request_project_modification(eligible, modification_reason, current_user_id)
+
                     db.session.commit()
                     modification_auto_requested = True
-                    
+                    for result in team_grading_results:
+                        if result.get('success'):
+                            result['modification_auto_requested'] = True
+                            result['modification_reason'] = modification_reason
+
                     logger.info(
                         f"🔄 Auto-modification requested for project {project.id} - "
                         f"Student {submission.student_id} scored {percentage_score:.1f}% "
                         f"(below {passing_threshold}% threshold)"
                     )
-                elif current_resubs >= max_resubs:
+                else:
                     logger.info(
                         f"⚠️ Score below passing but max resubmissions ({max_resubs}) reached "
                         f"for project {project.id}, student {submission.student_id}"
                     )
             else:
-                # Score is at or above passing - clear any existing modification request
-                if project.modification_requested:
-                    project.modification_requested = False
-                    project.modification_request_reason = None
-                    project.modification_requested_at = None
-                    project.modification_requested_by = None
-                    project.can_resubmit = False
-                    db.session.commit()
-                    logger.info(
-                        f"✅ Score {percentage_score:.1f}% meets passing threshold {passing_threshold}% - "
-                        f"cleared modification request for project {project.id}"
-                    )
+                # Score is at or above passing - clear each student's request
+                from ..services.project_scoring_service import clear_project_modification
+                clear_project_modification(all_submissions)
+                db.session.commit()
+                logger.info(
+                    f"✅ Score {percentage_score:.1f}% meets passing threshold {passing_threshold}% - "
+                    f"cleared project modification requests"
+                )
         except Exception as mod_error:
             logger.error(f"❌ Error in auto-modification request for project: {str(mod_error)}")
         # ===== END AUTO-MODIFICATION REQUEST =====
@@ -1573,7 +1557,7 @@ def grade_project_submission(submission_id):
                 f"Project graded successfully. Score is below passing threshold "
                 f"({passing_threshold}%) — modification request has been automatically sent to the student."
             )
-            response_data["resubmissions_remaining"] = (project.max_resubmissions or 3) - (project.resubmission_count or 0)
+            response_data["resubmissions_remaining"] = (project.max_resubmissions or 3) - (submission.resubmission_count or 0)
         
         return jsonify(response_data), 200
         
@@ -1604,7 +1588,7 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
         graded_at: Datetime of grading
         graded_by: Instructor user ID
         percentage_score: Grade as percentage (0-100)
-        project_module_ids: List of module IDs this project covers
+        project_module_ids: every module this project's score covers
         course_id: Course ID
     
     Returns:
@@ -1664,31 +1648,19 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
             course_id=course_id
         ).first()
         
-        if enrollment and project_module_ids:
-            for module_id in project_module_ids:
-                module_progress = ModuleProgress.query.filter_by(
-                    student_id=member_id,
-                    module_id=module_id,
-                    enrollment_id=enrollment.id
-                ).first()
-                
-                if not module_progress:
-                    # Create missing progress via the standard initializer
-                    from ..services.progression_service import ProgressionService
-                    module_progress = ProgressionService._initialize_module_progress(
-                        member_id, module_id, enrollment.id
-                    )
-                
-                current_project_score = module_progress.project_score or 0.0
-                new_score = max(current_project_score, percentage_score)
-                module_progress.project_score = new_score
-                
-                if hasattr(module_progress, 'calculate_cumulative_score'):
-                    module_progress.calculate_cumulative_score()
-                
-                logger.info(f"✅ Team member {member_id}: updated module {module_id} project score: {new_score}%")
-        elif not enrollment:
-            logger.warning(f"⚠️ Team member {member_id}: enrollment not found for course {course_id}")
+        from ..services.project_scoring_service import distribute_project_score
+        updated = distribute_project_score(
+            project, [member_id], percentage_score, allow_lower=True
+        )
+        if updated:
+            logger.info(
+                f"✅ Team member {member_id}: project score distributed to "
+                f"modules {updated}"
+            )
+        else:
+            logger.warning(
+                f"⚠️ Team member {member_id}: no enrollment for course {course_id}"
+            )
         
         # Team grades are shared LMS facts; refresh each member's Passport too.
         # The Passport still caps shared grades until an individual is verified.
@@ -2455,6 +2427,19 @@ def quick_grade():
             submission.feedback = feedback
             submission.graded_at = now_local()
             submission.graded_by = current_user_id
+
+            # Quick grading is still grading: project scores must reach every
+            # covered module and every team member, exactly like the full
+            # grading endpoint.
+            from ..services.project_scoring_service import (
+                distribute_project_score, team_member_ids,
+            )
+            points = submission.project.points_possible or 100
+            pct = max(0.0, min(100.0, (grade / points) * 100)) if points > 0 else 0.0
+            distribute_project_score(
+                submission.project, team_member_ids(submission.project, submission),
+                pct, allow_lower=True,
+            )
 
         from ..talent_passport.hooks import notify_talent_passport
         quick_source = (

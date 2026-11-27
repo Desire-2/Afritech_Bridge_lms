@@ -2946,9 +2946,10 @@ def get_student_projects():
                 submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
                 submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at and project.due_date else False
                 
-                if project.modification_requested and project.can_resubmit:
+                state = submission.modification_state()
+                if state['modification_requested'] and state['can_resubmit']:
                     submission_status['status'] = 'needs_revision'
-                    submission_status['feedback'] = submission.feedback or project.modification_request_reason
+                    submission_status['feedback'] = submission.feedback or state['modification_request_reason']
                     if submission.grade is not None:
                         submission_status['grade'] = submission.grade
                     if submission.graded_at:
@@ -3060,9 +3061,10 @@ def get_student_project_details(project_id):
             submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
             submission_status['is_late'] = submission_data['is_late']
             
-            if project.modification_requested and project.can_resubmit:
+            state = submission.modification_state() if submission else None
+            if state and state['modification_requested'] and state['can_resubmit']:
                 submission_status['status'] = 'needs_revision'
-                submission_status['feedback'] = submission.feedback or project.modification_request_reason
+                submission_status['feedback'] = submission.feedback or state['modification_request_reason']
                 if submission.grade is not None:
                     submission_status['grade'] = submission.grade
                 if submission.graded_at:
@@ -3085,9 +3087,10 @@ def get_student_project_details(project_id):
                 submission_status['days_late'] = (datetime.utcnow() - project.due_date).days
         
         project_data['submission_status'] = submission_status
-        project_data['modification_requested'] = project.modification_requested
-        project_data['can_resubmit'] = project.can_resubmit
-        project_data['modification_request_reason'] = project.modification_request_reason
+        state = submission.modification_state() if submission else None
+        project_data['modification_requested'] = bool(state and state['modification_requested'])
+        project_data['can_resubmit'] = bool(state and state['can_resubmit'])
+        project_data['modification_request_reason'] = state['modification_request_reason'] if state else None
         
         result = {
             'project': project_data,
@@ -3223,9 +3226,10 @@ def get_student_team_info(project_id):
             "is_late": (my_submission.submitted_at > project.due_date) if my_submission.submitted_at and project.due_date else False
         }
         
-        if project.modification_requested and project.can_resubmit:
+        revision = my_submission.modification_state()
+        if revision['modification_requested'] and revision['can_resubmit']:
             submission_status["needs_revision"] = True
-            submission_status["modification_reason"] = project.modification_request_reason
+            submission_status["modification_reason"] = revision['modification_request_reason']
         else:
             submission_status["needs_revision"] = False
         
@@ -3249,9 +3253,9 @@ def get_student_team_info(project_id):
                 "submission_format": project.submission_format,
                 "max_file_size_mb": project.max_file_size_mb,
                 "allowed_file_types": project.allowed_file_types,
-                "modification_requested": project.modification_requested,
-                "can_resubmit": project.can_resubmit,
-                "modification_request_reason": project.modification_request_reason
+                "modification_requested": revision['modification_requested'],
+                "can_resubmit": revision['can_resubmit'],
+                "modification_request_reason": revision['modification_request_reason']
             },
             "submission": submission_status,
             "enrollment": {
@@ -3453,29 +3457,45 @@ def submit_project(project_id):
         ).first()
         
         if existing_submission:
-            # A scaffolded team row has submitted_at NULL — the instructor
-            # created the team but nobody has submitted work yet. Let the
-            # primary fill it in instead of rejecting with "already submitted".
-            if existing_submission.submitted_at is not None:
-                return jsonify({"message": "Project already submitted"}), 400
+            from ..services.project_scoring_service import (
+                prepare_project_resubmission, resubmission_check,
+            )
+            allowed, reason = resubmission_check(project, existing_submission)
+            if not allowed:
+                return jsonify({"message": reason}), 400
+
+            is_resubmission = existing_submission.submitted_at is not None
+            if is_resubmission:
+                member_ids = prepare_project_resubmission(
+                    project, existing_submission, data
+                )
+            else:
+                member_ids = set(team_members or [])
+
             existing_submission.text_content = data.get('text_content')
             existing_submission.file_path = data.get('file_url')
-            existing_submission.submitted_at = now_local()
+            if not is_resubmission:
+                existing_submission.submitted_at = now_local()
+            if project.collaboration_allowed and team_members:
+                existing_submission.set_team_members(team_members)
 
             from ..talent_passport.hooks import notify_talent_passport
-            scaffold_marker = existing_submission.submitted_at.isoformat()
+            marker = existing_submission.submitted_at.isoformat()
+            event = "project.resubmitted" if is_resubmission else "project.submitted"
             notify_talent_passport(
-                "project.submitted", current_user_id,
+                event, current_user_id,
                 "project_submission", existing_submission.id,
                 course_id=project.course_id,
-                suffix=scaffold_marker,
+                suffix=marker,
             )
-            for member_id in set(team_members or []):
+            for member_id in set(member_ids or []):
+                if int(member_id) == current_user_id:
+                    continue
                 notify_talent_passport(
-                    "project.submitted", int(member_id),
+                    event, int(member_id),
                     "project_submission", existing_submission.id,
                     course_id=project.course_id,
-                    suffix=f"team:{scaffold_marker}",
+                    suffix=f"team:{marker}",
                 )
 
             db.session.commit()
@@ -3483,12 +3503,13 @@ def submit_project(project_id):
                 submission_type='project',
                 submission_id=existing_submission.id,
                 student_id=current_user_id,
-                force=True,
+                force=is_resubmission,
             )
             payload = existing_submission.to_dict()
             payload['aage_job_id'] = aage_job.id if aage_job else None
             return jsonify({
-                "message": "Project submitted successfully",
+                "message": "Project resubmitted successfully" if is_resubmission
+                           else "Project submitted successfully",
                 "submission": payload
             }), 200
         

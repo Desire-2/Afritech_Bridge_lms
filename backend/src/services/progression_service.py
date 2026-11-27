@@ -365,7 +365,19 @@ class ProgressionService:
             module = Module.query.get(module_id)
             if not module:
                 return False, "Module not found"
-                
+
+            # A project can span several modules, but it only gates the LAST
+            # one it covers. That gate is authoritative: even a student who
+            # reaches the passing score through other components must finish
+            # the project before this module can be completed.
+            from .project_scoring_service import project_gate_blocker
+            gate_blocker = project_gate_blocker(student_id, module_id, module.course_id)
+            if gate_blocker:
+                current_app.logger.info(
+                    f"Module {module_id} BLOCKED by project gate: {gate_blocker}"
+                )
+                return False, gate_blocker
+
             # Published lessons only — drafts must not block completion
             lessons = [
                 lesson for lesson in module.lessons.order_by(Lesson.order).all()

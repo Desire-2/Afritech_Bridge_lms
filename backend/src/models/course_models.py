@@ -1550,6 +1550,15 @@ class Project(db.Model):
                 continue
         return [mid for mid in ordered_ids if mid in wanted]
 
+    def get_scoring_module_ids(self, course_modules=None):
+        """Every module this project's score is distributed to.
+
+        Unlike the gate (the last covered module only), the grade itself is
+        recorded on all modules the project spans so each module's breakdown
+        reflects the work. Whole-course projects cover every module.
+        """
+        return self.get_covered_modules_in_order(course_modules)
+
     def get_gate_module_id(self, course_modules=None):
         """The one module this project holds a student to: the LAST module it
         is assigned to (course sequence order).
@@ -1639,6 +1648,16 @@ class ProjectSubmission(db.Model):
     resubmission_count = db.Column(db.Integer, default=0, nullable=False)
     submission_notes = db.Column(db.Text, nullable=True)  # Notes about why this is a resubmission
 
+    # Revision state is per student/team submission. The legacy flags on
+    # Project are global and must not be used for new write paths: a revision
+    # requested from one student's work must not unlock resubmission for every
+    # student in the course.
+    modification_requested = db.Column(db.Boolean, default=False, nullable=False)
+    modification_request_reason = db.Column(db.Text, nullable=True)
+    modification_requested_at = db.Column(db.DateTime, nullable=True)
+    modification_requested_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    can_resubmit = db.Column(db.Boolean, default=False, nullable=False)
+
     # When the submission row itself was created. Unlike submitted_at, this is
     # ALWAYS set — a team scaffolded by the instructor has a created_at but no
     # submitted_at until a member actually submits work.
@@ -1675,6 +1694,7 @@ class ProjectSubmission(db.Model):
         self.team_members = json.dumps(member_list)
 
     def to_dict(self):
+        state = self.modification_state()
         return {
             'id': self.id,
             'project_id': self.project_id,
@@ -1694,29 +1714,65 @@ class ProjectSubmission(db.Model):
             'is_resubmission': self.is_resubmission,
             'resubmission_count': self.resubmission_count,
             'submission_notes': self.submission_notes,
+            'modification_requested': state['modification_requested'],
+            'can_resubmit': state['can_resubmit'],
+            'modification_request_reason': state['modification_request_reason'],
             'submission_status': self.get_submission_status()
+        }
+
+    def modification_state(self):
+        """Per-student revision state, with a fallback for legacy project flags.
+
+        Historical rows only had flags on the shared ``projects`` row. Read
+        those for backwards compatibility, but never write them: the new
+        per-submission columns are the source of truth.
+        """
+        requested = bool(self.modification_requested)
+        can_resubmit = bool(self.can_resubmit)
+        reason = self.modification_request_reason
+        requested_at = self.modification_requested_at
+        requested_by = self.modification_requested_by
+        # Only consult the legacy shared-project flags for rows that have never
+        # had a per-submission revision. Once a revision has been counted here,
+        # clearing it must stay cleared even if the old global flag is stale.
+        legacy_row = not (self.resubmission_count or 0)
+        if legacy_row and self.project and self.project.modification_requested:
+            requested = True
+            can_resubmit = can_resubmit or bool(self.project.can_resubmit)
+            reason = reason or self.project.modification_request_reason
+            requested_at = requested_at or self.project.modification_requested_at
+            requested_by = requested_by or self.project.modification_requested_by
+        return {
+            'modification_requested': requested,
+            'can_resubmit': can_resubmit,
+            'modification_request_reason': reason,
+            'modification_requested_at': requested_at,
+            'modification_requested_by': requested_by,
         }
 
     def get_submission_status(self):
         """Get comprehensive submission status information"""
+        state = self.modification_state()
         status = {
             'is_first_submission': not self.is_resubmission,
             'is_resubmission': self.is_resubmission,
             'resubmission_count': self.resubmission_count,
             'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
-            'modification_requested': self.project.modification_requested if self.project else False,
-            'can_resubmit': self.project.can_resubmit if self.project else False,
+            'modification_requested': state['modification_requested'],
+            'can_resubmit': state['can_resubmit'],
             'submission_notes': self.submission_notes
         }
-        
-        # Add modification request details if applicable
-        if self.project and self.project.modification_requested:
+
+        if state['modification_requested']:
             status.update({
-                'modification_request_reason': self.project.modification_request_reason,
-                'modification_requested_at': self.project.modification_requested_at.isoformat() if self.project.modification_requested_at else None,
-                'modification_requested_by': self.project.modification_requested_by
+                'modification_request_reason': state['modification_request_reason'],
+                'modification_requested_at': (
+                    state['modification_requested_at'].isoformat()
+                    if state['modification_requested_at'] else None
+                ),
+                'modification_requested_by': state['modification_requested_by'],
             })
-        
+
         return status
 
 
