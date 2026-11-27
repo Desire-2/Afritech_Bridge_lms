@@ -168,6 +168,7 @@ export class FileUploadService {
     options: {
       folder?: string;
       assignmentId?: number;
+      projectId?: number;
       studentId?: number;
       onProgress?: (progress: FileUploadProgress) => void;
       allowedTypes?: string[];
@@ -185,7 +186,10 @@ export class FileUploadService {
     const randomId = Math.random().toString(36).substring(2);
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const folder = options.folder || 'assignments';
-    const pathname = `${folder}/${options.assignmentId || 'general'}/${options.studentId || 'unknown'}/${timestamp}_${randomId}_${sanitizedFileName}`;
+    const ownerId = folder === 'projects'
+      ? (options.projectId ?? options.assignmentId)
+      : options.assignmentId;
+    const pathname = `${folder}/${ownerId || 'general'}/${options.studentId || 'unknown'}/${timestamp}_${randomId}_${sanitizedFileName}`;
 
     // Simulate progress if callback provided
     if (options.onProgress) {
@@ -204,6 +208,7 @@ export class FileUploadService {
       
       if (options.folder) formData.append('folder', options.folder);
       if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
+      if (options.projectId) formData.append('projectId', options.projectId.toString());
       if (options.studentId) formData.append('studentId', options.studentId.toString());
 
       // Include auth token so the Next.js API route can forward it to the backend
@@ -230,6 +235,7 @@ export class FileUploadService {
         pathname?: string;
         contentType?: string;
         contentDisposition?: string;
+        storage?: UploadedFile['storage'];
       };
       
       if (!result.success) {
@@ -252,7 +258,8 @@ export class FileUploadService {
         uploadedAt: result.uploadedAt || new Date().toISOString(),
         pathname: result.pathname || file.name,
         contentType: result.contentType || file.type,
-        contentDisposition: result.contentDisposition || `attachment; filename="${file.name}"`
+        contentDisposition: result.contentDisposition || `attachment; filename="${file.name}"`,
+        storage: result.storage || 'unknown'
       };
 
     } catch (error: any) {
@@ -517,6 +524,7 @@ export class FileUploadService {
     options: {
       folder?: string;
       assignmentId?: number;
+      projectId?: number;
       studentId?: number;
       onProgress?: (progress: FileUploadProgress) => void;
     } = {}
@@ -526,6 +534,7 @@ export class FileUploadService {
     
     if (options.folder) formData.append('folder', options.folder);
     if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
+    if (options.projectId) formData.append('projectId', options.projectId.toString());
     if (options.studentId) formData.append('studentId', options.studentId.toString());
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
@@ -735,6 +744,7 @@ export class FileUploadService {
         const uploadedFile = await this.uploadFile(stagedFile.file, {
           folder: options.folder,
           assignmentId: options.assignmentId,
+          projectId: options.projectId,
           studentId: options.studentId,
           onProgress: options.onFileProgress 
             ? (progress) => options.onFileProgress!(stagedFile.id, progress) 

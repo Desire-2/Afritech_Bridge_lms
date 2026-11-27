@@ -614,6 +614,28 @@ def _auto_migrate_missing_columns(bind=None):
                         f"UPDATE project_submissions SET {col_name} = {false_literal} "
                         f"WHERE {col_name} IS NULL"
                     ))
+
+        # file_path now holds the Vercel Blob metadata array (same shape as an
+        # assignment's file_url). Widen the old VARCHAR(500) column in place;
+        # production boots without `flask db upgrade`, so the Alembic revision
+        # alone would not protect long Blob URLs from being truncated.
+        if getattr(bind, 'dialect', None) and bind.dialect.name == 'postgresql':
+            file_path_column = next(
+                (c for c in inspector.get_columns('project_submissions')
+                 if c['name'] == 'file_path'),
+                None,
+            )
+            declared_length = getattr(
+                file_path_column.get('type') if file_path_column else None,
+                'length',
+                None,
+            )
+            if declared_length is not None and declared_length < 1000:
+                logger.info("🔧 Widening project_submissions.file_path to TEXT")
+                _execute_schema_ddl(bind, sa.text(
+                    "ALTER TABLE project_submissions "
+                    "ALTER COLUMN file_path TYPE TEXT"
+                ))
     except Exception as e:
         logger.warning(f"⚠️ project_submissions auto-migration skipped (non-fatal): {e}")
 

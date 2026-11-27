@@ -36,15 +36,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get optional parameters
+    // Get optional parameters. Projects use the same upload pipeline as
+    // assignments, but are stored under their own `projects/<id>/...` prefix.
     const folder = formData.get('folder') as string || 'assignments';
     const assignmentId = formData.get('assignmentId') as string;
+    const projectId = formData.get('projectId') as string;
     const studentId = formData.get('studentId') as string;
 
-    // Check storage configuration
-    const storageProvider = process.env.FILE_STORAGE_PROVIDER?.toLowerCase() || 'google_drive';
-    
-    if (storageProvider === 'google_drive') {
+    // Blob is the default store; Google Drive is opt-in via configuration.
+    const storageProvider = process.env.FILE_STORAGE_PROVIDER?.toLowerCase() || 'vercel_blob';
+    const hasValidBlobToken = !!(process.env.BLOB_READ_WRITE_TOKEN &&
+                                process.env.BLOB_READ_WRITE_TOKEN.startsWith('vercel_blob_rw_'));
+
+    // A configured Blob store always wins: a stale `google_drive` provider
+    // setting must not keep sending production uploads to a broken service.
+    if (storageProvider === 'google_drive' && !hasValidBlobToken) {
       // Forward to backend for Google Drive handling
       try {
         console.log('Forwarding to backend for Google Drive upload...');
@@ -61,6 +67,7 @@ export async function POST(request: NextRequest) {
         backendFormData.append('file', file);
         if (folder) backendFormData.append('folder', folder);
         if (assignmentId) backendFormData.append('assignmentId', assignmentId);
+        if (projectId) backendFormData.append('projectId', projectId);
         if (studentId) backendFormData.append('studentId', studentId);
         
         console.log(`Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
@@ -94,13 +101,10 @@ export async function POST(request: NextRequest) {
     const timestamp = Date.now();
     const randomId = Math.random().toString(36).substring(2);
     const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const pathname = `${folder}/${assignmentId || 'general'}/${studentId || 'unknown'}/${timestamp}_${randomId}_${sanitizedFileName}`;
+    const ownerId = folder === 'projects' ? (projectId || assignmentId) : assignmentId;
+    const pathname = `${folder}/${ownerId || 'general'}/${studentId || 'unknown'}/${timestamp}_${randomId}_${sanitizedFileName}`;
 
-    // Check if Vercel Blob is configured and working
-    const hasValidToken = !!(process.env.BLOB_READ_WRITE_TOKEN && 
-                            process.env.BLOB_READ_WRITE_TOKEN.startsWith('vercel_blob_rw_'));
-    
-    if (hasValidToken) {
+    if (hasValidBlobToken) {
       try {
         console.log('Attempting Vercel Blob upload...');
         // Upload to Vercel Blob

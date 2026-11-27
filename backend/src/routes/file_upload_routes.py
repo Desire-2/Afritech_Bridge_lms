@@ -18,6 +18,7 @@ from ..utils.validators import StudentValidators
 from ..utils.google_drive_service import google_drive_service
 from ..utils.email_notifications import notify_instructor_of_submission
 from ..services.aage.submission_dispatch import enqueue_for_submission
+from ..utils.submission_files import parse_submission_files, serialize_submission_files
 
 logger = logging.getLogger(__name__)
 
@@ -466,7 +467,7 @@ def submit_project_with_files(project_id):
                 prepare_project_resubmission(project, existing, data)
             submission = existing
             submission.text_content = data.get('text_content')
-            submission.file_path = json.dumps(files_data) if files_data else None
+            submission.file_path = serialize_submission_files(data)
             if not is_resubmission:
                 submission.submitted_at = now_local()
             if project.collaboration_allowed and team_members:
@@ -477,7 +478,7 @@ def submit_project_with_files(project_id):
                 project_id=project_id,
                 student_id=current_user_id,
                 text_content=data.get('text_content'),
-                file_path=json.dumps(files_data) if files_data else None,
+                file_path=serialize_submission_files(data),
                 submitted_at=now_local()
             )
             if project.collaboration_allowed and team_members:
@@ -606,7 +607,7 @@ def get_assignment_files(assignment_id):
                 files_data = []
                 
             # If using Google Drive, enrich file data with current info
-            storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'google_drive').lower()
+            storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'vercel_blob').lower()
             if storage_provider == 'google_drive' and google_drive_service.is_configured:
                 enriched_files = []
                 for file_data in files_data:
@@ -685,13 +686,29 @@ def get_project_files(project_id):
                 "files": []
             }), 200
         
-        try:
-            files_data = json.loads(submission.file_path)
-            if not isinstance(files_data, list):
-                files_data = []
-        except (json.JSONDecodeError, TypeError):
-            files_data = []
-        
+        # Same representation as assignment files: a JSON metadata array from
+        # Vercel Blob, with legacy bare URLs still understood.
+        files_data = parse_submission_files(
+            submission.file_path, getattr(submission, 'file_name', None)
+        )
+
+        storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'vercel_blob').lower()
+        if storage_provider == 'google_drive' and google_drive_service.is_configured:
+            enriched_files = []
+            for file_data in files_data:
+                if 'file_id' in file_data:
+                    current_info = google_drive_service.get_file_info(file_data['file_id'])
+                    if current_info:
+                        enriched_files.append({**file_data, **current_info})
+                    else:
+                        enriched_files.append({
+                            **file_data, 'status': 'missing',
+                            'error': 'File not found in Google Drive',
+                        })
+                else:
+                    enriched_files.append(file_data)
+            files_data = enriched_files
+
         return jsonify({
             "success": True,
             "files": files_data,
@@ -794,7 +811,7 @@ def upload_single_file():
             }), 400
 
         # Check file storage provider
-        storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'google_drive').lower()
+        storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'vercel_blob').lower()
         
         if storage_provider == 'google_drive' and google_drive_service.is_configured:
             try:
@@ -986,7 +1003,7 @@ def test_google_drive_connection():
             return jsonify({
                 "success": False,
                 "error": "Google Drive service is not configured",
-                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'google_drive'),
+                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'vercel_blob'),
                 "message": "Please configure GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_ROOT_FOLDER_ID in environment variables"
             }), 503
         
@@ -997,7 +1014,7 @@ def test_google_drive_connection():
             return jsonify({
                 "success": True,
                 "message": "Google Drive connection successful",
-                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'google_drive')
+                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'vercel_blob')
             }), 200
         else:
             return jsonify({

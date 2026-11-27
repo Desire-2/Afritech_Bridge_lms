@@ -17,6 +17,7 @@ import {
   isSubmissionHandedIn,
   isFileTypeAllowed,
   parseAttachments,
+  projectFileMetadata,
 } from '@/lib/project-submission';
 import {
   ArrowLeft,
@@ -118,14 +119,21 @@ export default function ProjectDetailPage() {
     setSubmitSuccess(false);
     try {
       let fileUrl: string | undefined;
+      let files: ReturnType<typeof projectFileMetadata>[] = [];
       if (file) {
+        // Identical to the assignment flow: upload to Vercel Blob, then send
+        // only the returned metadata to the API.
         const uploaded = await FileUploadService.uploadFile(file, {
+          folder: 'projects',
+          projectId,
           maxSize: rules.maxFileSizeBytes,
         });
         fileUrl = uploaded?.url;
+        files = uploaded ? [projectFileMetadata(uploaded)] : [];
       }
       await StudentSubmissionService.submitProject(projectId, {
         text_content: hasText ? textContent.trim() : undefined,
+        files,
         file_url: fileUrl,
       });
       setSubmitSuccess(true);

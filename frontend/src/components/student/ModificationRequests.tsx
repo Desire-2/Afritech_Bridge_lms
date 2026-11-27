@@ -223,7 +223,8 @@ const ResubmissionModal: React.FC<ResubmissionModalProps> = ({
         
         const uploadResult = await FileUploadService.uploadStagedFiles(validStagedFiles, {
           folder: submissionUploadFolder(request.type),
-          assignmentId: request.id,
+          assignmentId: request.type === 'assignment' ? request.id : undefined,
+          projectId: request.type === 'project' ? request.id : undefined,
           onFileProgress: (fileId, progress) => {
             setUploadProgress(prev => ({ ...prev, [fileId]: progress }));
           },

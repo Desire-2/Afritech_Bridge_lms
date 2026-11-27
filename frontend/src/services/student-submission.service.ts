@@ -291,6 +291,16 @@ export class StudentSubmissionService {
     projectId: number,
     data: {
       text_content?: string;
+      /** Vercel Blob file metadata, in the same shape assignments submit. */
+      files?: Array<{
+        url: string;
+        filename: string;
+        size?: number;
+        contentType?: string;
+        uploadedAt?: string;
+        storage?: string;
+      }>;
+      /** Kept for compatibility with older callers and Flask fallback. */
       file_url?: string;
       team_members?: number[];
     }

@@ -1634,7 +1634,9 @@ class ProjectSubmission(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     team_members = db.Column(db.Text, nullable=True)  # JSON string of team member IDs if collaboration allowed
     text_content = db.Column(db.Text, nullable=True)  # For text responses or project descriptions
-    file_path = db.Column(db.String(500), nullable=True)  # Path to uploaded file
+    # JSON metadata array from the Vercel Blob upload (same shape as an
+    # assignment's file_url). TEXT avoids truncating long Blob URLs.
+    file_path = db.Column(db.Text, nullable=True)
     file_name = db.Column(db.String(255), nullable=True)  # Original filename
     submitted_at = db.Column(db.DateTime, nullable=True)
     grade = db.Column(db.Float, nullable=True)
@@ -1695,6 +1697,11 @@ class ProjectSubmission(db.Model):
 
     def to_dict(self):
         state = self.modification_state()
+        # Mirror AssignmentSubmission.to_dict(): expose parsed Vercel Blob
+        # metadata next to the raw column so grading surfaces never have to
+        # decode a JSON string themselves.
+        from ..utils.submission_files import parse_submission_files
+        files_data = parse_submission_files(self.file_path, self.file_name)
         return {
             'id': self.id,
             'project_id': self.project_id,
@@ -1702,6 +1709,8 @@ class ProjectSubmission(db.Model):
             'team_members': self.get_team_members(),
             'text_content': self.text_content,
             'file_path': self.file_path,
+            'files': files_data,
+            'files_count': len(files_data),
             'file_name': self.file_name,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,

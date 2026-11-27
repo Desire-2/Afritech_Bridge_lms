@@ -21,6 +21,7 @@ from ..models.student_models import (
 )
 from ..models.achievement_models import UserAchievement, Achievement
 from ..services.aage.submission_dispatch import enqueue_for_submission
+from ..utils.submission_files import serialize_submission_files
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -3473,7 +3474,9 @@ def submit_project(project_id):
                 member_ids = set(team_members or [])
 
             existing_submission.text_content = data.get('text_content')
-            existing_submission.file_path = data.get('file_url')
+            # Same Vercel Blob metadata array as assignment submissions; the
+            # helper still accepts a legacy bare `file_url` from older clients.
+            existing_submission.file_path = serialize_submission_files(data)
             if not is_resubmission:
                 existing_submission.submitted_at = now_local()
             if project.collaboration_allowed and team_members:
@@ -3519,7 +3522,9 @@ def submit_project(project_id):
             project_id=project_id,
             student_id=current_user_id,
             text_content=data.get('text_content'),
-            file_path=data.get('file_url'),  # Frontend should handle file upload
+            # The frontend uploads to Vercel Blob and posts file metadata,
+            # exactly as it does for assignment submissions.
+            file_path=serialize_submission_files(data),
             submitted_at=now_local()
         )
         

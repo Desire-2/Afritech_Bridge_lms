@@ -128,9 +128,9 @@ def test_fresh_flask_db_upgrade_bootstraps_and_stamps_model_schema(tmp_path):
         revision = conn.execute(
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar()
-    # Head advances with the additive Talent Passport document snapshot and
-    # per-submission project revision-state migrations.
-    assert revision == "e5f6a7b8c9d0"
+    # Head advances with the additive Talent Passport document snapshot,
+    # per-submission project revision state and the widened Blob metadata column.
+    assert revision == "9c4d7e2a1b6f"
 
 
 def test_older_evaluation_runs_table_gains_cost_column_on_upgrade():

@@ -22,6 +22,7 @@ import {
   isSubmissionHandedIn,
   isFileTypeAllowed,
   parseAttachments,
+  projectFileMetadata,
 } from '@/lib/project-submission';
 
 interface ProjectPanelProps {
@@ -380,14 +381,20 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
     try {
       setSubmitting(true);
       let fileUrl: string | undefined;
+      let files: ReturnType<typeof projectFileMetadata>[] = [];
       if (file) {
+        // Same Vercel Blob pipeline and metadata shape as assignment uploads.
         const uploaded = await FileUploadService.uploadFile(file, {
+          folder: 'projects',
+          projectId,
           maxSize: maxFileSizeBytes,
         });
         fileUrl = uploaded?.url;
+        files = uploaded ? [projectFileMetadata(uploaded)] : [];
       }
       await StudentSubmissionService.submitProject(projectId, {
         text_content: hasText ? textContent.trim() : undefined,
+        files,
         file_url: fileUrl,
       });
       toast.success('Project submitted successfully.');

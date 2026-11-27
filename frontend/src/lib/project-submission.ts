@@ -131,10 +131,10 @@ export interface Attachment {
 }
 
 /**
- * `file_path` is either a single URL, or — when submitted through
- * `/uploads/projects/<id>/submit-with-files` — a JSON array of
- * `{name, size, url}` objects. Decoding it here means no surface emits a
- * raw JSON string as an `href`.
+ * `file_path` is either a single URL (legacy rows), or — as with assignment
+ * `file_url` — a JSON array of Vercel Blob file records. Both `filename`
+ * (assignment shape) and `name` (older project shape) are accepted, so no
+ * surface emits a raw JSON string as an `href`.
  */
 export function parseAttachments(
   filePath?: string | null,
@@ -157,9 +157,10 @@ export function parseAttachments(
               const url =
                 typeof record.url === 'string' ? record.url.trim() : '';
               if (!url) return null;
+              const rawName = record.filename ?? record.name;
               const name =
-                typeof record.name === 'string' && record.name.trim()
-                  ? record.name.trim()
+                typeof rawName === 'string' && rawName.trim()
+                  ? rawName.trim()
                   : undefined;
               return { url, name };
             }
@@ -174,6 +175,39 @@ export function parseAttachments(
   }
 
   return [{ url: raw, name: fallbackName || undefined }];
+}
+
+/**
+ * Project uploads go through the same `/api/upload` Vercel Blob pipeline as
+ * assignment uploads. Keep the metadata record identical to the one the
+ * assignment surfaces already send, so `file_path` / `file_url` carry the
+ * same shape and AAGE can read either column the same way.
+ */
+export interface ProjectFileMetadata {
+  url: string;
+  filename: string;
+  size?: number;
+  contentType?: string;
+  uploadedAt?: string;
+  storage?: string;
+}
+
+export function projectFileMetadata(uploaded: {
+  url: string;
+  pathname?: string;
+  size?: number;
+  contentType?: string;
+  uploadedAt?: string;
+  storage?: string;
+}): ProjectFileMetadata {
+  return {
+    url: uploaded.url,
+    filename: uploaded.pathname?.split('/').pop() || 'submission_file',
+    size: uploaded.size,
+    contentType: uploaded.contentType,
+    uploadedAt: uploaded.uploadedAt,
+    storage: uploaded.storage,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
