@@ -794,8 +794,13 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   </div>
 
                   {/* Grade Status */}
-                  {isGraded && displayAssignment.submission_status?.grade !== undefined && (
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-slate-200 dark:border-gray-700">
+                  {displayAssignment.submission_status?.grade !== undefined &&
+                   displayAssignment.submission_status.grade !== null && (
+                    <div className={`rounded-lg p-4 shadow-sm border ${
+                      hasModificationRequest
+                        ? 'border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/30'
+                        : 'border-slate-200 bg-white dark:border-gray-700 dark:bg-gray-800'
+                    }`}>
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="font-semibold text-gray-900 dark:text-white text-sm">Grade</h5>
                         <div className="flex items-center gap-2">
@@ -817,16 +822,16 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   )}
                 </div>
 
-                {/* Instructor Feedback */}
-                {displayAssignment.submission_status?.feedback && !hasModificationRequest && (
+                {/* Grading feedback — always shown, including on a revision. */}
+                {displayAssignment.submission_status?.feedback && (
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-5 shadow-sm border border-slate-200 dark:border-gray-700 mb-4">
                     <h5 className="font-semibold text-gray-900 dark:text-white text-sm mb-3 flex items-center">
                       <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded mr-2">
                         <MessageSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                       </div>
-                      Instructor Feedback
+                      Grading Feedback
                     </h5>
-                    
+
                     <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 border-l-4 border-blue-500">
                       <div className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
                         <MarkdownRenderer 
@@ -888,10 +893,13 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                         prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5
                         prose-h2:text-base prose-h2:font-bold prose-h2:mt-4 prose-h2:mb-2
                         prose-h3:text-sm prose-h3:font-semibold prose-h3:mt-3 prose-h3:mb-1">
-                        <MarkdownRenderer 
-                          content={displayAssignment.modification_request_reason} 
-                          variant="compact" 
-                          className="leading-relaxed" 
+                        <MarkdownRenderer
+                          content={
+                            displayAssignment.submission_status?.modification_request_reason ||
+                            displayAssignment.modification_request_reason
+                          }
+                          variant="compact"
+                          className="leading-relaxed"
                         />
                       </div>
                     </div>
@@ -1082,10 +1090,18 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 </div>
                 <div>
                   <p className="text-gray-600 dark:text-gray-400 font-medium mb-1">Status</p>
-                  <Badge className={`text-base font-semibold ${isGraded 
-                    ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-300" 
-                    : "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300"}`}>
-                    {isGraded ? (
+                  <Badge className={`text-base font-semibold ${
+                    hasModificationRequest
+                      ? "bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300"
+                      : isGraded
+                        ? "bg-green-100 text-green-800 border-green-300 dark:bg-green-900/30 dark:text-green-300"
+                        : "bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300"}`}>
+                    {hasModificationRequest ? (
+                      <>
+                        <AlertTriangle className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                        Needs Revision
+                      </>
+                    ) : isGraded ? (
                       <>
                         <CheckCircle className="h-4 w-4 mr-1.5" aria-hidden="true" />
                         Graded
@@ -1101,8 +1117,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               </div>
             </div>
             
-            {/* Grade Display */}
-            {isGraded && grade !== undefined && (
+            {/* Grade Display — a below-passing auto-grade is still displayed */}
+            {grade !== undefined && grade !== null && (
               <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-xl p-6 sm:p-8 mb-6 border-2 border-green-200 dark:border-green-700 shadow-lg">
                 <div className="text-center mb-4">
                   <div className="flex items-center justify-center mb-3">
@@ -1201,7 +1217,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             )}
             
             {/* Feedback Display */}
-            {isGraded && feedback && (
+            {feedback && (
               <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-5 sm:p-6 mb-6 border-l-4 border-blue-500 shadow-md">
                 <h4 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg mb-4 flex items-center">
                   <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg mr-3">

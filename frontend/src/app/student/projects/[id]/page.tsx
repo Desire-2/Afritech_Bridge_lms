@@ -255,6 +255,7 @@ export default function ProjectDetailPage() {
               variant="compact"
               className="prose-sm leading-relaxed"
               content={
+                status?.modification_request_reason ||
                 project.modification_request_reason ||
                 'Your instructor has requested modifications to your submission. Please review the feedback and resubmit.'
               }
@@ -398,8 +399,8 @@ export default function ProjectDetailPage() {
         </Card>
       )}
 
-      {/* Grade Card (if graded) */}
-      {isGraded && pct !== null && (
+      {/* Grade Card — a below-passing auto-grade is still a published grade */}
+      {pct !== null && (
         <Card className="border-green-200 dark:border-green-800">
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2 text-green-700 dark:text-green-300">

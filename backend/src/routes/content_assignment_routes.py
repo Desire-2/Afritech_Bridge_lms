@@ -405,23 +405,29 @@ def get_lesson_assignments(lesson_id):
                     submission_status['id'] = submission.id
                     submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
                     
-                    # Check modification_requested FIRST — it takes priority
-                    # even when a grade exists (grading flow may keep the grade)
-                    if getattr(assignment, 'modification_requested', False):
+                    # A revision request changes the status, not the grade or
+                    # the AI/instructor feedback recorded on the submission.
+                    has_revision = bool(getattr(assignment, 'modification_requested', False))
+                    if submission.grade is not None:
+                        submission_status['grade'] = submission.grade
+                        submission_status['score'] = submission.grade
+                        submission_status['graded_at'] = (
+                            submission.graded_at.isoformat()
+                            if submission.graded_at else None
+                        )
+                        try:
+                            if submission.graded_by:
+                                grader = User.query.get(submission.graded_by)
+                                if grader:
+                                    submission_status['grader_name'] = grader.full_name
+                        except Exception:
+                            pass
+                    submission_status['modification_request_reason'] = (
+                        assignment.modification_request_reason if has_revision else None
+                    )
+                    if has_revision:
                         submission_status['status'] = 'needs_revision'
-                        submission_status['feedback'] = assignment.modification_request_reason
-                        # Still include grade data so the student can view it
-                        if submission.grade is not None:
-                            submission_status['grade'] = submission.grade
-                            submission_status['score'] = submission.grade
-                            submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
-                            try:
-                                if submission.graded_by:
-                                    grader = User.query.get(submission.graded_by)
-                                    if grader:
-                                        submission_status['grader_name'] = grader.full_name
-                            except:
-                                pass
+                        submission_status['feedback'] = submission.feedback
                     elif submission.grade is not None:
                         submission_status['status'] = 'graded'
                         submission_status['grade'] = submission.grade

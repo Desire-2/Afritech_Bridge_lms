@@ -141,13 +141,26 @@ def _progress_or_none(student_id: int, module_id: int, enrollment_id: int):
     ).first()
 
 
-def request_project_modification(submissions: Iterable, reason: str,
-                                 requested_by: Optional[int]) -> int:
+def request_project_modification(
+    submissions: Iterable,
+    reason: str,
+    requested_by: Optional[int],
+    *,
+    grade: Optional[float] = None,
+    feedback: Optional[str] = None,
+    graded_at=None,
+    graded_by: Optional[int] = None,
+) -> int:
     """Mark each student's submission as eligible for resubmission.
 
     The count is per submission, so one student's revision request never
     consumes another student's allowance. Repeated requests for the same
     pending revision do not double-count.
+
+    A failing grade is shared team feedback, not a private note on the row
+    the grader happened to look at. When ``grade``/``feedback`` are supplied
+    they are mirrored onto every teammate's row so nobody sees "Revision
+    requested" with an empty grade card.
     """
     from ..utils.time_utils import now_local
 
@@ -166,6 +179,14 @@ def request_project_modification(submissions: Iterable, reason: str,
         submission.modification_requested_by = requested_by
         # A legacy project-level flag must not keep this student blocked.
         submission.can_resubmit = True
+        if grade is not None:
+            submission.grade = grade
+        if feedback is not None:
+            submission.feedback = feedback
+        if graded_at is not None:
+            submission.graded_at = graded_at
+        if graded_by is not None:
+            submission.graded_by = graded_by
         changed += 1
     return changed
 

@@ -1365,7 +1365,20 @@ class AssignmentSubmission(db.Model):
             'is_resubmission': self.is_resubmission,
             'original_submission_id': self.original_submission_id,
             'resubmission_count': self.resubmission_count,
-            'submission_notes': self.submission_notes
+            'submission_notes': self.submission_notes,
+            # Read-only revision state; student-facing endpoints prefer the
+            # submission's own grade/feedback and keep the reason separate.
+            'modification_requested': bool(
+                getattr(self.assignment, 'modification_requested', False)
+            ) if self.assignment else False,
+            'can_resubmit': bool(
+                getattr(self.assignment, 'can_resubmit', False)
+            ) if self.assignment else False,
+            'modification_request_reason': (
+                self.assignment.modification_request_reason
+                if self.assignment and self.assignment.modification_requested
+                else None
+            )
         }
     
     def get_files(self):

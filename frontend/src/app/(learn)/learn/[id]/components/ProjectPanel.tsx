@@ -289,9 +289,9 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
         <div className="rounded-lg border border-orange-200 bg-white p-4 shadow-sm sm:p-5 dark:border-orange-800/50 dark:bg-gray-800/70">
           <MarkdownRenderer
             content={
+              status?.modification_request_reason ||
               submission?.modification_reason ||
               project?.modification_request_reason ||
-              status?.feedback ||
               'Your instructor asked for changes. Update your work and resubmit.'
             }
             variant="compact"
@@ -875,7 +875,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     </p>
                   </div>
 
-                  {isGraded && numericGrade !== null && (
+                  {numericGrade !== null && (
                     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
                       <div className="mb-2 flex items-center justify-between">
                         <h5 className="text-sm font-semibold text-gray-900 dark:text-white">Grade</h5>
@@ -894,7 +894,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                   )}
                 </div>
 
-                {!needsRevision && (submission?.feedback || status?.feedback) && (
+                {(submission?.feedback || status?.feedback) && (
                   <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
                     <h5 className="mb-3 flex items-center text-sm font-semibold text-gray-900 dark:text-white">
                       <span className="mr-2 rounded bg-blue-100 p-1 dark:bg-blue-900/50">
@@ -1523,7 +1523,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     )}
 
                     {/* Grade */}
-                    {isGraded && numericGrade !== null && (
+                    {numericGrade !== null && (
                       <div className="mb-6 rounded-xl border-2 border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-6 shadow-lg dark:border-green-700 dark:from-green-950/30 dark:to-emerald-950/30 sm:p-8">
                         <div className="mb-4 text-center">
                           <div className="mb-3 flex justify-center">
@@ -1581,7 +1581,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                     )}
 
                     {/* Feedback */}
-                    {!needsRevision && (submission.feedback || status?.feedback) && (
+                    {(submission.feedback || status?.feedback) && (
                       <div className="mb-6 rounded-xl border-l-4 border-blue-500 bg-blue-50 p-5 shadow-md dark:bg-blue-950/30 sm:p-6">
                         <h4 className="mb-4 flex items-center text-base font-bold text-gray-900 sm:text-lg dark:text-white">
                           <span className="mr-3 rounded-lg bg-blue-100 p-1.5 dark:bg-blue-900">

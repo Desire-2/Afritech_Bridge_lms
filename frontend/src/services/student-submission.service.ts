@@ -12,6 +12,8 @@ export interface SubmissionStatus {
   status: 'not_submitted' | 'submitted' | 'graded' | 'late' | 'needs_revision';
   grade?: number;
   feedback?: string;
+  /** Why a revision was requested — kept separate from the grade feedback. */
+  modification_request_reason?: string;
   graded_at?: string;
   grader_name?: string;
   is_late: boolean;

@@ -663,6 +663,10 @@ def write_through_grade(result: EvaluationResult, *,
         100.0,
         grade_data,
         allow_lower=(publication_mode == "manual"),
+        # Never lose the AI explanation just because a re-grade would lower an
+        # already published score. The grade stays; revision + feedback still
+        # reach the student.
+        keep_feedback_on_lower=True,
     )
     if not ok:
         logger.error("AAGE write-through failed for result %s", result.id)

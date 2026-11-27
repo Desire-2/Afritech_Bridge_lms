@@ -482,20 +482,26 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
                       <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
                         Submitted on {new Date(assignment.submission_status.submitted_at!).toLocaleDateString()}
                       </p>
-                      {assignment.submission_status.status === 'graded' && (
+                      {assignment.submission_status.grade !== undefined &&
+                       assignment.submission_status.grade !== null && (
                         <div className="space-y-2">
                           <div className="flex items-center gap-2">
                             <Award className="h-4 w-4 text-yellow-500" />
                             <span className="text-sm font-medium">
                               Grade: {assignment.submission_status.grade}/{assignment.points_possible}
+                              {hasModificationRequest && (
+                                <span className="ml-2 text-xs font-normal text-orange-600 dark:text-orange-400">
+                                  (below passing score)
+                                </span>
+                              )}
                             </span>
                           </div>
                           {assignment.submission_status.feedback && (
                             <div className="bg-white dark:bg-gray-900 p-3 rounded border">
                               <h5 className="font-medium mb-1 text-xs uppercase tracking-wide text-gray-500">
-                                Instructor Feedback
+                                Grading Feedback
                               </h5>
-                              <p className="text-sm">{assignment.submission_status.feedback}</p>
+                              <p className="text-sm whitespace-pre-wrap">{assignment.submission_status.feedback}</p>
                             </div>
                           )}
                         </div>
@@ -526,9 +532,15 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <p className="text-gray-300 text-sm mb-3">
                       Your instructor has requested modifications to your assignment. Please review the feedback below and resubmit.
                     </p>
-                    {assignment.modification_request_reason && (
+                    {(assignment.submission_status?.modification_request_reason ||
+                      assignment.modification_request_reason) && (
                       <div className="bg-gray-800/70 rounded-lg p-4 border border-orange-800/50">
-                        <MarkdownRenderer content={assignment.modification_request_reason} />
+                        <MarkdownRenderer
+                          content={
+                            assignment.submission_status?.modification_request_reason ||
+                            assignment.modification_request_reason
+                          }
+                        />
                       </div>
                     )}
                   </div>

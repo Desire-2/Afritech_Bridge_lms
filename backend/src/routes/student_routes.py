@@ -2719,27 +2719,32 @@ def _build_assignment_submission_status(assignment, submission):
         'id': submission.id,
         'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
         'grade': submission.grade,
+        # The revision reason is a *separate* field. Replacing this with the
+        # reason used to hide a failing AI grade and its feedback from the
+        # student — exactly when they need it most.
         'feedback': submission.feedback,
+        'modification_request_reason': getattr(
+            assignment, 'modification_request_reason', None
+        ) if getattr(assignment, 'modification_requested', False) else None,
         'graded_at': submission.graded_at.isoformat() if submission.graded_at and submission.grade is not None else None,
         'grader_name': None,
     }
 
-    # Check modification_requested FIRST — it takes priority
-    # even when a grade exists (grading flow may keep the grade)
+    if submission.grade is not None:
+        base['graded_at'] = (
+            submission.graded_at.isoformat() if submission.graded_at else None
+        )
+        try:
+            if submission.graded_by:
+                grader = User.query.get(submission.graded_by)
+                if grader:
+                    base['grader_name'] = grader.full_name
+        except Exception:
+            pass
+
+    # A revision request changes the status, not the recorded grade/feedback.
     if getattr(assignment, 'modification_requested', False):
         base['status'] = 'needs_revision'
-        base['feedback'] = assignment.modification_request_reason
-        # Still include grade data so the student can view it
-        if submission.grade is not None:
-            base['grade'] = submission.grade
-            base['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
-            try:
-                if submission.graded_by:
-                    grader = User.query.get(submission.graded_by)
-                    if grader:
-                        base['grader_name'] = grader.full_name
-            except Exception:
-                pass
     elif submission.grade is not None:
         base['status'] = 'graded'
         try:
@@ -2951,6 +2956,7 @@ def get_student_projects():
                 if state['modification_requested'] and state['can_resubmit']:
                     submission_status['status'] = 'needs_revision'
                     submission_status['feedback'] = submission.feedback or state['modification_request_reason']
+                    submission_status['modification_request_reason'] = state['modification_request_reason']
                     if submission.grade is not None:
                         submission_status['grade'] = submission.grade
                     if submission.graded_at:
@@ -3066,6 +3072,7 @@ def get_student_project_details(project_id):
             if state and state['modification_requested'] and state['can_resubmit']:
                 submission_status['status'] = 'needs_revision'
                 submission_status['feedback'] = submission.feedback or state['modification_request_reason']
+                submission_status['modification_request_reason'] = state['modification_request_reason']
                 if submission.grade is not None:
                     submission_status['grade'] = submission.grade
                 if submission.graded_at:

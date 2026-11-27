@@ -482,9 +482,9 @@ function AssignmentCard({ assignment }: { assignment: AssignmentWithStatus }) {
         </CardHeader>
 
         <CardContent className="pt-0 pb-4">
-          {/* Grade display */}
-          {st?.status === 'graded' && pct !== null && (
-            <div className="flex items-center justify-between bg-green-50 dark:bg-green-950/20 rounded-lg px-3 py-2 mb-3">
+          {/* Grade display — a failing auto-grade is still a real grade */}
+          {pct !== null && (
+            <div className={`flex items-center justify-between rounded-lg px-3 py-2 mb-3 ${isRevision ? 'bg-orange-50 dark:bg-orange-950/20' : 'bg-green-50 dark:bg-green-950/20'}`}>
               <span className="text-xs text-muted-foreground">Score</span>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold">
@@ -501,15 +501,17 @@ function AssignmentCard({ assignment }: { assignment: AssignmentWithStatus }) {
               <Edit3 className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
               <div className="text-xs">
                 <p className="font-medium text-orange-800 dark:text-orange-300">Revision Requested</p>
-                {st?.feedback && (
-                  <p className="text-orange-700 dark:text-orange-400 line-clamp-2 mt-0.5">{st.feedback}</p>
+                {(st?.modification_request_reason || st?.feedback) && (
+                  <p className="text-orange-700 dark:text-orange-400 line-clamp-2 mt-0.5">
+                    {st.modification_request_reason || st.feedback}
+                  </p>
                 )}
               </div>
             </div>
           )}
 
-          {/* Feedback preview for graded */}
-          {st?.status === 'graded' && st?.feedback && !isRevision && (
+          {/* The AI/instructor feedback must remain visible on a revision */}
+          {st?.feedback && st.feedback !== st.modification_request_reason && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 mb-3 line-clamp-2">
               <span className="font-medium">Feedback:</span> {st.feedback}
             </div>
@@ -592,8 +594,8 @@ function ProjectCard({ project }: { project: ProjectWithStatus }) {
         </CardHeader>
 
         <CardContent className="pt-0 pb-4">
-          {st?.status === 'graded' && pct !== null && (
-            <div className="flex items-center justify-between bg-green-50 dark:bg-green-950/20 rounded-lg px-3 py-2 mb-3">
+          {pct !== null && (
+            <div className={`flex items-center justify-between rounded-lg px-3 py-2 mb-3 ${isRevision ? 'bg-orange-50 dark:bg-orange-950/20' : 'bg-green-50 dark:bg-green-950/20'}`}>
               <span className="text-xs text-muted-foreground">Score</span>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold">
@@ -609,14 +611,16 @@ function ProjectCard({ project }: { project: ProjectWithStatus }) {
               <Edit3 className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
               <div className="text-xs">
                 <p className="font-medium text-orange-800 dark:text-orange-300">Revision Requested</p>
-                {st?.feedback && (
-                  <p className="text-orange-700 dark:text-orange-400 line-clamp-2 mt-0.5">{st.feedback}</p>
+                {(st?.modification_request_reason || st?.feedback) && (
+                  <p className="text-orange-700 dark:text-orange-400 line-clamp-2 mt-0.5">
+                    {st.modification_request_reason || st.feedback}
+                  </p>
                 )}
               </div>
             </div>
           )}
 
-          {st?.status === 'graded' && st?.feedback && !isRevision && (
+          {st?.feedback && st.feedback !== st.modification_request_reason && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 mb-3 line-clamp-2">
               <span className="font-medium">Feedback:</span> {st.feedback}
             </div>

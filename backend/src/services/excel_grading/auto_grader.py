@@ -316,6 +316,7 @@ def _apply_grade_to_submission(
     grade_data: Dict[str, Any],
     *,
     allow_lower: bool = False,
+    keep_feedback_on_lower: bool = False,
 ) -> bool:
     """
     Write the AI-generated grade directly onto the AssignmentSubmission or
@@ -327,6 +328,11 @@ def _apply_grade_to_submission(
     approving a reviewed score). Automatic/re-graded AI runs must never replace
     an existing, higher published grade for the same submission — otherwise a
     non-deterministic re-grade silently reduces the student's score.
+
+    ``keep_feedback_on_lower`` lets an AAGE publication record the new AI
+    feedback (and therefore the reason a revision was requested) even when the
+    higher published grade is retained.  Legacy callers leave it False, so a
+    lower re-grade still reports "kept_higher_grade" and skips notifications.
 
     Returns True on success.
     """
@@ -371,6 +377,7 @@ def _apply_grade_to_submission(
         # work is still free to receive any score.  Manual approval passes
         # allow_lower=True because that is an explicit instructor decision.
         existing_grade = getattr(submission, "grade", None)
+        lower_grade_retained = False
         if not allow_lower and existing_grade is not None:
             try:
                 if scaled_grade < float(existing_grade) - 0.01:
@@ -380,7 +387,9 @@ def _apply_grade_to_submission(
                         submission_type, submission_id, scaled_grade,
                         float(existing_grade),
                     )
-                    return False
+                    if not keep_feedback_on_lower:
+                        return False
+                    lower_grade_retained = True
             except (TypeError, ValueError):
                 pass
 
@@ -390,7 +399,21 @@ def _apply_grade_to_submission(
             "\n\n---\n"
             "📊 *This grade was automatically generated and approved by AI analysis.*"
         )
+        if lower_grade_retained:
+            # The student must still see why a revision was requested; only the
+            # numeric grade is protected, never the explanatory feedback.
+            ai_note = (
+                "\n\n---\n"
+                "📊 *AI re-grading scored this work lower than the grade already "
+                "on record. The higher grade was kept, but the feedback below "
+                "explains why a revision is needed.*"
+            )
         full_feedback = (feedback + ai_note) if feedback else ai_note.strip()
+
+        if lower_grade_retained:
+            submission.feedback = full_feedback
+            db.session.commit()
+            return True
 
         submission.grade = scaled_grade
         submission.feedback = full_feedback
@@ -754,6 +777,16 @@ def _auto_request_modification_if_needed(
 
         reason = "\n".join(reason_parts)
 
+        # Keep the AI grade on the submission so the instructor can see the
+        # score that triggered the modification request, and keep the full AI
+        # feedback (plus the threshold explanation) visible to the student.
+        submission.feedback = (
+            f"{submission.feedback or grade_data.get('overall_feedback', '')}\n\n---\n"
+            f"⚠️ *Score {score_pct:.1f}% is below the passing threshold "
+            f"({passing_score:.0f}%). A modification request was created "
+            f"automatically. The student has been asked to resubmit.*"
+        )
+
         # Revision state is per student. Setting it on the shared parent would
         # give every student in the course a resubmission pass for one
         # student's failed work.
@@ -766,7 +799,16 @@ def _auto_request_modification_if_needed(
                 ProjectSubmission.project_id == parent.id,
                 ProjectSubmission.student_id.in_(team_member_ids(parent, submission)),
             ).all()
-            request_project_modification(rows, reason, None)
+            # A team shares one result: mirror the failing grade and its
+            # feedback to every member's row so no teammate gets a revision
+            # notice with a blank grade/feedback panel.
+            request_project_modification(
+                rows, reason, None,
+                grade=submission.grade,
+                feedback=submission.feedback,
+                graded_at=submission.graded_at,
+                graded_by=submission.graded_by,
+            )
         else:
             # Assignments keep their legacy parent-level policy.
             parent.modification_requested = True
@@ -774,16 +816,6 @@ def _auto_request_modification_if_needed(
             parent.modification_requested_at = now_local()
             parent.modification_requested_by = None  # System/AI initiated
             parent.can_resubmit = True
-
-        # Keep the AI grade on the submission so the instructor can see the
-        # score that triggered the modification request.  Only update the
-        # feedback to note the auto-modification.
-        submission.feedback = (
-            f"{grade_data.get('overall_feedback', '')}\n\n---\n"
-            f"⚠️ *Score {score_pct:.1f}% is below the passing threshold "
-            f"({passing_score:.0f}%). A modification request was created "
-            f"automatically. The student has been asked to resubmit.*"
-        )
 
         # Update lesson completion if applicable (assignments only)
         if submission_type == 'assignment':
