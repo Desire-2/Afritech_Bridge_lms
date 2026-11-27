@@ -53,14 +53,32 @@ class GoogleDriveService:
                 self.is_configured = False
                 return
             
-            # Parse JSON credentials
+            # Parse JSON credentials. Some secret stores base64-encode the
+            # whole document to keep it on a single line, so accept both forms.
             try:
                 creds_dict = json.loads(service_account_info)
-            except json.JSONDecodeError as e:
-                logger.warning(f"Invalid JSON in GOOGLE_SERVICE_ACCOUNT_JSON - Google Drive features will be disabled: {e}")
-                self.is_configured = False
-                return
-            
+            except json.JSONDecodeError:
+                try:
+                    import base64
+                    decoded = base64.b64decode(
+                        service_account_info.strip(), validate=True
+                    ).decode('utf-8')
+                    creds_dict = json.loads(decoded)
+                except Exception as e:
+                    logger.warning(
+                        f"Invalid JSON in GOOGLE_SERVICE_ACCOUNT_JSON - "
+                        f"Google Drive features will be disabled: {e}"
+                    )
+                    self.is_configured = False
+                    return
+
+            # Normalize the PEM private key. When the JSON was written with
+            # escaped (or double-escaped) newlines, cryptography receives one
+            # long line and fails with "InvalidData(Invalid symbol 61, ...)".
+            private_key = creds_dict.get('private_key')
+            if isinstance(private_key, str):
+                creds_dict['private_key'] = private_key.replace('\\n', '\n').strip()
+
             # Create credentials — with optional domain-wide delegation
             delegated_user = os.getenv('GOOGLE_DRIVE_DELEGATED_USER', '').strip()
             if delegated_user:

@@ -845,9 +845,16 @@ def reconcile_model_columns(bind=None, logger=None) -> None:
             for table, col in to_add
         ]
         if hasattr(bind, "execute") and hasattr(bind, "commit"):
+            # A Connection stays in a failed transaction after one bad DDL
+            # statement. Commit/roll back per statement so a single failure
+            # cannot poison every later table on the same locked connection.
             for statement in statements:
-                bind.execute(statement)
-            bind.commit()
+                try:
+                    bind.execute(statement)
+                    bind.commit()
+                except Exception:
+                    bind.rollback()
+                    raise
         else:
             with bind.begin() as conn:
                 for statement in statements:
@@ -856,6 +863,11 @@ def reconcile_model_columns(bind=None, logger=None) -> None:
             logger.info("AAGE schema reconciliation added %s columns: %s",
                         len(statements), [(t, c.name) for t, c in to_add])
     except Exception as exc:  # pragma: no cover - defensive
+        try:
+            if hasattr(bind, "rollback"):
+                bind.rollback()
+        except Exception:
+            pass
         if logger:
             logger.warning("AAGE schema reconciliation skipped: %s", exc)
 
@@ -937,11 +949,14 @@ def ensure_aage_schema(bind=None, logger=None) -> None:
             ("title", "name", ("name",)),
             ("instructor_id", "created_by", ("created_by",)),
             ("total_points", "max_score", ("max_score",)),
-            ("is_template", "0", ()),
+            # Render booleans for the active dialect: PostgreSQL rejects the
+            # integer literal 0/1 for a boolean column and leaves the whole
+            # transaction aborted, which silently skipped every later table.
+            ("is_template", False, ()),
             # Reverse direction for a DB created from the model where the
             # legacy NOT NULL columns were added back as nullable.
             ("name", "title", ("title",)),
-            ("is_active", "1", ()),
+            ("is_active", True, ()),
         ],
     }
 
@@ -949,9 +964,15 @@ def ensure_aage_schema(bind=None, logger=None) -> None:
         if not statements:
             return
         if hasattr(bind, "execute") and hasattr(bind, "commit"):
+            # Commit/roll back each statement so one bad backfill does not
+            # abort the shared advisory-locked connection for later tables.
             for statement in statements:
-                bind.execute(statement)
-            bind.commit()
+                try:
+                    bind.execute(statement)
+                    bind.commit()
+                except Exception:
+                    bind.rollback()
+                    raise
         else:
             with bind.begin() as conn:
                 for statement in statements:
@@ -995,12 +1016,24 @@ def ensure_aage_schema(bind=None, logger=None) -> None:
                     where += " AND " + " AND ".join(
                         f"{src} IS NOT NULL" for src in required
                     )
+                rendered = expression
+                if isinstance(expression, bool):
+                    rendered = str(
+                        (sa.true() if expression else sa.false()).compile(
+                            dialect=bind.dialect
+                        )
+                    )
                 fills.append(sa.text(
-                    f"UPDATE {table} SET {target} = {expression} WHERE {where}"
+                    f"UPDATE {table} SET {target} = {rendered} WHERE {where}"
                 ))
             if fills:
                 _run(fills)
         except Exception as exc:  # pragma: no cover - defensive
+            try:
+                if hasattr(bind, "rollback"):
+                    bind.rollback()
+            except Exception:
+                pass
             if logger:
                 logger.warning("AAGE auto-migration skipped for %s: %s", table, exc)
 

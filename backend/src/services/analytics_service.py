@@ -960,7 +960,10 @@ class AnalyticsService:
             LessonCompletion.student_id == student_id
         ).all()
         
-        total_time = sum(comp.time_spent for comp in completions)
+        # Legacy rows can hold NULL time_spent; summing them used to raise
+        # "unsupported operand type(s) for +: 'int' and 'NoneType'" and made
+        # the whole module-progress endpoint return 500.
+        total_time = sum(comp.time_spent or 0 for comp in completions)
         return {
             "total_minutes": total_time // 60,
             "average_per_lesson": (total_time // len(completions)) // 60 if completions else 0,

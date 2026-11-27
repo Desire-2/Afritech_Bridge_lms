@@ -11,6 +11,16 @@ from dotenv import load_dotenv
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BACKEND_DIR, '.env'))
 
+# google-api-core emits a FutureWarning on startup for Python 3.10. It is an
+# advisory about future support, not a runtime error, and spams every worker's
+# boot log. Keep the warning filter narrow so unrelated warnings still show.
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"You are using a non-supported Python version.*",
+    category=FutureWarning,
+)
+
 from flask import Flask, send_from_directory, jsonify, request
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from datetime import timedelta
@@ -570,6 +580,42 @@ def _auto_migrate_missing_columns(bind=None):
                 ))
     except Exception as e:
         logger.warning(f"⚠️ module_progress auto-migration skipped (non-fatal): {e}")
+
+    # ── project_submissions (per-student/team revision state) ──────────────
+    # Deployments that start gunicorn without running `flask db upgrade` still
+    # need these model columns: every ORM read of ProjectSubmission selects
+    # them explicitly, so one missing column turns module scoring into a 500.
+    try:
+        import sqlalchemy as sa
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        existing = {c['name'] for c in inspector.get_columns('project_submissions')}
+        additions = {
+            'modification_requested': sa.Column('modification_requested', sa.Boolean(), nullable=True),
+            'modification_request_reason': sa.Column('modification_request_reason', sa.Text(), nullable=True),
+            'modification_requested_at': sa.Column('modification_requested_at', sa.DateTime(), nullable=True),
+            'modification_requested_by': sa.Column('modification_requested_by', sa.Integer(), nullable=True),
+            'can_resubmit': sa.Column('can_resubmit', sa.Boolean(), nullable=True),
+        }
+        missing = {k: v for k, v in additions.items() if k not in existing}
+        if missing:
+            logger.info(f"🔧 Auto-migrating missing columns in project_submissions: {list(missing.keys())}")
+            for col_name, col in missing.items():
+                _execute_schema_ddl(bind, sa.text(
+                    f"ALTER TABLE project_submissions ADD COLUMN {col_name} "
+                    f"{col.type.compile(bind.dialect)}"
+                ))
+            # Dialect-safe literal: PostgreSQL rejects the integer 0 for a
+            # boolean column, while older SQLite needs 0/1.
+            false_literal = str(sa.false().compile(dialect=bind.dialect))
+            for col_name in ('modification_requested', 'can_resubmit'):
+                if col_name in missing:
+                    _execute_schema_ddl(bind, sa.text(
+                        f"UPDATE project_submissions SET {col_name} = {false_literal} "
+                        f"WHERE {col_name} IS NULL"
+                    ))
+    except Exception as e:
+        logger.warning(f"⚠️ project_submissions auto-migration skipped (non-fatal): {e}")
 
     # (Add more table checks here as needed in the future)
 
