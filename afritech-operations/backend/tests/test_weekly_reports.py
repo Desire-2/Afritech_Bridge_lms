@@ -1517,6 +1517,143 @@ class TestCarryForwardReconciliation:
         assert summary['carry_forward_amount'] == '600.00'
 
 
+class TestSuperAdminStatusOverride:
+    """An accidental approval needs one narrow, auditable super-admin correction."""
+
+    def _override(self, client, hdr, report_id, status, reason='Wrong approval'):
+        return client.post(f'/api/weekly-reports/{report_id}/status-override',
+                           headers=hdr, json={'status': status, 'reason': reason})
+
+    def _approved_report(self, client, admin_hdr, agent_hdr, accountant_hdr):
+        report = _generate(client, admin_hdr)
+        assert _submit(client, agent_hdr, report.id).status_code == 200
+        response = _review(client, accountant_hdr, report.id, 'approve', reason='all matched')
+        assert response.status_code == 200, response.get_data(as_text=True)
+        return report
+
+    def test_super_admin_reopens_approved_report_with_audit(self, client, admin_hdr,
+                                                            agent_hdr, accountant_hdr):
+        report = self._approved_report(client, admin_hdr, agent_hdr, accountant_hdr)
+        accountant_id = _user('accountant@afritech.dev').id
+        approved = _detail(client, accountant_hdr, report.id)
+        assert approved['approved_by'] == accountant_id and approved['approved_at']
+        assert approved['allowed_transitions'] == []
+        assert 'allowed_super_admin_transitions' not in approved
+
+        admin_detail = _detail(client, admin_hdr, report.id)
+        assert admin_detail['allowed_super_admin_transitions'] == [
+            'under_financial_review', 'returned_for_correction', 'rejected']
+
+        r = self._override(client, admin_hdr, report.id, 'under_financial_review',
+                           'Approved the wrong week')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['report']
+        assert body['status'] == 'under_financial_review'
+        assert body['approved_by'] is None and body['approved_at'] is None
+        assert body['reviewer_id'] == _user('admin@afritech.dev').id
+        assert 'allowed_super_admin_transitions' not in body
+
+        log = AuditLog.query.filter_by(
+            action='weekly_report_super_admin_status_override',
+            entity='weekly_report', entity_id=str(report.id)).one()
+        assert log.user_email == 'admin@afritech.dev'
+        assert log.reason == 'Approved the wrong week'
+        assert json.loads(log.previous_value)['status'] == 'approved'
+        assert json.loads(log.previous_value)['approved_by'] == accountant_id
+        assert json.loads(log.new_value)['status'] == 'under_financial_review'
+
+    def test_reviewers_and_manager_cannot_override_an_approval(self, client, admin_hdr,
+                                                               agent_hdr, accountant_hdr,
+                                                               manager_hdr):
+        report = self._approved_report(client, admin_hdr, agent_hdr, accountant_hdr)
+        accountant = self._override(client, accountant_hdr, report.id,
+                                    'under_financial_review')
+        assert accountant.status_code == 403
+        assert accountant.get_json()['code'] == 'weekly_report.super_admin_required'
+        # The manager is also branch-scoped to a different branch here.
+        assert self._override(client, manager_hdr, report.id,
+                              'under_financial_review').status_code == 403
+        assert _detail(client, accountant_hdr, report.id)['status'] == 'approved'
+
+    def test_override_requires_approved_status_valid_target_and_reason(self, client,
+                                                                       admin_hdr, agent_hdr,
+                                                                       accountant_hdr):
+        draft = _generate(client, admin_hdr)
+        r = self._override(client, admin_hdr, draft.id, 'under_financial_review')
+        assert r.status_code == 409
+        assert r.get_json()['code'] == 'weekly_report.invalid_status_override'
+
+        report = self._approved_report(client, admin_hdr, agent_hdr, accountant_hdr)
+        missing = self._override(client, admin_hdr, report.id,
+                                 'under_financial_review', reason=None)
+        assert missing.status_code == 400
+        assert missing.get_json()['code'] == 'weekly_report.reason_required'
+        assert missing.get_json()['field'] == 'review_reason'
+
+        invalid = self._override(client, admin_hdr, report.id, 'draft')
+        assert invalid.status_code == 400
+        assert invalid.get_json()['code'] == 'weekly_report.invalid_status_override'
+        assert _detail(client, admin_hdr, report.id)['status'] == 'approved'
+        assert AuditLog.query.filter_by(
+            action='weekly_report_super_admin_status_override').count() == 0
+
+    @pytest.mark.parametrize('target,field', [
+        ('returned_for_correction', 'correction_note'),
+        ('rejected', 'rejection_reason'),
+    ])
+    def test_override_can_return_or_reject_an_approval(self, client, admin_hdr, agent_hdr,
+                                                       accountant_hdr, target, field):
+        report = self._approved_report(client, admin_hdr, agent_hdr, accountant_hdr)
+        r = self._override(client, admin_hdr, report.id, target, 'Approved the wrong agent')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        body = r.get_json()['report']
+        assert body['status'] == target
+        assert body[field] == 'Approved the wrong agent'
+        assert body['approved_by'] is None and body['approved_at'] is None
+        if target == 'rejected':
+            assert body['rejected_at']
+
+    def test_override_reverses_and_restores_carry_into_editable_next_week(
+            self, client, admin_hdr, agent_hdr, accountant_hdr):
+        week = _future_week()
+        emp = _agent()
+        txn = _txn(emp, week + timedelta(days=1), price=1000, cost=400)
+        db.session.commit()
+        prior = _generate(client, admin_hdr, emp, week)
+        _claim_row(prior, txn, verified=True)  # expected remittance = 600
+        db.session.commit()
+        submitted = _submit(client, agent_hdr, prior.id, payload={
+            'declared_submitted_amount': 200,
+            'submission_funding_source': 'agent_phone',
+        })
+        assert submitted.status_code == 200, submitted.get_data(as_text=True)
+        assert svc.calculation_view(prior)['components']['closing_outstanding'] == '400.00'
+
+        following = _generate(client, admin_hdr, emp, prior.week_start + timedelta(days=7))
+        assert following.opening_outstanding == 0
+        assert _review(client, accountant_hdr, prior.id, 'approve').status_code == 200
+        following = WeeklyReport.query.get(following.id)
+        assert following.opening_outstanding == 400
+        assert len([a for a in following.allocations if a.kind == 'carry_forward']) == 1
+
+        r = self._override(client, admin_hdr, prior.id, 'under_financial_review',
+                           'Approved the wrong week')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        following = WeeklyReport.query.get(following.id)
+        assert following.opening_outstanding == 0
+        assert [a for a in following.allocations if a.kind == 'carry_forward'] == []
+        actions = {row.action for row in AuditLog.query.filter_by(
+            entity='weekly_report', entity_id=str(following.id)).all()}
+        assert 'weekly_report_carry_forward_reversed' in actions
+
+        assert _review(client, accountant_hdr, prior.id, 'approve').status_code == 200
+        following = WeeklyReport.query.get(following.id)
+        carry = [a for a in following.allocations if a.kind == 'carry_forward']
+        assert following.opening_outstanding == 400
+        assert len(carry) == 1 and carry[0].source_report_id == prior.id
+        assert carry[0].amount == 400
+
+
 class TestRBACSecurity:
     def test_agent_is_scoped_to_own_report(self, client, admin_hdr, agent_hdr):
         mine = _generate(client, admin_hdr, _agent())
@@ -1583,6 +1720,8 @@ class TestRBACSecurity:
                               'week_start': _future_week().isoformat()}),
             client.post(f'/api/weekly-reports/{report.id}/review', headers=secretary,
                         json={'action': 'approve'}),
+            client.post(f'/api/weekly-reports/{report.id}/status-override', headers=secretary,
+                        json={'status': 'under_financial_review', 'reason': 'Not allowed'}),
             client.post(f'/api/weekly-reports/{report.id}/momo', headers=secretary,
                         json={'reference': 'WKM-SECRETARY', 'amount': 10}),
             client.post(f'/api/weekly-reports/{report.id}/override', headers=secretary,
@@ -1610,6 +1749,8 @@ class TestRBACSecurity:
         forbidden = [
             client.post(f'/api/weekly-reports/{report.id}/review', headers=agent_hdr,
                         json={'action': 'approve'}),
+            client.post(f'/api/weekly-reports/{report.id}/status-override', headers=agent_hdr,
+                        json={'status': 'under_financial_review', 'reason': 'should be forbidden'}),
             client.post(f'/api/weekly-reports/{report.id}/adjustments', headers=agent_hdr,
                         json={'kind': 'authorized_receipt', 'adjusted_amount': 10,
                               'reason': 'should be forbidden'}),

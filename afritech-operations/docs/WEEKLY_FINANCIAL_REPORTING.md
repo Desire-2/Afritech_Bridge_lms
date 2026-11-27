@@ -308,6 +308,16 @@ Invalid or missing identifiers return a field-located 400/404 error.
   approved reports keep their frozen snapshot.
 - `reject` — requires a reason.
 
+`approved` and `rejected` remain terminal in the normal workflow. An approval
+made by mistake can only be corrected by a super admin through
+`POST /api/weekly-reports/{id}/status-override`. The request needs `status`
+(`under_financial_review`, `returned_for_correction` or `rejected`) and a
+nonblank `reason`. Ordinary reviewers, managers and accountants are denied even
+when they hold `weekly_reports.review`. The override writes a dedicated audit
+row with the previous approval metadata and reason, clears `approved_by` /
+`approved_at`, and reverses a carry already pushed into a still-editable next
+week. Locked or later approved reports keep their frozen balances.
+
 Adjustments (`POST /api/weekly-reports/{id}/adjustments`) always store kind,
 label, original amount, adjusted amount, reason, actor and timestamp.
 `outstanding_correction` / `outstanding_waiver` also create immutable

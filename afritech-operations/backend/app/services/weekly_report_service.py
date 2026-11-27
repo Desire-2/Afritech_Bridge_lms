@@ -13,7 +13,8 @@ from ..models import (
     DailyClosing, Employee, Expense, MoMoSubmission, OfficialCostPayment,
     OutstandingAllocation, Payment, PaymentMethod, ServiceTransaction, User,
     WeeklyReport, WeeklyReportAdjustment, WeeklyReportExpense,
-    WEEKLY_REPORT_TRANSITIONS, ADJUSTMENT_KINDS, SHORTAGE_REASON_CATEGORIES,
+    WEEKLY_REPORT_TRANSITIONS, WEEKLY_REPORT_SUPER_ADMIN_OVERRIDES,
+    ADJUSTMENT_KINDS, SHORTAGE_REASON_CATEGORIES,
     COST_PAYMENT_VERIFICATION_STATUSES, MOMO_PROVIDERS,
     WEEKLY_SUBMISSION_SOURCES, OFFICIAL_COST_PAYMENT_SOURCES,
     AGENT_SHORTAGE_REASON_CATEGORIES,
@@ -296,6 +297,71 @@ class WeeklyReportService:
               new_value={'opening_outstanding': _str(balance),
                          'source_report_id': report.id},
               user=actor, reason=report.period_label)
+        return target
+
+    def _unwind_forward(self, report, actor, reason):
+        """Undo a carry that approval pushed into an editable future report.
+
+        Only a still-editable next report is touched, and only when its
+        carry_forward allocation still points at this report. If an older
+        approved week still owns a balance, the allocation is re-pointed at it
+        instead of being discarded; otherwise it is removed. A later approved
+        week owns its own opening balance, so its allocation is left alone.
+        """
+        target = (WeeklyReport.query
+                  .filter_by(employee_id=report.employee_id)
+                  .filter(WeeklyReport.week_start > report.week_start)
+                  .filter(WeeklyReport.status.in_(self._EDITABLE_FORWARD_STATUSES))
+                  .order_by(WeeklyReport.week_start.asc())
+                  .first())
+        if target is None:
+            return None
+        rows = [row for row in target.allocations
+                if row.kind == 'carry_forward' and row.source_report_id == report.id]
+        if not rows:
+            return None
+
+        previous_opening = _dec(target.opening_outstanding or 0)
+        prior = self._latest_approved_before(target.employee_id, target.week_start)
+        balance = _dec(prior.closing_outstanding if prior else 0)
+        kept = rows[0]
+
+        for row in rows[1:]:
+            audit('weekly_carry_forward_reversed', 'weekly_outstanding_allocation', row.id,
+                  previous_value={'source_report_id': row.source_report_id,
+                                  'amount': _str(_dec(row.amount))},
+                  new_value={'removed': True}, user=actor, reason=reason)
+            db.session.delete(row)
+
+        if prior is None:
+            audit('weekly_carry_forward_reversed', 'weekly_outstanding_allocation', kept.id,
+                  previous_value={'source_report_id': kept.source_report_id,
+                                  'amount': _str(_dec(kept.amount))},
+                  new_value={'removed': True}, user=actor, reason=reason)
+            db.session.delete(kept)
+        else:
+            audit('weekly_carry_forward_reconciled', 'weekly_outstanding_allocation', kept.id,
+                  previous_value={'source_report_id': kept.source_report_id,
+                                  'amount': _str(_dec(kept.amount))},
+                  new_value={'source_report_id': prior.id, 'amount': _str(balance)},
+                  user=actor, reason=reason)
+            kept.source_report_id = prior.id
+            kept.reference_key = f'carry:{prior.id}:{target.id}'
+            kept.amount = balance
+            if actor is not None:
+                kept.actor_id = actor.id
+            kept.reason = (
+                'Opening outstanding carried from the previous approved weekly '
+                f'report ({prior.period_label}).')
+
+        target.opening_outstanding = balance
+        self.refresh(target, actor)
+        audit('weekly_report_carry_forward_reversed', 'weekly_report', target.id,
+              previous_value={'opening_outstanding': _str(previous_opening),
+                              'source_report_id': report.id},
+              new_value={'opening_outstanding': _str(balance),
+                         'source_report_id': prior.id if prior else None},
+              user=actor, reason=reason)
         return target
 
     def generate_for_all_agents(self, reference_date=None, actor=None, employee_ids=None):
@@ -1092,6 +1158,66 @@ class WeeklyReportService:
               previous_value={'status': previous},
               new_value={'status': target, 'version': report.current_version},
               user=actor, reason=reason)
+        return report
+
+    @staticmethod
+    def _is_super_admin(actor):
+        if actor is None:
+            return False
+        if getattr(actor, 'is_super_admin', False):
+            return True
+        return 'super_admin' in (getattr(actor, 'role_codes', None) or [])
+
+    def super_admin_set_status(self, report, target, actor, reason=None):
+        """Correct an approved report without widening the normal workflow.
+
+        This is intentionally separate from ``transition()``: approved reports
+        stay terminal for every reviewer, manager and accountant. A super admin
+        supplies a reason, the action is audited, approval metadata is cleared,
+        and any carry already pushed into an editable next week is unwound.
+        Financial source facts and the frozen submission snapshot are untouched.
+        """
+        if not self._is_super_admin(actor):
+            raise WeeklyReportError(
+                'Only a super admin can change an approved report',
+                'weekly_report.super_admin_required', 403, field='status')
+        if report.status != 'approved':
+            raise WeeklyReportError(
+                'Only an approved report can be reopened by a super admin',
+                'weekly_report.invalid_status_override', 409, field='status')
+        allowed = WEEKLY_REPORT_SUPER_ADMIN_OVERRIDES.get(report.status, [])
+        if target not in allowed:
+            raise WeeklyReportError(
+                'Choose a valid status for this correction',
+                'weekly_report.invalid_status_override', 400, field='status')
+        if not (reason or '').strip():
+            raise WeeklyReportError(
+                'A reason is required to reopen an approved report',
+                'weekly_report.reason_required', 400, field='review_reason')
+
+        previous = report.status
+        previous_approval = {
+            'approved_by': report.approved_by,
+            'approved_at': report.approved_at.isoformat() if report.approved_at else None,
+        }
+        report.status = target
+        report.approved_by = None
+        report.approved_at = None
+        report.correction_note = None
+        report.rejection_reason = None
+        if target == 'under_financial_review':
+            report.reviewer_id = actor.id
+            report.reviewed_at = datetime.now(timezone.utc)
+        elif target == 'returned_for_correction':
+            report.correction_note = reason
+        elif target == 'rejected':
+            report.rejection_reason = reason
+            report.rejected_at = datetime.now(timezone.utc)
+
+        self._unwind_forward(report, actor, reason)
+        audit('weekly_report_super_admin_status_override', 'weekly_report', report.id,
+              previous_value={'status': previous, **previous_approval},
+              new_value={'status': target}, user=actor, reason=reason)
         return report
 
     @staticmethod
@@ -1932,6 +2058,9 @@ class WeeklyReportService:
         payload['adjustments'] = [a.to_dict() for a in report.adjustments]
         payload['allocations'] = [a.to_dict() for a in report.allocations]
         payload['allowed_transitions'] = WEEKLY_REPORT_TRANSITIONS.get(report.status, [])
+        if self._is_super_admin(actor) and report.status == 'approved':
+            payload['allowed_super_admin_transitions'] = list(
+                WEEKLY_REPORT_SUPER_ADMIN_OVERRIDES.get(report.status, []))
         return payload
 
     def statement_rows(self, report, lang='en'):

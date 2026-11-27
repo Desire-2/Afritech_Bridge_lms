@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import clsx from 'clsx';
 import { cva } from 'class-variance-authority';
 
-import { api, can, downloadFile, fmtDate, fmtDateTime, fmtMoney } from '@/lib/api';
+import { api, can, downloadFile, fmtDate, fmtDateTime, fmtMoney, isSuperAdmin } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useFetch } from '@/lib/use-fetch';
 import { P } from '@/lib/permissions';
@@ -71,6 +71,8 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
 
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState('');
+  const [overrideStatus, setOverrideStatus] = useState('under_financial_review');
+  const [overrideReason, setOverrideReason] = useState('');
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
 
   const detail = useFetch<any>(`/api/weekly-reports/${reportId}`, [reportId]);
@@ -87,6 +89,8 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
   const declaration = calc.declaration || {};
   const canDecide = canReview && DECISION_STATUSES.includes(report?.status);
   const reviewable = canReview && REVIEWABLE_STATUSES.includes(report?.status);
+  const superAdminTargets: string[] = report?.allowed_super_admin_transitions || [];
+  const canOverrideApproval = isSuperAdmin(user) && superAdminTargets.length > 0;
 
   const pendingClaims = claims.filter((claim) =>
     claim.personal_payment && !claim.auto_personal && claim.verification_status === 'pending').length;
@@ -160,6 +164,29 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
       : action === 'request_correction' ? 'review.returned' : 'review.rejected';
     await sendReview(action,
       { reason: trimmed || undefined, report_note: trimmed || undefined }, key);
+  }
+
+  async function overrideApproval() {
+    if (!canOverrideApproval) return;
+    const trimmed = overrideReason.trim();
+    if (!trimmed) {
+      toast.error(t('ui.error.required'));
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/api/weekly-reports/${reportId}/status-override`, {
+        method: 'POST',
+        body: { status: overrideStatus, reason: trimmed },
+      });
+      toast.success(t('review.overrideSuccess'));
+      setOverrideReason('');
+      await refresh();
+    } catch (err: any) {
+      toast.error(weeklyErrorMessage(err, t) || t('review.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function verifyTransfer(id: number, action: 'verify_momo' | 'reject_momo') {
@@ -626,7 +653,36 @@ export default function ReportReviewWorkspace({ reportId, tab, onTabChange, onBa
               <div><dt>{t('ui.metric.pending')}</dt><dd>{pendingClaims + pendingTransfers}</dd></div>
               <div><dt>{t('ui.metric.missing')}</dt><dd>{(calc.missing_closings || []).length}</dd></div>
             </dl>
-            {canDecide ? (
+            {canOverrideApproval ? (
+              <div className="rv-override-box">
+                <div className="rv-override-title">
+                  <ShieldCheck size={15} /> {t('review.superAdminOverride')}
+                </div>
+                <label className="rv-decision-label" htmlFor="weekly-status-override">
+                  {t('review.overrideTarget')}
+                </label>
+                <select id="weekly-status-override" className="form-select form-select-sm"
+                  value={overrideStatus}
+                  onChange={(e) => setOverrideStatus(e.target.value)}>
+                  {superAdminTargets.map((status) => (
+                    <option key={status} value={status}>{statusLabel(status)}</option>
+                  ))}
+                </select>
+                <label className="rv-decision-label mt-2" htmlFor="weekly-override-reason">
+                  {t('review.decisionReason')}
+                </label>
+                <textarea id="weekly-override-reason" className="form-control form-control-sm" rows={3}
+                  value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder={t('review.returnHelp')} />
+                <div className="rv-decision-actions">
+                  <button type="button" className="btn btn-outline-warning btn-sm w-100" disabled={busy}
+                    onClick={overrideApproval}>
+                    <RotateCcw size={15} /> {t('action.reopenApproval')}
+                  </button>
+                </div>
+                <p className="rv-decision-help">{t('review.superAdminHelp')}</p>
+              </div>
+            ) : canDecide ? (
               <>
                 <label className="rv-decision-label" htmlFor="weekly-review-reason">
                   {t('review.decisionReason')}

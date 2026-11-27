@@ -32,6 +32,13 @@ WEEKLY_REPORT_TRANSITIONS = {
     'rejected': [],
 }
 
+# A super admin may correct an accidental approval through a separate audited
+# endpoint. This map is deliberately not part of WEEKLY_REPORT_TRANSITIONS:
+# ordinary reviewers and managers must never reopen a closed report.
+WEEKLY_REPORT_SUPER_ADMIN_OVERRIDES = {
+    'approved': ['under_financial_review', 'returned_for_correction', 'rejected'],
+}
+
 MOMO_PROVIDERS = ['momo', 'bank_transfer', 'cash_deposit']
 MOMO_VERIFICATION_STATUSES = ['pending', 'verified', 'rejected']
 # Who funded the service amount the agent says she submitted for the week.

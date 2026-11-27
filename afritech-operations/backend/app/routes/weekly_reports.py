@@ -1065,6 +1065,26 @@ def review(report_id):
                     'report': service.detail(report, user)})
 
 
+@bp.post('/<int:report_id>/status-override')
+@require_permission('weekly_reports.review')
+def status_override(report_id):
+    """Super-admin-only correction for an approval made by mistake."""
+    user = current_user()
+    report, err = _report_or_404(report_id, user)
+    if err:
+        return err
+    data = parse_json()
+    try:
+        service.super_admin_set_status(
+            report, data.get('status'), user, data.get('reason'))
+        db.session.commit()
+    except WeeklyReportError as exc:
+        db.session.rollback()
+        return _error(exc)
+    return jsonify({'message': 'Report status corrected',
+                    'report': service.detail(report, user)})
+
+
 @bp.post('/<int:report_id>/adjustments')
 @require_permission('weekly_reports.adjust')
 def add_adjustment(report_id):

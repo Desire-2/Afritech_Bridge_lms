@@ -6,7 +6,7 @@
  * nothing is recomputed in the browser.
  */
 import { useEffect, useState } from 'react';
-import { api, can, downloadFile, fmtDate, fmtDateTime, fmtMoney, getUserCache } from '@/lib/api';
+import { api, can, downloadFile, fmtDate, fmtDateTime, fmtMoney, getUserCache, isSuperAdmin } from '@/lib/api';
 import { useFetch } from '@/lib/use-fetch';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/form';
 import { EmptyState, ErrorAlert, Loading, Modal, Pagination, StatCard } from '@/components/ui';
@@ -84,6 +84,8 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const [overrideReason, setOverrideReason] = useState('');
   const [missingOverrideReason, setMissingOverrideReason] = useState('');
   const [reviewReason, setReviewReason] = useState('');
+  const [statusOverrideTarget, setStatusOverrideTarget] = useState('');
+  const [statusOverrideReason, setStatusOverrideReason] = useState('');
   const [adjustForm, setAdjustForm] = useState<Record<string, string>>({
     kind: ADJUSTMENT_KINDS[0], label: '', original_amount: '0', adjusted_amount: '0', reason: '',
   });
@@ -106,6 +108,10 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
   const backendEditable = EDITABLE_STATUSES.includes(report?.status);
   const canDecide = canReview && DECISION_STATUSES.includes(report?.status);
   const canAdjustReport = canAdjust && ADJUSTABLE_STATUSES.includes(report?.status);
+  const overrideTargets: string[] = report?.allowed_super_admin_transitions || [];
+  const selectedOverride = statusOverrideTarget && overrideTargets.includes(statusOverrideTarget)
+    ? statusOverrideTarget : overrideTargets[0] || '';
+  const canOverrideApproval = isSuperAdmin(me) && overrideTargets.length > 0;
   const authorized = !!(report?.override_reason && report?.override_authorized_by);
 
   const tx = useFetch<any>(
@@ -425,6 +431,19 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
       body: { action, reason: reason || undefined, report_note: reason || undefined },
     }, 'ui.label.reviewRecorded');
     if (result) setReviewReason('');
+  }
+
+  async function overrideApproval() {
+    if (!canOverrideApproval || !selectedOverride) return;
+    const reason = statusOverrideReason.trim();
+    if (!reason) {
+      setActionError(t('ui.error.required'));
+      return;
+    }
+    const result = await run(`/api/weekly-reports/${reportId}/status-override`, {
+      method: 'POST', body: { status: selectedOverride, reason },
+    }, 'review.overrideSuccess');
+    if (result) setStatusOverrideReason('');
   }
 
   async function addAdjustment(e: React.FormEvent) {
@@ -1505,6 +1524,30 @@ export default function ReportDashboard({ reportId, policy, reviewMode = false, 
                       onClick={() => reviewAction('approve')}>{t('action.approve')}</button>
                   </div>
                   <div className="form-text mt-2">{t('ui.label.rejectionReason')}: {t('ui.error.required')}</div>
+                </div>
+              </div>
+            </div>
+          )}
+          {canOverrideApproval && (
+            <div className="col-lg-6">
+              <div className="card h-100">
+                <div className="card-header py-2 small fw-semibold">{t('review.superAdminOverride')}</div>
+                <div className="card-body">
+                  <Field label={t('review.overrideTarget')}>
+                    <SelectInput value={selectedOverride}
+                      onChange={(e) => setStatusOverrideTarget(e.target.value)}>
+                      {overrideTargets.map((status) => (
+                        <option key={status} value={status}>{statusLabel(status)}</option>
+                      ))}
+                    </SelectInput>
+                  </Field>
+                  <Field label={t('review.decisionReason')}>
+                    <TextArea value={statusOverrideReason}
+                      onChange={(e) => setStatusOverrideReason(e.target.value)} />
+                  </Field>
+                  <button className="btn btn-sm btn-outline-warning" disabled={busy}
+                    onClick={overrideApproval}>{t('action.reopenApproval')}</button>
+                  <div className="form-text mt-2">{t('review.superAdminHelp')}</div>
                 </div>
               </div>
             </div>

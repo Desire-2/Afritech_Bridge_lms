@@ -45,6 +45,8 @@ export function weeklyErrorMessage(err: any, t: (key: string) => string): string
     'weekly_report.unexplained_shortage': 'error.unexplained_shortage',
     'weekly_report.duplicate_reference': 'error.duplicate_reference',
     'weekly_report.invalid_transition': 'error.invalid_transition',
+    'weekly_report.invalid_status_override': 'error.invalidStatusOverride',
+    'weekly_report.super_admin_required': 'error.superAdminOnly',
     'weekly_report.invalid_decision': 'error.invalid_transition',
     'weekly_report.invalid_adjustment': 'ui.error.required',
     'weekly_report.momo_required': 'ui.error.required',

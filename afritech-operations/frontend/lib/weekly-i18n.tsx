@@ -196,6 +196,8 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "action.reject": "Reject",
 
+    "action.reopenApproval": "Reopen approval",
+
     "action.adjust": "Record adjustment",
 
     "action.downloadPdf": "Download PDF",
@@ -273,6 +275,10 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "error.duplicate_reference": "That money submission reference already exists.",
 
     "error.invalid_transition": "This workflow transition is not allowed.",
+
+    "error.invalidStatusOverride": "Choose a valid status for this correction.",
+
+    "error.superAdminOnly": "Only a super admin can change an approved report.",
 
     "error.locked": "A submitted report is locked; request a correction instead.",
 
@@ -800,6 +806,14 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.notDecisionStatus": "This report is locked; no further decision is available.",
 
+    "review.superAdminOverride": "Super admin correction",
+
+    "review.overrideTarget": "Move report to",
+
+    "review.superAdminHelp": "Only a super admin can undo an approval. The reason is saved in the audit trail, and any carry into an editable next week is reversed.",
+
+    "review.overrideSuccess": "Report status corrected and audit record saved.",
+
     "review.dailyMissing": "No daily closing recorded",
 
     "review.branchScope": "Manager access is limited to your branch.",
@@ -1162,6 +1176,8 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "action.reject": "Wange",
 
+    "action.reopenApproval": "Subiriza kwemeza",
+
     "action.adjust": "Andika ihinduka mu ibarura",
 
     "action.downloadPdf": "Kuramo PDF",
@@ -1239,6 +1255,10 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "error.duplicate_reference": "Iyi kode iranga ihererekanya ry’amafaranga isanzwe yarakoreshejwe.",
 
     "error.invalid_transition": "Iyi mpinduka ntiyemewe muri ubu buryo bwo gutunganya raporo.",
+
+    "error.invalidStatusOverride": "Hitamo uburyo bwemewe bwo gukosora iyi raporo.",
+
+    "error.superAdminOnly": "Ni super admin gusa ushobora guhindura raporo yemejwe.",
 
     "error.locked": "Raporo yamaze koherezwa ntishobora guhindurwa. Saba ko isubizwa kugira ngo uyikosore.",
 
@@ -1765,6 +1785,14 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
     "review.rejectHelp": "Ugomba gutanga impamvu isobanutse kugira ngo wange iyi raporo.",
 
     "review.notDecisionStatus": "Iyi raporo yarafunzwe; nta kindi cyemezo gishobora kuyifatwaho.",
+
+    "review.superAdminOverride": "Gukosora kwa super admin",
+
+    "review.overrideTarget": "Himura raporo kuri",
+
+    "review.superAdminHelp": "Ni super admin gusa ushobora gukuraho kwemeza. Impamvu ibikwa mu mateka y’ibikorwa, kandi amafaranga yari yatwarwe mu cyumweru gikurikira kiracyahindurwa agarurwa.",
+
+    "review.overrideSuccess": "Uburyo bwa raporo bwakosowe kandi ibyakozwe byanditswe.",
 
     "review.dailyMissing": "Nta raporo yo gusoza umunsi yakozwe.",
 
