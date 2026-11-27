@@ -1209,7 +1209,9 @@ const AssignmentGradingDetail = () => {
             student_id: submission.student_info?.id || 0,
             assignment_title: submission.assignment_title,
             assignment_id: submission.assignment_id,
-            submission_type: 'assignment'
+            submission_type: 'assignment',
+            existing_feedback: submission.feedback || feedback,
+            rubricScores
           }}
           onSuccess={() => {
             setShowModificationModal(false);

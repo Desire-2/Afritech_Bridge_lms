@@ -18,6 +18,7 @@ from .excel_file_detection import (
     course_is_excel,
     has_excel_files as _has_detected_excel_files,
 )
+from ..grading_feedback import build_revision_reason, build_student_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -393,8 +394,10 @@ def _apply_grade_to_submission(
             except (TypeError, ValueError):
                 pass
 
-        # Build a clean feedback string from the AI overall_feedback
-        feedback = grade_data.get('overall_feedback', '')
+        # The AAGE narrative alone can be a short summary. Append the rubric
+        # breakdown so the student sees why each criterion lost marks, exactly
+        # as the assignment detail view does.
+        feedback = build_student_feedback(grade_data, submission.feedback)
         ai_note = (
             "\n\n---\n"
             "📊 *This grade was automatically generated and approved by AI analysis.*"
@@ -750,42 +753,33 @@ def _auto_request_modification_if_needed(
             )
             return False
 
-        # Build a helpful reason from AI analysis
-        weaknesses = grade_data.get('analysis_data', {}).get('weaknesses', [])
-        strengths = grade_data.get('analysis_data', {}).get('strengths', [])
-        feedback_text = grade_data.get('overall_feedback', '')
-
-        reason_parts = [
-            f"Your submission scored {total_score:.1f}/{max_score:.0f} "
-            f"({score_pct:.1f}%), which is below the passing score of "
-            f"{passing_score:.0f}%. Please review and resubmit.",
-        ]
-        if weaknesses:
-            reason_parts.append("\n\n**Areas needing improvement:**")
-            for w in weaknesses[:5]:
-                reason_parts.append(f"• {w}")
-        if strengths:
-            reason_parts.append("\n\n**What you did well:**")
-            for s in strengths[:3]:
-                reason_parts.append(f"• {s}")
-        if feedback_text:
-            # Include a trimmed version of the full feedback
-            trimmed = feedback_text[:500]
-            if len(feedback_text) > 500:
-                trimmed += "…"
-            reason_parts.append(f"\n\n**AI Feedback:**\n{trimmed}")
-
-        reason = "\n".join(reason_parts)
+        # Build the reason from the rubric marks and AAGE criterion feedback.
+        # A generic "does not meet the requirements" note is never enough: the
+        # student needs the specific criteria that caused the failed grade.
+        reason = build_revision_reason(
+            total_score=total_score,
+            max_score=max_score,
+            passing_score=passing_score,
+            grade_data=grade_data,
+            existing_feedback=submission.feedback,
+        )
 
         # Keep the AI grade on the submission so the instructor can see the
         # score that triggered the modification request, and keep the full AI
         # feedback (plus the threshold explanation) visible to the student.
-        submission.feedback = (
-            f"{submission.feedback or grade_data.get('overall_feedback', '')}\n\n---\n"
+        detailed_feedback = build_student_feedback(grade_data, submission.feedback)
+        threshold_note = (
             f"⚠️ *Score {score_pct:.1f}% is below the passing threshold "
             f"({passing_score:.0f}%). A modification request was created "
             f"automatically. The student has been asked to resubmit.*"
         )
+        if threshold_note not in (submission.feedback or ''):
+            submission.feedback = (
+                f"{detailed_feedback}\n\n---\n{threshold_note}"
+                if detailed_feedback else threshold_note
+            )
+        else:
+            submission.feedback = detailed_feedback or submission.feedback
 
         # Revision state is per student. Setting it on the shared parent would
         # give every student in the course a resubmission pass for one

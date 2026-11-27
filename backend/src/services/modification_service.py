@@ -14,6 +14,12 @@ from ..models.course_models import Assignment, Project, Course, AssignmentSubmis
 from ..models.student_models import LessonCompletion
 from ..utils.email_notifications import send_modification_request_notification, send_resubmission_notification
 from ..utils.db_utils import safe_db_session, DatabaseManager
+from .grading_feedback import (
+    aage_grade_data,
+    build_student_feedback,
+    is_generic_reason,
+    resolve_modification_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +242,16 @@ class ModificationRequestService:
                 if current_resubmissions >= max_resubmissions:
                     return {'success': False, 'error': f'Maximum resubmissions ({max_resubmissions}) reached'}
                 
+                grade_data = aage_grade_data('assignment', assignment_submission.id)
+                reason = resolve_modification_reason(
+                    reason,
+                    total_score=assignment_submission.grade,
+                    max_score=getattr(assignment, 'points_possible', 100) or 100,
+                    passing_score=getattr(assignment, 'passing_score', None),
+                    grade_data=grade_data,
+                    existing_feedback=assignment_submission.feedback,
+                )
+
                 # Update assignment and related records
                 assignment.modification_requested = True
                 assignment.modification_request_reason = reason
@@ -243,11 +259,15 @@ class ModificationRequestService:
                 assignment.modification_requested_by = instructor_id
                 assignment.resubmission_count = (assignment.resubmission_count or 0) + 1
                 
-                # Update assignment submission
-                assignment_submission.grade = None
-                assignment_submission.graded_at = None
-                assignment_submission.graded_by = None
-                assignment_submission.feedback = f"Modification requested: {reason}"
+                # Keep the AI/rubric feedback on the submission. The reason is
+                # stored separately and must not replace the evidence behind
+                # the revision request.
+                if (not assignment_submission.feedback
+                        or is_generic_reason(assignment_submission.feedback)):
+                    enriched = build_student_feedback(
+                        grade_data, assignment_submission.feedback
+                    )
+                    assignment_submission.feedback = enriched or reason
                 
                 # Update lesson completion
                 lesson_completion = LessonCompletion.query.filter_by(

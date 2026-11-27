@@ -625,6 +625,20 @@ def write_through_grade(result: EvaluationResult, *,
         result.requires_review = False
 
     loaded = load_submission(result.submission_type, result.submission_id)
+
+    # Include the criterion-level result in the legacy grade payload. The
+    # write-through helper uses it to publish rubric-specific feedback and to
+    # explain exactly which rubric areas triggered a failed grade.
+    criteria = [
+        {
+            "name": c.name,
+            "awarded": float(c.awarded or 0),
+            "maximum": float(c.maximum or 0),
+            "feedback": c.feedback or "",
+            "rationale": c.rationale or "",
+        }
+        for c in result.criteria.order_by(CriterionScore.order_index.asc()).all()
+    ]
     grade_data = {
         "overall_feedback": result.feedback or "",
         "total_score": result.final_score,
@@ -632,9 +646,11 @@ def write_through_grade(result: EvaluationResult, *,
         "grade_letter": result.grade_letter,
         "strengths": result.strengths or [],
         "weaknesses": result.improvements or [],
+        "criteria": criteria,
         "analysis_data": {
             "strengths": result.strengths or [],
             "weaknesses": result.improvements or [],
+            "criteria": criteria,
         },
     }
 

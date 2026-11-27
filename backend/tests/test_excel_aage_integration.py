@@ -482,7 +482,11 @@ def test_legacy_grade_endpoint_enqueues_aage_only(app, client, env, monkeypatch)
     assert body["publication"] == {"status": "pending", "engine": "aage"}
     assert queued[0]["submission_id"] == env["submission"].id
     with app.app_context():
-        assert ExcelGradingResult.query.count() == 0
+        # Other tests in this module create legacy rows in the shared test DB.
+        # The endpoint must not create one for *this* submission.
+        assert ExcelGradingResult.query.filter_by(
+            assignment_submission_id=env["submission"].id
+        ).count() == 0
 
 
 def test_legacy_result_endpoint_prefers_canonical_aage(app, client, env):

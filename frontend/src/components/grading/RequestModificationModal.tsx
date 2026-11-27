@@ -2,7 +2,7 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   X, 
   AlertTriangle,
@@ -25,6 +25,10 @@ interface RequestModificationModalProps {
     /** Present for project submissions. */
     project_id?: number;
     submission_type: 'assignment' | 'project';
+    /** Existing AI/rubric feedback, used as the default revision reason. */
+    existing_feedback?: string | null;
+    /** Instructor rubric marks, if the grade was entered with the rubric panel. */
+    rubricScores?: Record<string, number> | null;
   };
   onSuccess: () => void;
 }
@@ -40,15 +44,59 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Manual grades can store feedback as JSON together with rubric scores.
+  // Unwrap it so the instructor sees the actual comment, not the wrapper.
+  const rubricFeedback = useMemo(() => {
+    const raw = (submission.existing_feedback || '').trim();
+    if (!raw) return '';
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const text = String((parsed as any).feedback || (parsed as any).overall_feedback || '');
+        return text.trim();
+      }
+    } catch {
+      // Plain-text AI feedback.
+    }
+    return raw;
+  }, [submission.existing_feedback]);
+
+  const rubricSummary = useMemo(() => {
+    const scores = submission.rubricScores || {};
+    const entries = Object.entries(scores);
+    if (entries.length === 0) return '';
+    return entries
+      .map(([criterion, score]) => `• ${criterion}: ${score}`)
+      .join('\n');
+  }, [submission.rubricScores]);
+
+  const feedbackSuggestion = useMemo(() => {
+    const sections = [rubricFeedback.split('\n---')[0].trim()];
+    if (rubricSummary && !sections[0].includes(rubricSummary)) sections.push(rubricSummary);
+    return sections.filter(Boolean).join('\n\n').slice(0, 4000);
+  }, [rubricFeedback, rubricSummary]);
+
+  // Default the reason to the rubric/AI feedback. Generic one-line reasons
+  // hide the evidence a student needs and are replaced by the backend too.
+  useEffect(() => {
+    if (!isOpen) {
+      setReason('');
+      setError(null);
+      return;
+    }
+    if (feedbackSuggestion && !reason) {
+      setReason(`Please address the following feedback before resubmitting:\n\n${feedbackSuggestion}`);
+    }
+  }, [isOpen, feedbackSuggestion]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const commonReasons = [
-    'Submission does not meet the requirements',
-    'More detail needed in the analysis section',
-    'Missing references or citations',
-    'Incorrect formatting or structure',
-    'Needs clearer explanations',
-    'Examples or evidence required',
-    'Technical issues with submission',
-    'Plagiarism concerns - requires original work'
+    'Address the rubric criteria with lower scores',
+    'Add evidence or examples for each requirement',
+    'Explain the reasoning behind your conclusions',
+    'Correct the formatting and structure',
+    'Include missing references or citations',
+    'Fix technical issues that prevented access',
+    'Resubmit original work with proper attribution'
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -167,8 +215,17 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
           {/* Quick Select Reasons */}
           <div className="mb-4 sm:mb-6">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">
-              Common Reasons (Click to select)
+              Suggested revision feedback (Click to select)
             </label>
+            {feedbackSuggestion && (
+              <button
+                type="button"
+                onClick={() => setReason(`Please address the following feedback before resubmitting:\n\n${feedbackSuggestion}`)}
+                className="mb-2 w-full text-left p-3 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-200 dark:hover:bg-indigo-900/30 text-sm"
+              >
+                Use the AI/rubric feedback for this submission
+              </button>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {commonReasons.map((commonReason, index) => (
                 <button
@@ -190,7 +247,7 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
           {/* Custom Reason */}
           <div className="mb-4 sm:mb-6">
             <label htmlFor="reason" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Reason for Modification Request *
+              Revision reason / feedback to student *
             </label>
             <textarea
               id="reason"
@@ -202,7 +259,9 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
               required
             />
             <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">
-              Be specific about what changes are needed. This message will be sent to the student.
+              Reference the rubric criteria and evidence that need work. This is stored separately
+              from the grade and sent to the student; generic one-line reasons are replaced with
+              the available AI/rubric feedback.
             </p>
           </div>
 

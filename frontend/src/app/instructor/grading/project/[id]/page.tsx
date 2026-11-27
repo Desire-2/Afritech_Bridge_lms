@@ -864,7 +864,9 @@ const ProjectGradingDetail = () => {
             student_id: submission.student_info?.id || 0,
             assignment_title: submission.project_title || submission.project?.title || 'Unknown Project',
             project_id: submission.project?.id || 0,
-            submission_type: 'project'
+            submission_type: 'project',
+            existing_feedback: submission.feedback || feedback,
+            rubricScores
           }}
           onSuccess={() => { setShowModificationModal(false); fetchSubmission(); }}
         />

@@ -16,6 +16,12 @@ from ..models.student_models import LessonCompletion
 from ..utils.email_notifications import send_modification_request_notification, send_resubmission_notification
 from ..utils.db_utils import safe_db_session, DatabaseManager
 from ..services.modification_analytics_service import ModificationAnalytics, ModificationInsights
+from ..services.grading_feedback import (
+    aage_grade_data,
+    build_student_feedback,
+    is_generic_reason,
+    resolve_modification_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,22 +180,36 @@ def request_assignment_modification(assignment_id):
         if current_resubmissions >= max_resubmissions:
             return jsonify({'error': f'Maximum resubmissions ({max_resubmissions}) reached'}), 400
         
+        # A generic quick-select reason must never hide the rubric feedback
+        # that actually caused the revision. Derive it from the published AAGE
+        # result or the stored AI/instructor feedback when needed.
+        grade_data = aage_grade_data('assignment', assignment_submission.id)
+        reason = resolve_modification_reason(
+            reason,
+            total_score=assignment_submission.grade,
+            max_score=getattr(assignment, 'points_possible', 100) or 100,
+            passing_score=getattr(assignment, 'passing_score', None),
+            grade_data=grade_data,
+            existing_feedback=assignment_submission.feedback,
+        )
+
         # Update assignment with modification request
         assignment.modification_requested = True
         assignment.modification_request_reason = reason
         assignment.modification_requested_at = now_local()
         assignment.modification_requested_by = user_id
         assignment.can_resubmit = True
-        
+
         logger.info(f"🔍 Debug: About to update assignment {assignment_id}")
-        
-        # Update assignment submission to allow resubmission
-        # Clear the grade to indicate it needs to be resubmitted
-        assignment_submission.grade = None
-        assignment_submission.graded_at = None
-        assignment_submission.graded_by = None
-        assignment_submission.feedback = f"Modification requested: {reason}"
-        
+
+        # A revision changes the status, not the recorded grade/feedback. The
+        # student needs both the score and the rubric explanation while fixing
+        # the work, and the reason stays in its own field.
+        if (not assignment_submission.feedback
+                or is_generic_reason(assignment_submission.feedback)):
+            enriched = build_student_feedback(grade_data, assignment_submission.feedback)
+            assignment_submission.feedback = enriched or reason
+
         # Update lesson completion to allow resubmission
         if lesson_completion:
             lesson_completion.assignment_graded = False  # Allow resubmission
@@ -341,6 +361,20 @@ def request_project_modification(project_id):
         )
         if current_resubmissions >= max_resubmissions:
             return jsonify({'error': f'Maximum resubmissions ({max_resubmissions}) reached'}), 400
+
+        grade_data = aage_grade_data('project', primary.id)
+        reason = resolve_modification_reason(
+            reason,
+            total_score=primary.grade,
+            max_score=getattr(project, 'points_possible', 100) or 100,
+            passing_score=getattr(project, 'passing_score', None),
+            grade_data=grade_data,
+            existing_feedback=primary.feedback,
+        )
+        shared_feedback = build_student_feedback(grade_data, primary.feedback) or reason
+        for row in member_rows:
+            if not row.feedback or is_generic_reason(row.feedback):
+                row.feedback = shared_feedback
 
         request_project_modification(member_rows, reason, user_id)
         db.session.commit()

@@ -12,11 +12,15 @@ import pytest
 from flask_jwt_extended import create_access_token
 
 from src.utils.time_utils import now_local
+from src.models.aage_models import CriterionScore, EvaluationResult
 from src.models.course_models import (
-    Assignment, AssignmentSubmission, Course, Enrollment, Project, ProjectSubmission,
+    Assignment, AssignmentSubmission, Course, Enrollment, Lesson, Module,
+    Project, ProjectSubmission,
 )
+from src.models.student_models import LessonCompletion
 from src.models.user_models import Role, User, db
 from src.routes.student_routes import _build_assignment_submission_status
+from src.services.aage import persistence as aage_persistence
 from src.services.excel_grading.auto_grader import (
     _apply_grade_to_submission,
     _auto_request_modification_if_needed,
@@ -35,6 +39,24 @@ GRADE_DATA = {
         "weaknesses": ["No citations for the key claims"],
     },
 }
+
+RUBRIC_GRADE_DATA = dict(
+    GRADE_DATA,
+    criteria=[
+        {
+            "name": "Evidence and citations",
+            "awarded": 2.0,
+            "maximum": 10.0,
+            "feedback": "Key claims have no supporting sources.",
+        },
+        {
+            "name": "Analysis depth",
+            "awarded": 8.0,
+            "maximum": 10.0,
+            "feedback": "Good structure, but conclusions are not justified.",
+        },
+    ],
+)
 
 
 @pytest.fixture()
@@ -79,9 +101,21 @@ def env(app):
             student_id=student.id, course_id=course.id, status="active"
         ))
 
+        module = Module(title=f"Module {tag}", course_id=course.id, order=1)
+        db.session.add(module)
+        db.session.flush()
+        lesson = Lesson(
+            title=f"Lesson {tag}", content_type="text", content_data="body",
+            module_id=module.id, order=1,
+        )
+        db.session.add(lesson)
+        db.session.flush()
+        db.session.add(LessonCompletion(student_id=student.id, lesson_id=lesson.id))
+
         assignment = Assignment(
             title="Fail me", description="below passing", course_id=course.id,
             instructor_id=instructor.id, assignment_type="both",
+            module_id=module.id, lesson_id=lesson.id,
             points_possible=100, passing_score=60, max_resubmissions=3,
             is_published=True,
         )
@@ -111,8 +145,10 @@ def env(app):
         db.session.commit()
 
         ids = {
+            "instructor_id": instructor.id,
             "student_id": student.id,
             "teammate_id": teammate.id,
+            "course_id": course.id,
             "assignment_id": assignment.id,
             "submission_id": submission.id,
             "project_id": project.id,
@@ -128,10 +164,11 @@ def env(app):
         db.session.commit()
 
 
-def _call_apply(app, env, *, total_score=45.0, **kwargs):
+def _call_apply(app, env, *, total_score=45.0, grade_data=None, **kwargs):
+    payload = dict(grade_data or GRADE_DATA, total_score=total_score)
     return _apply_grade_to_submission(
         app, env["submission_id"], "assignment", env["student_id"],
-        total_score, 100.0, dict(GRADE_DATA, total_score=total_score), **kwargs,
+        total_score, 100.0, payload, **kwargs,
     )
 
 
@@ -215,3 +252,121 @@ def test_failing_project_gives_every_teammate_the_grade_and_feedback(app, env):
             assert "below the passing threshold" in row.feedback
             assert "below the passing score" in row.modification_request_reason
             assert row.feedback != row.modification_request_reason
+
+
+def test_rubric_criteria_drive_failing_feedback_and_reason(app, env):
+    with app.app_context():
+        assert _call_apply(app, env, total_score=45.0, grade_data=RUBRIC_GRADE_DATA) is True
+        assert _auto_request_modification_if_needed(
+            app, env["submission_id"], "assignment", env["student_id"],
+            45.0, 100.0, RUBRIC_GRADE_DATA,
+        ) is True
+
+        assignment = db.session.get(Assignment, env["assignment_id"])
+        submission = db.session.get(AssignmentSubmission, env["submission_id"])
+        reason = assignment.modification_request_reason
+
+        assert "Evidence and citations" in reason
+        assert "2/10" in reason
+        assert "Key claims have no supporting sources." in reason
+        assert "Submission does not meet the requirements" not in reason
+        assert "Rubric breakdown" in submission.feedback
+        assert "Evidence and citations" in submission.feedback
+
+
+def test_aage_write_through_publishes_criterion_feedback(app, env):
+    with app.app_context():
+        result = EvaluationResult(
+            submission_type="assignment",
+            submission_id=env["submission_id"],
+            assessment_kind="assignment",
+            assessment_id=env["assignment_id"],
+            course_id=env["course_id"],
+            student_id=env["student_id"],
+            total_awarded=4.0,
+            total_possible=20.0,
+            final_score=45.0,
+            grade_letter="F",
+            confidence=1.0,
+            requires_review=False,
+            status="draft",
+            feedback="Your analysis lacks evidence citations.",
+            strengths=["Clear structure"],
+            improvements=["No citations for the key claims"],
+        )
+        db.session.add(result)
+        db.session.flush()
+        db.session.add_all([
+            CriterionScore(
+                result_id=result.id,
+                criterion_key="evidence_citations",
+                name="Evidence and citations",
+                awarded=2.0,
+                maximum=10.0,
+                weight=0.5,
+                weighted_score=0.1,
+                feedback="Key claims have no supporting sources.",
+                order_index=0,
+            ),
+            CriterionScore(
+                result_id=result.id,
+                criterion_key="analysis_depth",
+                name="Analysis depth",
+                awarded=8.0,
+                maximum=10.0,
+                weight=0.5,
+                weighted_score=0.4,
+                feedback="Conclusions are not justified by the evidence.",
+                order_index=1,
+            ),
+        ])
+        db.session.commit()
+
+        assert aage_persistence.write_through_grade(
+            result,
+            actor_id=env["instructor_id"],
+            publication_mode="manual",
+        ) is True
+
+        submission = db.session.get(AssignmentSubmission, env["submission_id"])
+        assignment = db.session.get(Assignment, env["assignment_id"])
+        assert submission.grade == 45.0
+        assert "Evidence and citations: 2/10" in submission.feedback
+        assert "Key claims have no supporting sources." in submission.feedback
+        assert "Evidence and citations" in assignment.modification_request_reason
+        assert "2/10" in assignment.modification_request_reason
+
+        # Keep the shared test database clean for the rest of the suite.
+        db.session.delete(result)
+        db.session.commit()
+
+
+def test_manual_revision_preserves_feedback_and_replaces_generic_reason(app, env, client):
+    original_feedback = "Evidence and citations: 2/10 — add sources for each claim."
+    with app.app_context():
+        row = db.session.get(AssignmentSubmission, env["submission_id"])
+        row.grade = 45.0
+        row.feedback = original_feedback
+        db.session.commit()
+
+    token = create_access_token(identity=str(env["instructor_id"]))
+    response = client.post(
+        f"/api/v1/modification/assignments/{env['assignment_id']}/request-modification",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "student_id": env["student_id"],
+            "reason": "Submission does not meet the requirements",
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+
+    with app.app_context():
+        assignment = db.session.get(Assignment, env["assignment_id"])
+        row = db.session.get(AssignmentSubmission, env["submission_id"])
+        assert assignment.modification_requested is True
+        assert "Evidence and citations" in assignment.modification_request_reason
+        assert "Submission does not meet the requirements" not in (
+            assignment.modification_request_reason
+        )
+        assert row.feedback == original_feedback
+        assert row.grade == 45.0
