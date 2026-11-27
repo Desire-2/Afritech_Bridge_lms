@@ -120,10 +120,15 @@ Important rules:
 - `agent_reported_submitted` is the sum of all MoMo/bank/deposit submissions.
   `verified_submitted` counts only transfers a reviewer marked `verified`.
 - `shortage = max(0, expected - verified_submitted)`;
-  `surplus = max(0, verified_submitted - expected)`.
-- `closing_outstanding = max(0, expected - verified_submitted + net waiver /
-  correction allocations)`. The opening balance is already inside `expected`,
-  so it is never added twice.
+  `surplus = max(0, verified_submitted - expected)`. These are verification-only
+  audit views; a declaration never changes them.
+- `closing_outstanding = max(0, expected - submitted_credit + net waiver /
+  correction allocations)`, where `submitted_credit =
+  max(declared_submitted_amount, verified_submitted)` for a guided submission
+  and `verified_submitted` for an older report without a declaration marker. A
+  later verification can reduce the carry, never increase it; unverified
+  transfers never do. The opening balance is already inside `expected`, so it
+  is never added twice.
 
 ### Forward-looking display views
 
@@ -138,13 +143,17 @@ in the browser:
 | `total_expected_amount` / `money_to_submit` | Full authoritative expected remittance, including carried outstanding. `expected_amount` remains as a compatibility alias. |
 | `remaining_after_declaration` | `max(0, expected - declared_submitted_amount)`; what the agent says is still outstanding. A declaration is not evidence. |
 | `remaining_after_verification` | `max(0, expected - verified_submitted)`; what remains before reviewer adjustments. |
-| `carry_forward_amount` | `closing_outstanding`; the verified amount that will be carried into the next report on approval. |
+| `carry_forward_amount` | `closing_outstanding`; the declared remaining balance, reduced further by any later verification, that becomes the next report's opening balance on approval. |
 
-Only `verified_submitted` and verified/guided cost credits reduce the authoritative
-balance. An unpaid declaration still carries forward in full until a transfer is
-verified. The next week's generated report includes that balance in
-`opening_outstanding`, so its `money_to_submit` is the sum of its own expected
-amount and the previous week's outstanding balance.
+The expected remittance stays authoritative and only verified/guided cost
+credits and verified transfers reduce it. For the *carry-forward*, however, the
+agent's declared remaining money is the acknowledged debt: next week receives
+`remaining_after_declaration`, not the full `money_to_submit`, plus any net
+waiver/correction allocations. An unpaid declaration therefore carries forward
+in full, while a later verification can only reduce it further. The next week's
+generated report includes that balance in `opening_outstanding`, so its
+`money_to_submit` is the sum of its own expected amount and the previous week's
+outstanding balance.
 
 The frozen submission stores both the full payload (`snapshot`) and the active
 overlay (`calculation`). Source collection/cost facts stay frozen; reviewer
@@ -258,7 +267,9 @@ page is a single guided task with three stacked sections and no report queue:
 `PATCH /{id}` and accepted by `POST /{id}/submit`; they are frozen with the
 snapshot once the report is submitted. They are a declaration only: selecting
 `agent_phone` never clears a shortage by itself, and unverified MoMo rows never
-replace `verified_submitted`. Reviewers, Managers and Accountants keep the full
+replace `verified_submitted`. On approval the declared remaining balance, not
+the full total to submit, becomes the next week's opening balance. Reviewers,
+Managers and Accountants keep the full
 nine-tab `ReportDashboard` and the `/finance/weekly-reports/review` route.
 
 ## 5. Workflow and state machine
@@ -289,11 +300,12 @@ Invalid or missing identifiers return a field-located 400/404 error.
   but do not need early verification.
 - `request_correction` — returns the report with a mandatory reason.
 - `approve` — confirms pending guided `auto_personal` claims, computes the final
-  carry-forward and writes the approval audit. Their amount is unchanged
-  because it was already deducted when the agent answered. Approval also
-  reconciles the already-generated next report (if it is still a draft) so a
-  shortage is carried even when that week was generated before review finished.
-  Submitted/under-review/approved reports keep their frozen snapshot.
+  carry-forward from the declared remaining balance and writes the approval
+  audit. Their amount is unchanged because it was already deducted when the
+  agent answered. Approval also reconciles the already-generated next report
+  (if it is still editable) so the outstanding balance is carried even when
+  that week was generated before review finished. Submitted/under-review/
+  approved reports keep their frozen snapshot.
 - `reject` — requires a reason.
 
 Adjustments (`POST /api/weekly-reports/{id}/adjustments`) always store kind,

@@ -590,15 +590,19 @@ class WeeklyReportService:
                     - commission_retained)
         shortage = max(Decimal('0'), expected - momo_verified)
         surplus = max(Decimal('0'), momo_verified - expected)
-        # The agent's own declaration is shown to her immediately, while the
-        # reviewed totals above remain the financial source of truth. A claim is
-        # never allowed to clear a verified shortage on its own.
+        # The declaration never clears the reviewed verified shortage, but it
+        # is the amount the agent acknowledges she still owes. On approval that
+        # acknowledged remaining balance is what moves into the next week.
         declared = _dec(report.declared_submitted_amount)
         declared_shortage = max(Decimal('0'), expected - declared)
         declared_surplus = max(Decimal('0'), declared - expected)
         outstanding_delta = self._outstanding_adjustment_total(report)
+        declared_submission = bool(getattr(report, '_declaration_provided', False))
+        carry_deduction = self._carry_deduction(
+            {'declared_submission': declared_submission},
+            declared, momo_verified)
         closing_outstanding = max(
-            Decimal('0'), expected - momo_verified + outstanding_delta)
+            Decimal('0'), expected - carry_deduction + outstanding_delta)
 
         source = {
             'policy': policy,
@@ -657,6 +661,7 @@ class WeeklyReportService:
             'allocations': allocation_rows,
             'declaration': {
                 'declared_submitted_amount': _str(report.declared_submitted_amount),
+                'declared_submission': bool(declared_submission),
                 'submission_funding_source': report.submission_funding_source,
                 'shortage_reason_category': report.shortage_reason_category,
                 'shortage_explanation': report.shortage_explanation,
@@ -691,6 +696,19 @@ class WeeklyReportService:
                 # absolute amount added on top of the source total.
                 totals[kind] += _dec(row.get('adjusted_amount')) - _dec(row.get('original_amount'))
         return totals
+
+    @staticmethod
+    def _carry_deduction(declaration, declared, verified):
+        """Amount cleared from the balance that moves into next week.
+
+        A guided submission declares what was sent, so the declared remaining
+        balance is what the agent acknowledges owing. A later verification can
+        only reduce that acknowledgement further; unverified reports never do.
+        Older reports without a declaration marker keep the verified-only rule.
+        """
+        if declaration and declaration.get('declared_submission'):
+            return max(declared, verified)
+        return verified
 
     @staticmethod
     def _with_forward_views(payload):
@@ -923,8 +941,15 @@ class WeeklyReportService:
 
         payload['adjustments'] = [a.to_dict() for a in report.adjustments]
         payload['allocations'] = [a.to_dict() for a in report.allocations]
+        # The submission marker belongs to the frozen declaration. Keep it when
+        # refreshing live verification/adjustment overlays; otherwise an
+        # acknowledged remaining balance would silently revert to the old
+        # verified-only carry rule.
+        snapshot_declaration = payload.get('declaration') or {}
+        declared_submission = snapshot_declaration.get('declared_submission', False)
         payload['declaration'] = {
             'declared_submitted_amount': _str(report.declared_submitted_amount),
+            'declared_submission': bool(declared_submission),
             'submission_funding_source': report.submission_funding_source,
             'shortage_reason_category': report.shortage_reason_category,
             'shortage_explanation': report.shortage_explanation,
@@ -986,9 +1011,12 @@ class WeeklyReportService:
                     - totals['authorized_refund']
                     - totals['other_outflow']
                     - commission_retained)
+        declared = _dec(report.declared_submitted_amount)
+        carry_deduction = self._carry_deduction(
+            payload.get('declaration'), declared, momo_verified)
         closing_outstanding = max(
             Decimal('0'),
-            expected - momo_verified + self._outstanding_adjustment_total(report),
+            expected - carry_deduction + self._outstanding_adjustment_total(report),
         )
         c['pre_personal_cost_expected'] = _str(pre_cost_expected)
         c['base_expected_remittance'] = _str(base_expected)
@@ -1003,7 +1031,6 @@ class WeeklyReportService:
         c['expected_remittance'] = _str(expected)
         c['agent_reported_submitted'] = _str(momo_reported)
         c['verified_submitted'] = _str(momo_verified)
-        declared = _dec(report.declared_submitted_amount)
         c['declared_submitted_amount'] = _str(declared)
         c['submission_funding_source'] = report.submission_funding_source
         c['declared_shortage_amount'] = _str(max(Decimal('0'), expected - declared))
@@ -1212,6 +1239,11 @@ class WeeklyReportService:
             report.shortage_evidence_path = self._store_evidence(evidence, report, 'shortage')
             report.shortage_evidence_name = evidence.filename[:255]
 
+        # Remember that this submission carried an explicit declaration, even
+        # when the amount is zero. Reviewer overlays use that marker so the
+        # acknowledged remaining money, not the full expected amount, is what
+        # moves into the next week.
+        report._declaration_provided = declared
         # Snap the source-of-truth calculation before any workflow mutation.
         calc = self.build_calculation(report)
         calc['status'] = {'name': 'submitted'}
@@ -1693,8 +1725,9 @@ class WeeklyReportService:
                                  'note': claim.verification_note}, user=actor)
             calc = self.refresh(report, actor)
             c = calc.get('components', {})
-            # Expected remittance already includes the opening balance; the
-            # remaining gap after verified submissions is the carry-forward.
+            # Expected remittance already includes the opening balance. Once
+            # approved, the declared remaining balance becomes the authoritative
+            # opening balance of the next report.
             report.closing_outstanding = _dec(c.get('closing_outstanding'))
             report.approved_by = actor.id
             report.approved_at = datetime.now(timezone.utc)

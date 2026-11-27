@@ -214,7 +214,7 @@ class TestWeeklyPlanActivityUpdateValidation:
 
     def test_non_numeric_duration_is_400(self, client):
         token = _login(client, 'instructor@afritech.dev')
-        plan, activity_id = self._plan_with_activity(client, token, '2026-11-23', '2026-11-29')
+        plan, activity_id = self._plan_with_activity(client, token, '2027-02-01', '2027-02-07')
         r = client.put(
             f"/api/instructors/weekly-plans/{plan['id']}/activities/{activity_id}",
             headers=_hdr(token), json={'duration_hours': 'lots'})

@@ -772,7 +772,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.remaining.title": "Money remaining and carry-forward",
 
-    "review.remaining.help": "This week's expected amount plus the previous outstanding balance is the total the agent must submit. Only verified payments reduce it.",
+    "review.remaining.help": "This week's expected amount plus the previous outstanding balance is the total the agent must submit. Only verified payments reduce that authoritative total; after approval next week carries the still-to-submit declared balance.",
 
     "review.remaining.thisWeek": "Expected from this week",
 
@@ -792,7 +792,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.decisionReason": "Reason or review note",
 
-    "review.approveHelp": "Approval locks the report and carries forward any outstanding balance.",
+    "review.approveHelp": "Approval locks the report and carries the declared remaining balance into next week.",
 
     "review.returnHelp": "A reason is required before the agent can correct and resubmit.",
 
@@ -896,7 +896,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "ui.agent.carryForward": "Carried to next week",
 
-    "ui.agent.successCarryNote": "Only verified payments clear the balance. Any verified shortage is added to next week's total to submit after approval.",
+    "ui.agent.successCarryNote": "Only verified payments clear the authoritative balance. After approval, next week carries what you still declared to submit, not this week's full total.",
 
     "ui.agent.officialCosts": "Official service costs",
 
@@ -1738,7 +1738,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.remaining.title": "Amafaranga asigaye no kuyatwara mu cyumweru gikurikira",
 
-    "review.remaining.help": "Amafaranga ategerejwe muri iki cyumweru yongerwa ku yari asigaye mu cyumweru gishize, akaba ari yo yose umukozi agomba kohereza. Amafaranga yemejwe gusa agabanya uyu mubare.",
+    "review.remaining.help": "Amafaranga ategerejwe muri iki cyumweru yongerwa ku yari asigaye mu cyumweru gishize, akaba ari yo yose umukozi agomba kohereza. Amafaranga yemejwe gusa agabanya uyu mubare wemewe; nyuma yo kwemeza raporo, icyumweru gikurikira gitwara amafaranga umukozi yatangaje ko akiri gusigaye kohereza.",
 
     "review.remaining.thisWeek": "Amafaranga ategerejwe muri iki cyumweru",
 
@@ -1758,7 +1758,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "review.decisionReason": "Impamvu cyangwa icyitonderwa cy’isuzuma",
 
-    "review.approveHelp": "Kwemeza raporo bituma itongera guhindurwa, kandi amafaranga asigaye ataratangwa ajyanwa mu cyumweru gikurikira.",
+    "review.approveHelp": "Kwemeza raporo bituma itongera guhindurwa, kandi amafaranga ukiri gusigaye kohereza uko wayatangaje ajyanwa mu cyumweru gikurikira.",
 
     "review.returnHelp": "Mbere y’uko umukozi akosora raporo akongera akayohereza, agomba kubanza guhabwa impamvu isobanutse.",
 
@@ -1862,7 +1862,7 @@ const LABELS: Record<WeeklyLang, Record<string, string>> = {
 
     "ui.agent.carryForward": "Yatwarwa mu cyumweru gikurikira",
 
-    "ui.agent.successCarryNote": "Amafaranga yemejwe gusa agabanya umubare usigaye. Ibura ryemejwe rizongerwa ku mafaranga ugomba kohereza mu cyumweru gikurikira nyuma yo kwemeza raporo.",
+    "ui.agent.successCarryNote": "Amafaranga yemejwe gusa agabanya umubare wemewe usigaye. Nyuma yo kwemeza raporo, icyumweru gikurikira gitwara amafaranga ukiri gusigaye kohereza uko wayatangaje, si igiteranyo cyose cy'iki cyumweru.",
 
     "ui.agent.officialCosts": "Ibiciro byemewe bya serivisi",
 
