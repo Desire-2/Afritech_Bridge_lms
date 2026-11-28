@@ -524,6 +524,163 @@ def _unchanged_content_publication_blocker(result: EvaluationResult) -> Optional
     return None
 
 
+def _finite_number(value: Any) -> Optional[float]:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _manual_criterion_updates(rubric_scores: Any, rubric_criteria: Any):
+    """Normalise instructor rubric marks into id/name lookup tables."""
+    by_id: Dict[str, tuple] = {}
+    by_name: Dict[str, tuple] = {}
+
+    if isinstance(rubric_criteria, list):
+        for row in rubric_criteria:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or row.get("criterion") or "").strip()
+            awarded = _finite_number(
+                row.get("score", row.get("awarded", row.get("marks"))))
+            maximum = _finite_number(
+                row.get("max_points", row.get("maximum", row.get("max_marks"))))
+            if name and awarded is not None:
+                by_name[name.casefold()] = (awarded, maximum)
+
+    if isinstance(rubric_scores, dict):
+        for key, value in rubric_scores.items():
+            name = ""
+            maximum = None
+            if isinstance(value, dict):
+                awarded = _finite_number(
+                    value.get("awarded", value.get("score")))
+                maximum = _finite_number(
+                    value.get("maximum", value.get("max_points")))
+                name = str(value.get("name") or "").strip()
+            else:
+                awarded = _finite_number(value)
+            if awarded is None:
+                continue
+            by_id[str(key)] = (awarded, maximum)
+            if name:
+                by_name[name.casefold()] = (awarded, maximum)
+    return by_id, by_name
+
+
+def _match_manual_criterion(criterion: CriterionScore, by_id: Dict[str, tuple],
+                            by_name: Dict[str, tuple]):
+    for key in (str(criterion.criterion_id) if criterion.criterion_id else "",
+                str(criterion.criterion_key or "")):
+        if key and key in by_id:
+            return by_id[key]
+    for name in (criterion.name or "", criterion.criterion_key or ""):
+        if name and name.casefold() in by_name:
+            return by_name[name.casefold()]
+    return None
+
+
+def sync_manual_project_grade(submission_ids: Sequence[int], *, grade: float,
+                              points_possible: float, feedback: str,
+                              rubric_scores: Any = None,
+                              rubric_criteria: Any = None,
+                              actor_id: Optional[int] = None,
+                              reason: str = "instructor grade correction") -> int:
+    """Keep published AAGE results in step with an instructor's correction.
+
+    Manual grading is authoritative. Without this bridge the LMS submission
+    showed the corrected grade while the student's AAGE result still returned
+    the old AI score, feedback and criterion marks.
+    """
+    from sqlalchemy import or_
+
+    ids = sorted({int(sid) for sid in submission_ids if sid is not None})
+    if not ids:
+        return 0
+
+    results = (EvaluationResult.query
+               .filter(EvaluationResult.submission_type == SUBMISSION_PROJECT,
+                       EvaluationResult.submission_id.in_(ids),
+                       or_(EvaluationResult.is_official.is_(True),
+                           EvaluationResult.status == RESULT_PUBLISHED))
+               .all())
+    if not results:
+        return 0
+
+    maximum = float(points_possible or 100.0) or 100.0
+    awarded = float(grade or 0.0)
+    percentage = max(0.0, min(100.0, round(awarded / maximum * 100.0, 2)))
+    text = str(feedback or "")
+    by_id, by_name = _manual_criterion_updates(rubric_scores, rubric_criteria)
+    changed = 0
+
+    for result in results:
+        before = {
+            "final_score": result.final_score,
+            "points_awarded": result.points_awarded,
+            "grade_letter": result.grade_letter,
+            "feedback": result.feedback,
+        }
+        result.final_score = percentage
+        result.points_awarded = awarded
+        result.grade_letter = letter_grade(percentage)
+        result.feedback = text
+        result.updated_at = now_local()
+
+        matched_maxima = []
+        criteria = result.criteria.all()
+        for criterion in criteria:
+            update = _match_manual_criterion(criterion, by_id, by_name)
+            if not update:
+                continue
+            criterion.awarded = max(0.0, update[0])
+            crit_max = update[1]
+            if crit_max is not None and crit_max > 0:
+                criterion.maximum = crit_max
+                matched_maxima.append(crit_max)
+            criterion.weighted_score = (
+                round(criterion.awarded / criterion.maximum * criterion.weight, 2)
+                if criterion.maximum else 0.0
+            )
+
+        # Keep the AAGE rubric totals meaningful: use the instructor's maxima
+        # when supplied, otherwise scale the old rubric total to the new score.
+        rubric_possible = _finite_number(result.total_possible)
+        if matched_maxima or by_id or by_name:
+            result.total_possible = (
+                round(sum(matched_maxima), 4)
+                if matched_maxima else (rubric_possible or 100.0)
+            )
+            result.total_awarded = round(
+                sum(float(c.awarded or 0.0) for c in criteria), 4
+            )
+        else:
+            result.total_possible = rubric_possible or 100.0
+            result.total_awarded = round(
+                percentage / 100.0 * result.total_possible, 4
+            )
+
+        audit(
+            action="manual_grade_override",
+            entity_type=AUDIT_ENTITY_RESULT,
+            entity_id=result.id,
+            before=before,
+            after={"final_score": percentage, "points_awarded": awarded,
+                   "grade_letter": result.grade_letter, "feedback": text},
+            actor_id=actor_id,
+            actor_role="instructor",
+            reason=reason,
+            correlation_id=result.correlation_id,
+        )
+        changed += 1
+
+    db_commit()
+    return changed
+
+
 def write_through_grade(result: EvaluationResult, *,
                          actor_id: Optional[int] = None,
                          reason: str = "approved",
@@ -719,13 +876,28 @@ def write_through_grade(result: EvaluationResult, *,
     )
     # Only a genuinely passing grade advances progress. A below-passing result
     # that cannot request another revision is a terminal failure, not a pass.
+    # Project scores are different: a failing grade is still a real score and
+    # must be recorded on every covered module (manual grading already does).
     parent = getattr(loaded.row, "project", None) or getattr(loaded.row, "assignment", None)
     passing_threshold = float(getattr(parent, "passing_score", None) or 60.0)
     points_possible = float(getattr(parent, "points_possible", None) or 100.0)
     effective_grade = float(loaded.row.grade if loaded.row.grade is not None
                             else (result.final_score or 0))
     effective_percentage = (effective_grade / points_possible * 100.0) if points_possible else 0.0
-    if not modification_requested and effective_percentage >= passing_threshold:
+    if loaded.submission_type == SUBMISSION_PROJECT:
+        # _update_learning_progress() distributes the score and only clears a
+        # revision when the grade passes; it never completes a lesson. Calling
+        # it unconditionally records failing grades without advancing progress.
+        _update_learning_progress(
+            app,
+            loaded.submission_id,
+            loaded.submission_type,
+            loaded.student_id,
+            result.final_score,
+            100.0,
+            allow_lower=(publication_mode == "manual"),
+        )
+    elif not modification_requested and effective_percentage >= passing_threshold:
         _update_learning_progress(
             app,
             loaded.submission_id,

@@ -36,6 +36,53 @@ def team_member_ids(project, submission) -> List[int]:
     return sorted(ids)
 
 
+def find_team_submission(project, student_id: int, *, prefer_team_row: bool = True):
+    """Find the ``ProjectSubmission`` row that represents ``student_id``.
+
+    Teams are stored as one primary row whose ``team_members`` JSON holds the
+    *other* members. Grade propagation also creates roster-less carrier rows
+    so teammates can see their grade. Those carriers must never be mistaken
+    for a second team.
+
+    ``prefer_team_row=True`` is for writes (submit/grade/chat): a row with a
+    real roster wins over an empty carrier. ``False`` is for student reads:
+    visible work/outcomes win so legacy duplicate rows are still shown.
+    """
+    from ..models.course_models import ProjectSubmission
+
+    if project is None or student_id is None:
+        return None
+
+    sid = int(student_id)
+    rows = (
+        ProjectSubmission.query
+        .filter_by(project_id=project.id)
+        .order_by(ProjectSubmission.id.asc())
+        .all()
+    )
+
+    best = None
+    best_key = None
+    for row in rows:
+        roster = {int(mid) for mid in (row.get_team_members() or [])}
+        if sid not in roster and int(row.student_id) != sid:
+            continue
+        has_work = bool(row.submitted_at or (row.text_content or "").strip()
+                        or row.file_path)
+        has_outcome = row.grade is not None or bool(row.feedback)
+        is_carrier = not roster and not has_work and not has_outcome
+
+        if prefer_team_row:
+            key = (bool(roster), has_work or has_outcome, has_work,
+                   has_outcome, not is_carrier, -int(row.id))
+        else:
+            key = (has_work or has_outcome, bool(roster), has_work,
+                   has_outcome, not is_carrier, -int(row.id))
+        if best_key is None or key > best_key:
+            best, best_key = row, key
+    return best
+
+
 def covered_module_ids(project) -> List[int]:
     """All modules the project covers, in course order (whole course = all)."""
     if project is None:

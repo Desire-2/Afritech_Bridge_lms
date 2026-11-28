@@ -1456,7 +1456,45 @@ def grade_project_submission(submission_id):
         except Exception as mp_error:
             logger.error(f"❌ Error updating module progress after project grading: {str(mp_error)}")
             # Don't fail the whole request
-        
+
+        # ===== KEEP THE PUBLISHED AAGE RESULT IN STEP WITH THE MANUAL GRADE =====
+        # The submission grade is authoritative after an instructor correction.
+        # Without this the LMS card shows the new grade while the student AI
+        # result page keeps returning the old score/feedback/criteria.
+        try:
+            from ..services.aage.persistence import sync_manual_project_grade
+            from ..services.grading_feedback import stored_feedback_text
+            from ..services.project_scoring_service import team_member_ids as collect_team_member_ids
+
+            project = submission.project
+            points_possible = project.points_possible or 100
+            team_ids = collect_team_member_ids(project, submission)
+            team_submission_ids = [
+                row.id for row in ProjectSubmission.query.filter(
+                    ProjectSubmission.project_id == project.id,
+                    ProjectSubmission.student_id.in_(team_ids),
+                ).all()
+            ]
+            synced = sync_manual_project_grade(
+                team_submission_ids,
+                grade=grade,
+                points_possible=points_possible,
+                feedback=stored_feedback_text(submission.feedback),
+                rubric_scores=rubric_scores,
+                rubric_criteria=rubric_criteria,
+                actor_id=current_user_id,
+                reason="instructor corrected project grade",
+            )
+            if synced:
+                logger.info(
+                    f"✅ Synced {synced} published AAGE result(s) with manual "
+                    f"project grade {grade}"
+                )
+        except Exception as sync_error:
+            logger.error(
+                f"❌ Error syncing published AAGE result with manual grade: {sync_error}"
+            )
+
         # ===== AUTO-MODIFICATION REQUEST for project scores below passing =====
         modification_auto_requested = False
         modification_reason = None

@@ -22,6 +22,7 @@ from ..services.grading_feedback import (
     assignment_revision_state, can_resubmit_assignment,
     complete_assignment_resubmission,
 )
+from ..services.project_scoring_service import find_team_submission
 from ..services.notification_service import notify_resubmission_received
 from ..utils.submission_files import parse_submission_files, serialize_submission_files
 
@@ -433,11 +434,12 @@ def submit_project_with_files(project_id):
         
         # A submitted project can be handed in again only after a revision
         # was requested on that student's submission. Instructor-scaffolded
-        # team rows (submitted_at NULL) are filled in normally.
-        existing = ProjectSubmission.query.filter_by(
-            project_id=project_id,
-            student_id=current_user_id
-        ).first()
+        # team rows (submitted_at NULL) are filled in normally. Use the team
+        # lookup so a teammate joins the existing row instead of creating a
+        # second submission for the same project.
+        existing = find_team_submission(
+            project, current_user_id, prefer_team_row=True
+        )
         is_resubmission = False
         if existing and existing.submitted_at is not None:
             from ..services.project_scoring_service import resubmission_check
@@ -476,26 +478,48 @@ def submit_project_with_files(project_id):
                 }), 400
         
         # Handle team members if collaboration is allowed. team_members holds
-        # the OTHER members, so the submitter is one more than the list.
-        team_members = data.get('team_members', [])
-        if not isinstance(team_members, list):
+        # the OTHER members, so the submitter is one more than the list. Merge
+        # the request with the existing roster to avoid shrinking or splitting
+        # a team when a non-primary member submits.
+        requested_members = data.get('team_members', [])
+        if not isinstance(requested_members, list):
             return jsonify({
                 "success": False,
                 "error": "team_members must be a list of student ids"
             }), 400
-        if project.collaboration_allowed and team_members:
-            total_team_size = len(team_members) + 1
-            if total_team_size > (project.max_team_size or 1):
+        try:
+            requested_members = {int(mid) for mid in requested_members}
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "error": "team_members must contain only student ids"
+            }), 400
+        if project.collaboration_allowed:
+            roster_owner = (
+                int(existing.student_id) if existing else current_user_id
+            )
+            team_members = set(requested_members)
+            if existing:
+                team_members.update(existing.get_team_members() or [])
+            team_members.discard(roster_owner)
+            if len(team_members) + 1 > (project.max_team_size or 1):
                 return jsonify({
                     "success": False,
                     "error": f"Team size exceeds maximum of {project.max_team_size} members"
                 }), 400
+            team_members = sorted(team_members)
+        else:
+            team_members = sorted(requested_members - {current_user_id})
 
         if existing:
             from ..services.project_scoring_service import (
                 prepare_project_resubmission, team_member_ids,
             )
-            member_ids = team_member_ids(project, existing) if is_resubmission else set(team_members)
+            member_ids = (
+                team_member_ids(project, existing)
+                if is_resubmission
+                else set(team_members) | {int(existing.student_id)}
+            )
             if is_resubmission:
                 prepare_project_resubmission(project, existing, data)
             submission = existing

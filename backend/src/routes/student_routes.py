@@ -24,6 +24,7 @@ from ..services.aage.submission_dispatch import enqueue_for_submission
 from ..services.grading_feedback import (
     assignment_revision_state, stored_feedback_text,
 )
+from ..services.project_scoring_service import find_team_submission
 from ..utils.submission_files import serialize_submission_files
 
 # Set up logging
@@ -2953,11 +2954,11 @@ def get_student_projects():
         
         result = []
         for project in filtered_projects:
-            # Get submission status
-            submission = ProjectSubmission.query.filter_by(
-                project_id=project.id,
-                student_id=current_user_id
-            ).first()
+            # A teammate may not own the shared submission row. Use the
+            # canonical team lookup so everyone sees the same work/grade.
+            submission = find_team_submission(
+                project, current_user_id, prefer_team_row=False
+            )
             
             # Build submission status
             submission_status = {
@@ -3053,11 +3054,11 @@ def get_student_project_details(project_id):
         if not enrollment:
             return jsonify({"message": "You are not enrolled in this course"}), 403
         
-        # Get submission
-        submission = ProjectSubmission.query.filter_by(
-            project_id=project_id,
-            student_id=current_user_id
-        ).first()
+        # A collaborative submission is shared; teammates may not own the
+        # row that carries the work or the grade.
+        submission = find_team_submission(
+            project, current_user_id, prefer_team_row=False
+        )
         
         include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         project_data = project.to_dict(include_modules=True)
@@ -3160,13 +3161,13 @@ def _find_team_submission(project_id, student_id):
     ``team_members``. Returns ``(None, set())`` when the student is on no team
     for this project.
     """
-    submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
-    for sub in submissions:
-        member_ids = sub.get_team_members() or []
-        all_ids = set(member_ids + [sub.student_id])
-        if student_id in all_ids:
-            return sub, all_ids
-    return None, set()
+    from ..services.project_scoring_service import team_member_ids as collect_team_member_ids
+
+    project = Project.query.get(project_id)
+    submission = find_team_submission(project, student_id, prefer_team_row=True)
+    if submission is None:
+        return None, set()
+    return submission, collect_team_member_ids(project, submission)
 
 
 def _member_phone(user, course_id):
@@ -3478,26 +3479,36 @@ def submit_project(project_id):
         
         # Validate team_members against the project's cap before anything else.
         # team_members holds the OTHER members, so the total is one more.
-        team_members = data.get('team_members') or []
-        if not isinstance(team_members, list):
+        requested_members = data.get('team_members') or []
+        if not isinstance(requested_members, list):
             return jsonify({"message": "team_members must be a list of student ids"}), 400
         try:
-            team_members = [int(m) for m in team_members if int(m) != current_user_id]
+            requested_members = {int(m) for m in requested_members}
         except (TypeError, ValueError):
             return jsonify({"message": "team_members must contain only student ids"}), 400
-        if project.collaboration_allowed and team_members:
+
+        # A teammate must write into the existing team row, never create a
+        # second submission for the same collaborative work.
+        existing_submission = find_team_submission(
+            project, current_user_id, prefer_team_row=True
+        )
+        if project.collaboration_allowed:
+            roster_owner = (
+                int(existing_submission.student_id)
+                if existing_submission else current_user_id
+            )
+            team_members = set(requested_members)
+            if existing_submission:
+                team_members.update(existing_submission.get_team_members() or [])
+            team_members.discard(roster_owner)
             max_team_size = project.max_team_size or 3
-            total = len(team_members) + 1  # + the submitter
-            if total > max_team_size:
+            if len(team_members) + 1 > max_team_size:
                 return jsonify({
                     "message": f"Team size exceeds the maximum of {max_team_size} members"
                 }), 400
-
-        # Check if already submitted
-        existing_submission = ProjectSubmission.query.filter_by(
-            project_id=project_id,
-            student_id=current_user_id
-        ).first()
+            team_members = sorted(team_members)
+        else:
+            team_members = sorted(requested_members - {current_user_id})
         
         if existing_submission:
             from ..services.project_scoring_service import (
@@ -3513,7 +3524,10 @@ def submit_project(project_id):
                     project, existing_submission, data
                 )
             else:
+                # Include the row owner: a teammate submitting into someone
+                # else's row still needs that student notified.
                 member_ids = set(team_members or [])
+                member_ids.add(int(existing_submission.student_id))
 
             existing_submission.text_content = data.get('text_content')
             # Same Vercel Blob metadata array as assignment submissions; the
