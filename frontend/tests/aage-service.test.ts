@@ -6,12 +6,20 @@ import {
   buildAssessmentUrl,
   buildGradingJobsUrl,
   buildGradingResultsUrl,
+  buildInstructorEvaluatorsUrl,
+  buildLearningCalibrationUrl,
+  buildLearningExamplesUrl,
+  buildLearningInsightsUrl,
   buildQuery,
   buildStudentGradingStatusUrl,
   buildStudentResultUrl,
   buildUrl,
+  clampPage,
+  clampPerPage,
   classifyStudentAageError,
+  confidenceBand,
   isAageNotFound,
+  isOpenReviewStatus,
   normalizeCalibrationRun,
   normalizeEvaluatorMetrics,
   normalizeGradingPolicies,
@@ -59,6 +67,43 @@ test('buildAssessmentUrl produces assessment-scoped paths', () => {
     buildAssessmentUrl('assignment', 3, 'analyze'),
     '/aage/assessments/assignment/3/analyze'
   );
+});
+
+test('instructor evaluator and learning URLs avoid the admin catalog', () => {
+  assert.equal(buildInstructorEvaluatorsUrl(), '/aage/evaluators');
+  assert.equal(buildLearningInsightsUrl(4), '/aage/learning/insights?course_id=4');
+  assert.equal(buildLearningInsightsUrl(), '/aage/learning/insights');
+  assert.equal(
+    buildLearningExamplesUrl('candidate', 7),
+    '/aage/learning/examples?status=candidate&course_id=7'
+  );
+  assert.equal(
+    buildLearningCalibrationUrl(12, 3),
+    '/aage/learning/calibration/12?course_id=3'
+  );
+});
+
+test('page helpers keep UI requests inside the 100-row backend cap', () => {
+  assert.equal(clampPerPage(200), 100);
+  assert.equal(clampPerPage(undefined), 20);
+  assert.equal(clampPage(3, 2), 2);
+  assert.equal(clampPage(0, undefined), 1);
+});
+
+test('confidence bands treat missing data as unknown, not low', () => {
+  assert.equal(confidenceBand(undefined), 'unknown');
+  assert.equal(confidenceBand(null), 'unknown');
+  assert.equal(confidenceBand(0), 'low');
+  assert.equal(confidenceBand(65), 'medium');
+  assert.equal(confidenceBand(85), 'high');
+});
+
+test('only pending and changes-requested reviews are editable', () => {
+  assert.equal(isOpenReviewStatus('pending'), true);
+  assert.equal(isOpenReviewStatus('changes_requested'), true);
+  assert.equal(isOpenReviewStatus('approved'), false);
+  assert.equal(isOpenReviewStatus('rejected'), false);
+  assert.equal(isOpenReviewStatus(undefined), false);
 });
 
 test('buildQuery skips empty values and encodes keys/values', () => {
@@ -211,6 +256,34 @@ test('normalizeRubricPayload bridges ORM and generation criterion vocabularies',
   assert.equal(normalized.criteria[0].criterion_key, 'api_design');
   assert.equal(normalized.criteria[0].max_marks, 25);
   assert.equal(normalized.criteria[0].max_points, 25);
+});
+
+test('normalizeRubricPayload keeps bands per criterion under both aliases', () => {
+  const levels = [{ label: 'Excellent', min_score: 80, max_score: 100 }];
+  const normalized = normalizeRubricPayload<{
+    performance_levels?: unknown;
+    criteria: Array<Record<string, unknown>>;
+  }>({
+    performance_levels: [{ label: 'legacy top level' }],
+    criteria: [{ name: 'API design', weight: 100, performance_levels: levels }],
+  });
+  assert.equal(normalized.performance_levels, undefined);
+  assert.deepEqual(normalized.criteria[0].levels, levels);
+  assert.deepEqual(normalized.criteria[0].performance_levels, levels);
+});
+
+test('normalizeRubricPayload uses legacy top-level bands only as a criterion fallback', () => {
+  const levels = [{ label: 'Pass', min_score: 50, max_score: 100 }];
+  const normalized = normalizeRubricPayload<{
+    performance_levels?: unknown;
+    criteria: Array<Record<string, unknown>>;
+  }>({
+    performance_levels: levels,
+    criteria: [{ name: 'Only criterion', weight: 100 }],
+  });
+  assert.equal(normalized.performance_levels, undefined);
+  assert.deepEqual(normalized.criteria[0].levels, levels);
+  assert.deepEqual(normalized.criteria[0].performance_levels, levels);
 });
 
 test('unwrapRubricPayload reports an absent rubric as typed not_found', () => {

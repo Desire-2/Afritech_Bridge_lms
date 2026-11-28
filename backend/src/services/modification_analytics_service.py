@@ -4,13 +4,14 @@ Analytics service specifically for modification requests and resubmission tracki
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy import and_, or_, func, desc, case
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from collections import defaultdict
 
 from ..models import db
 from ..models.user_models import User
 from ..models.course_models import Assignment, Project, Course, AssignmentSubmission, ProjectSubmission
 from ..models.student_models import LessonCompletion
+from .modification_service import _project_revision_rows, _project_revision_state
 
 logger = logging.getLogger(__name__)
 
@@ -27,120 +28,162 @@ class ModificationAnalytics:
                 end_date = datetime.utcnow()
             if not start_date:
                 start_date = end_date - timedelta(days=90)
-            
-            # Base query for assignments by instructor
-            base_query = Assignment.query.join(Course).filter(
+
+            assignment_query = Assignment.query.join(Course).filter(
                 Course.instructor_id == instructor_id
             )
-            
+            project_query = Project.query.join(Course).filter(
+                Course.instructor_id == instructor_id
+            )
             if course_id:
-                base_query = base_query.filter(Assignment.course_id == course_id)
-            
-            all_assignments = base_query.all()
-            assignment_ids = [a.id for a in all_assignments]
-            
-            if not assignment_ids:
-                return {
-                    'summary': {
-                        'total_assignments': 0,
-                        'assignments_with_modifications': 0,
-                        'modification_rate': 0,
-                        'total_modification_requests': 0,
-                        'resubmission_success_rate': 0
-                    }
-                }
-            
-            # Basic counts
-            total_assignments = len(all_assignments)
-            assignments_with_modifications = Assignment.query.filter(
-                Assignment.id.in_(assignment_ids),
-                Assignment.modification_requested == True
-            ).count()
-            
-            # Get modification requests in date range
-            modification_requests = Assignment.query.filter(
-                Assignment.id.in_(assignment_ids),
-                Assignment.modification_requested == True,
-                Assignment.modification_requested_at.between(start_date, end_date)
-            ).all()
-            
-            total_requests = len(modification_requests)
-            modification_rate = (assignments_with_modifications / total_assignments * 100) if total_assignments > 0 else 0
-            
-            # Success rate calculation
-            successful_resubmissions = 0
-            for assignment in modification_requests:
-                # Check if there are completed resubmissions
+                assignment_query = assignment_query.filter(
+                    Assignment.course_id == course_id)
+                project_query = project_query.filter(
+                    Project.course_id == course_id)
+
+            assignments = assignment_query.all()
+            projects = project_query.all()
+            assignment_ids = [a.id for a in assignments]
+            total_items = len(assignments) + len(projects)
+
+            assignment_with_mods = []
+            assignment_requests = []
+            if assignment_ids:
+                assignment_with_mods = Assignment.query.filter(
+                    Assignment.id.in_(assignment_ids),
+                    Assignment.modification_requested.is_(True),
+                ).all()
+                assignment_requests = Assignment.query.filter(
+                    Assignment.id.in_(assignment_ids),
+                    Assignment.modification_requested.is_(True),
+                    Assignment.modification_requested_at.between(start_date, end_date),
+                ).all()
+
+            project_rows = _project_revision_rows(
+                instructor_id=instructor_id, course_id=course_id,
+                start_date=start_date, end_date=end_date,
+            )
+            project_with_mods = _project_revision_rows(
+                instructor_id=instructor_id, course_id=course_id,
+            )
+
+            with_mods = len(assignment_with_mods) + len({
+                row.project_id for row, _, _, _ in project_with_mods
+            })
+            total_requests = len(assignment_requests) + len(project_rows)
+            modification_rate = (
+                with_mods / total_items * 100 if total_items else 0
+            )
+
+            successful = 0
+            for assignment in assignment_requests:
                 completed = LessonCompletion.query.filter(
                     LessonCompletion.lesson_id == assignment.lesson_id,
                     LessonCompletion.assignment_needs_resubmission == False,
-                    LessonCompletion.is_resubmission == True
+                    LessonCompletion.is_resubmission == True,
                 ).count()
-                
                 if completed > 0:
-                    successful_resubmissions += 1
-            
-            resubmission_success_rate = (successful_resubmissions / total_requests * 100) if total_requests > 0 else 0
-            
-            # Top modification reasons analysis
+                    successful += 1
+            for submission, project, _, _ in project_rows:
+                state = _project_revision_state(submission, project)
+                if submission.is_resubmission and not state['can_resubmit']:
+                    successful += 1
+
+            success_rate = (
+                successful / total_requests * 100 if total_requests else 0
+            )
+
             reason_counts = defaultdict(int)
-            for assignment in modification_requests:
-                if assignment.modification_request_reason:
-                    reason = assignment.modification_request_reason.lower()
-                    if any(word in reason for word in ['grammar', 'spelling', 'writing']):
-                        reason_counts['Grammar/Writing Issues'] += 1
-                    elif any(word in reason for word in ['format', 'structure', 'organization']):
-                        reason_counts['Format/Structure'] += 1
-                    elif any(word in reason for word in ['content', 'information', 'detail']):
-                        reason_counts['Content Issues'] += 1
-                    elif any(word in reason for word in ['reference', 'citation', 'source']):
-                        reason_counts['References/Citations'] += 1
-                    elif any(word in reason for word in ['incomplete', 'missing', 'unfinished']):
-                        reason_counts['Incomplete Work'] += 1
-                    else:
-                        reason_counts['Other'] += 1
-            
-            top_reasons = sorted(reason_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-            
-            # Course breakdown
-            course_stats = db.session.query(
-                Course.title,
-                Course.id,
-                func.count(Assignment.id).label('total_assignments'),
-                func.sum(case([(Assignment.modification_requested == True, 1)], else_=0)).label('modifications')
-            ).join(
-                Assignment, Course.id == Assignment.course_id
-            ).filter(
-                Course.instructor_id == instructor_id
-            ).group_by(Course.id, Course.title).all()
-            
+            reasons = [a.modification_request_reason for a in assignment_requests]
+            reasons.extend(
+                _project_revision_state(row, project)['modification_request_reason']
+                for row, project, _, _ in project_rows
+            )
+            for reason in reasons:
+                if not reason:
+                    continue
+                text = reason.lower()
+                if any(word in text for word in ['grammar', 'spelling', 'writing']):
+                    reason_counts['Grammar/Writing Issues'] += 1
+                elif any(word in text for word in ['format', 'structure', 'organization']):
+                    reason_counts['Format/Structure'] += 1
+                elif any(word in text for word in ['content', 'information', 'detail']):
+                    reason_counts['Content Issues'] += 1
+                elif any(word in text for word in ['reference', 'citation', 'source']):
+                    reason_counts['References/Citations'] += 1
+                elif any(word in text for word in ['incomplete', 'missing', 'unfinished']):
+                    reason_counts['Incomplete Work'] += 1
+                else:
+                    reason_counts['Other'] += 1
+            top_reasons = sorted(
+                reason_counts.items(), key=lambda item: item[1], reverse=True,
+            )[:5]
+
+            course_map: Dict[int, Dict[str, Any]] = {}
+            for course in Course.query.filter(Course.instructor_id == instructor_id).all():
+                if course_id and course.id != course_id:
+                    continue
+                course_map[course.id] = {
+                    'course_title': course.title,
+                    'course_id': course.id,
+                    'total_assignments': 0,
+                    'total_projects': 0,
+                    'modifications': 0,
+                }
+            for item in assignments:
+                course_map.setdefault(item.course_id, {
+                    'course_title': '', 'course_id': item.course_id,
+                    'total_assignments': 0, 'total_projects': 0,
+                    'modifications': 0,
+                })['total_assignments'] += 1
+            for item in projects:
+                course_map.setdefault(item.course_id, {
+                    'course_title': '', 'course_id': item.course_id,
+                    'total_assignments': 0, 'total_projects': 0,
+                    'modifications': 0,
+                })['total_projects'] += 1
+            for item in assignment_with_mods:
+                course_map.setdefault(item.course_id, {
+                    'course_title': '', 'course_id': item.course_id,
+                    'total_assignments': 0, 'total_projects': 0,
+                    'modifications': 0,
+                })['modifications'] += 1
+            for _, project, _, _ in project_with_mods:
+                course_map.setdefault(project.course_id, {
+                    'course_title': '', 'course_id': project.course_id,
+                    'total_assignments': 0, 'total_projects': 0,
+                    'modifications': 0,
+                })['modifications'] += 1
+
             courses = []
-            for course_title, course_id_val, total, mods in course_stats:
-                mod_rate = (mods / total * 100) if total > 0 else 0
-                courses.append({
-                    'course_title': course_title,
-                    'course_id': course_id_val,
-                    'total_assignments': total,
-                    'modifications': mods or 0,
-                    'modification_rate': round(mod_rate, 1)
-                })
-            
+            for data in course_map.values():
+                total = data['total_assignments'] + data['total_projects']
+                data['modification_rate'] = round(
+                    (data['modifications'] / total * 100) if total else 0, 1,
+                )
+                courses.append(data)
+
             return {
                 'summary': {
-                    'total_assignments': total_assignments,
-                    'assignments_with_modifications': assignments_with_modifications,
+                    'total_assignments': len(assignments),
+                    'assignments_with_modifications': len(assignment_with_mods),
+                    'total_projects': len(projects),
+                    'projects_with_modifications': len({
+                        row.project_id for row, _, _, _ in project_with_mods
+                    }),
+                    'total_items': total_items,
                     'modification_rate': round(modification_rate, 1),
                     'total_modification_requests': total_requests,
-                    'resubmission_success_rate': round(resubmission_success_rate, 1),
+                    'resubmission_success_rate': round(success_rate, 1),
                     'date_range': {
                         'start': start_date.isoformat(),
-                        'end': end_date.isoformat()
-                    }
+                        'end': end_date.isoformat(),
+                    },
                 },
                 'top_modification_reasons': top_reasons,
-                'course_breakdown': courses
+                'course_breakdown': courses,
             }
-            
+
         except Exception as e:
             logger.error(f"Error getting instructor modification analytics: {e}")
             return {'summary': {}, 'top_modification_reasons': [], 'course_breakdown': []}
@@ -155,39 +198,51 @@ class ModificationAnalytics:
             if not start_date:
                 start_date = end_date - timedelta(days=30)
             
-            # Platform totals
+            # Platform totals include both assessments types.
             total_assignments = Assignment.query.count()
-            total_modifications = Assignment.query.filter(
-                Assignment.modification_requested == True
-            ).count()
-            
-            platform_modification_rate = (total_modifications / total_assignments * 100) if total_assignments > 0 else 0
-            
+            total_projects = Project.query.count()
+            assignment_mods = Assignment.query.filter(
+                Assignment.modification_requested.is_(True),
+            ).all()
+            project_rows = _project_revision_rows(
+                start_date=start_date, end_date=end_date,
+            )
+            project_mod_ids = {row.project_id for row, _, _, _ in project_rows}
+            total_modifications = len(assignment_mods) + len(project_mod_ids)
+            total_items = total_assignments + total_projects
+            platform_modification_rate = (
+                total_modifications / total_items * 100 if total_items else 0
+            )
+
             # Instructor performance ranking
             instructor_stats = db.session.query(
                 User.id,
                 User.full_name,
-                func.count(Assignment.id).label('total_assignments'),
-                func.sum(case([(Assignment.modification_requested == True, 1)], else_=0)).label('modifications')
-            ).join(
-                Course, User.id == Course.instructor_id
-            ).join(
-                Assignment, Course.id == Assignment.course_id
-            ).filter(
-                User.role.has(name='instructor')
-            ).group_by(User.id, User.full_name).having(
-                func.count(Assignment.id) > 0
-            ).all()
-            
+            ).filter(User.role.has(name='instructor')).all()
+
             instructor_performance = []
-            for user_id, name, total, mods in instructor_stats:
-                mod_rate = (mods / total * 100) if total > 0 else 0
+            for user_id, name in instructor_stats:
+                assignments = Assignment.query.join(Course).filter(
+                    Course.instructor_id == user_id,
+                ).count()
+                projects = Project.query.join(Course).filter(
+                    Course.instructor_id == user_id,
+                ).count()
+                mods = Assignment.query.join(Course).filter(
+                    Course.instructor_id == user_id,
+                    Assignment.modification_requested.is_(True),
+                ).count() + len(_project_revision_rows(instructor_id=user_id))
+                total = assignments + projects
+                if not total:
+                    continue
                 instructor_performance.append({
                     'instructor_id': user_id,
                     'instructor_name': name,
-                    'total_assignments': total,
-                    'modifications': mods or 0,
-                    'modification_rate': round(mod_rate, 1)
+                    'total_assignments': assignments,
+                    'total_projects': projects,
+                    'total_items': total,
+                    'modifications': mods,
+                    'modification_rate': round(mods / total * 100, 1),
                 })
             
             instructor_performance.sort(key=lambda x: x['modification_rate'], reverse=True)
@@ -195,6 +250,8 @@ class ModificationAnalytics:
             return {
                 'platform_summary': {
                     'total_assignments': total_assignments,
+                    'total_projects': total_projects,
+                    'total_items': total_items,
                     'total_modifications': total_modifications,
                     'platform_modification_rate': round(platform_modification_rate, 1),
                     'date_range': {

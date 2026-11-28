@@ -243,7 +243,7 @@ function AssessmentIntelligenceInner() {
         </TabsContent>
 
         <TabsContent value="learning" className="mt-6">
-          <LearningDashboard canAdminister={canAdminister} />
+          <LearningDashboard canAdminister={canAdminister} courseId={analyticsCourseId} />
         </TabsContent>
       </Tabs>
     </div>

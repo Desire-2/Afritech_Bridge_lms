@@ -54,7 +54,10 @@ from ..services.aage.constants import (
     JOB_TYPE_GRADE,
     JOB_TIMED_OUT,
     JOB_QUEUED,
+    OPEN_REVIEW_STATUSES,
     RESULT_PUBLISHED,
+    REVIEW_CHANGES,
+    REVIEW_PENDING,
     SUBMISSION_ASSIGNMENT,
     SUBMISSION_PROJECT,
     SUBMISSION_TYPES,
@@ -308,6 +311,22 @@ def _assessment_rubric(kind: str, assessment_id: int) -> Optional[Rubric]:
             .order_by(Rubric.version.desc(), Rubric.id.desc()).first())
 
 
+def _rubric_payload(rubric: Rubric) -> Dict[str, Any]:
+    """Wire view of a rubric with both level vocabularies on every criterion.
+
+    The ORM's ``to_dict`` only knows ``performance_levels``; the canonical wire
+    key is ``levels``.  Keep the alias for legacy clients while never making
+    them guess where the performance bands live.
+    """
+    payload = rubric.to_dict()
+    for criterion in payload.get("criteria") or []:
+        levels = (criterion.get("levels") or criterion.get("performance_levels")
+                  or rubric_intelligence.DEFAULT_LEVELS)
+        criterion["levels"] = levels
+        criterion["performance_levels"] = levels
+    return payload
+
+
 def _rubric_owner(rubric: Rubric, user: User) -> None:
     if _is_admin(user):
         return
@@ -476,7 +495,7 @@ def generate_rubric(kind: str, assessment_id: int):
     _audit("rubric_generated", "rubric", rubric_row.id, user=user,
            after={"status": rubric_row.status, "source": rubric_row.source},
            reason=f"generated for {kind} {assessment_id}")
-    return ok(rubric_row.to_dict(), {"warnings": warnings}, status=201)
+    return ok(_rubric_payload(rubric_row), {"warnings": warnings}, status=201)
 
 
 @aage_bp.route("/assessments/<kind>/<int:assessment_id>/rubric", methods=["GET"])
@@ -486,7 +505,7 @@ def get_assessment_rubric(kind: str, assessment_id: int):
     user = _current_user()
     _descriptor(kind, assessment_id, user)
     rubric_row = _assessment_rubric(kind, assessment_id)
-    return ok({"rubric": rubric_row.to_dict() if rubric_row else None,
+    return ok({"rubric": _rubric_payload(rubric_row) if rubric_row else None,
                "has_rubric": rubric_row is not None})
 
 
@@ -512,6 +531,30 @@ def update_rubric(rubric_id: int):
     _rubric_owner(rubric_row, user)
     body = _body()
     acknowledge = bool(body.pop("acknowledge_graded", False))
+    # Older clients sent one rubric-wide ``performance_levels`` array.  Map it
+    # onto criteria that do not declare their own bands instead of letting the
+    # whitelist below drop it silently.
+    legacy_levels = body.get("performance_levels")
+    legacy_applied = 0
+    if legacy_levels is not None:
+        if not isinstance(legacy_levels, list):
+            raise RouteError("invalid_payload", "performance_levels must be a list")
+        incoming_criteria = body.get("criteria")
+        if not isinstance(incoming_criteria, list) or not incoming_criteria:
+            raise RouteError(
+                "invalid_payload",
+                "top-level performance_levels requires criteria to apply to")
+        for criterion in incoming_criteria:
+            if not isinstance(criterion, dict):
+                raise RouteError("invalid_payload", "criteria entries must be objects")
+            if not (criterion.get("levels") or criterion.get("performance_levels")):
+                criterion["levels"] = legacy_levels
+                criterion["performance_levels"] = legacy_levels
+                legacy_applied += 1
+        if not legacy_applied:
+            raise RouteError(
+                "invalid_payload",
+                "performance_levels conflicts with per-criterion levels")
     allowed = {"title", "summary", "description", "discipline",
                "learning_objectives", "deliverables", "technologies",
                "evaluation_methods", "evaluator_recommendations",
@@ -526,7 +569,10 @@ def update_rubric(rubric_id: int):
     _audit("rubric_updated", "rubric", rubric_id, user=user, before=before,
            after={"status": updated.status, "version": updated.version},
            reason="instructor edited rubric")
-    return ok(updated.to_dict(), {"acknowledge_graded": acknowledge})
+    return ok(_rubric_payload(updated), {
+        "acknowledge_graded": acknowledge,
+        "legacy_performance_levels_applied": legacy_applied,
+    })
 
 
 @aage_bp.route("/rubrics/<int:rubric_id>/approve", methods=["POST"])
@@ -543,7 +589,7 @@ def approve_rubric(rubric_id: int):
            after={"status": updated.status, "version": updated.version,
                   "rubric_version_id": version.id},
            reason="instructor approved rubric")
-    return ok(updated.to_dict(), {"version": version.to_dict()})
+    return ok(_rubric_payload(updated), {"version": version.to_dict()})
 
 
 # ===========================================================================
@@ -1187,9 +1233,21 @@ def pending_reviews():
     course_id = request.args.get("course_id", type=int)
     if course_id is not None:
         _require_course(course_id, user)
+    status_arg = (request.args.get("status") or "").strip().lower()
+    status_map = {
+        "": OPEN_REVIEW_STATUSES,
+        "open": OPEN_REVIEW_STATUSES,
+        "pending": (REVIEW_PENDING,),
+        "changes_requested": (REVIEW_CHANGES,),
+    }
+    if status_arg not in status_map:
+        raise RouteError(
+            "invalid_payload",
+            "status must be pending, changes_requested or open")
     data = review.list_pending(course_id=course_id, page=page,
                                per_page=per_page,
-                               course_ids=_owned_course_ids(user))
+                               course_ids=_owned_course_ids(user),
+                               statuses=status_map[status_arg])
     return ok(data["items"], {"page": data["page"],
                               "per_page": data["per_page"],
                               "total": data["total"], "pages": data["pages"]})
@@ -1402,6 +1460,28 @@ def dashboard_analytics():
 
 
 # ===========================================================================
+# EVALUATOR CATALOG
+# ===========================================================================
+
+# Quality/benchmark metrics and full version rows are deliberately restricted
+# to administrators; instructors need only enough metadata to pick a specialist.
+_INSTRUCTOR_EVALUATOR_FIELDS = (
+    "name", "version", "active", "registered", "description",
+    "supported_disciplines",
+)
+
+
+@aage_bp.route("/evaluators", methods=["GET"])
+@_errors
+@_instructor_only
+def evaluator_catalog():
+    """Instructor-safe catalog — no benchmark, quality rates or version detail."""
+    _current_user()
+    return ok([{field: row.get(field) for field in _INSTRUCTOR_EVALUATOR_FIELDS}
+               for row in _evaluator_catalog_rows()])
+
+
+# ===========================================================================
 # ADMIN
 # ===========================================================================
 
@@ -1410,6 +1490,11 @@ def dashboard_analytics():
 @_admin_only
 def admin_evaluators():
     _current_user()
+    return ok(_evaluator_catalog_rows())
+
+
+def _evaluator_catalog_rows() -> list:
+    """Full admin catalog (including metrics); never return it directly."""
     rows = []
     disabled = evaluator_registry.disabled_names()
     versions = EvaluatorVersion.query.order_by(
@@ -1447,7 +1532,7 @@ def admin_evaluators():
             "sample_count": metrics.get("sample_count"),
             "versions": versions_for_name,
         })
-    return ok(rows)
+    return rows
 
 
 @aage_bp.route("/admin/evaluators/<name>", methods=["PATCH"])

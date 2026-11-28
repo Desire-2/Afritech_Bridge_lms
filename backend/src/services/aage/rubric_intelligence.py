@@ -128,6 +128,30 @@ def _criterion_marks(criterion: Dict[str, Any]) -> Optional[float]:
     return _criterion_number(criterion, _MARKS_FIELDS)
 
 
+def _criterion_levels(criterion: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Read performance bands from either vocabulary used across the stack.
+
+    ``levels`` is canonical on the wire; ORM snapshots and older clients use
+    ``performance_levels``.  Both may be present, so prefer the canonical key
+    but never let an empty value hide a populated alias.
+    """
+    levels = criterion.get("levels") or criterion.get("performance_levels") or DEFAULT_LEVELS
+    return list(levels)
+
+
+def _promote_level_aliases(payload: Dict[str, Any]) -> None:
+    """Normalise incoming criteria to the canonical ``levels`` key in place.
+
+    Schema validation drops undeclared keys, so aliases must be promoted before
+    a generation payload is validated.  Per-criterion values are authoritative.
+    """
+    for criterion in payload.get("criteria") or []:
+        if isinstance(criterion, dict) and not criterion.get("levels"):
+            alias = criterion.get("performance_levels")
+            if alias:
+                criterion["levels"] = alias
+
+
 def validate_criteria(criteria: Sequence[Dict[str, Any]],
                       max_points: Optional[float] = None) -> List[str]:
     """Return a list of human-readable problems (empty == valid)."""
@@ -199,9 +223,11 @@ def normalise_criteria(criteria: List[Dict[str, Any]]) -> Tuple[List[Dict[str, A
         c["is_required"] = True if c.get("is_required") is None else bool(c["is_required"])
         c["evidence_requirements"] = [str(x)[:300] for x in (c.get("evidence_requirements") or [])][:10]
         c.setdefault("evidence_category", "CODE_SUPPORTED")
-        c.setdefault("levels", list(DEFAULT_LEVELS))
-        if not c["levels"]:
-            c["levels"] = list(DEFAULT_LEVELS)
+        levels = _criterion_levels(c)
+        c["levels"] = levels
+        # Emit the ORM vocabulary too: forks and version snapshots read either
+        # key, and a client sending only the alias must round-trip its levels.
+        c["performance_levels"] = levels
         cleaned.append(c)
 
     total = sum(c["weight"] for c in cleaned)
@@ -254,6 +280,11 @@ class RubricIntelligence:
             # snapshot; validation and deterministic scoring both read it.
             criterion.setdefault("key", criterion.get("criterion_key"))
             criterion.setdefault("max_marks", criterion.get("max_points"))
+            # The ORM exposes only ``performance_levels`` while generation and
+            # grading use ``levels``; freeze both so forks keep custom bands.
+            levels = _criterion_levels(criterion)
+            criterion["levels"] = levels
+            criterion["performance_levels"] = levels
             criteria.append(criterion)
         return {
             "rubric_id": rubric.id,
@@ -308,6 +339,7 @@ class RubricIntelligence:
             source = "fallback"
             warnings.append("generated deterministically (model unavailable)")
 
+        _promote_level_aliases(payload)
         clean, errors = try_validate(payload, RUBRIC_AI_SCHEMA)
         if errors:
             # Never fall back to raw model JSON: an invalid shape must fail the
@@ -470,7 +502,7 @@ class RubricIntelligence:
                 description=c.get("description"),
                 max_points=float(c["max_marks"]),
                 order_index=idx,
-                performance_levels=c.get("levels") or list(DEFAULT_LEVELS),
+                performance_levels=_criterion_levels(c),
                 weight=float(c["weight"]),
                 is_required=bool(c.get("is_required", True)),
                 criterion_key=c["key"],
@@ -600,7 +632,7 @@ class RubricIntelligence:
                 description=c.get("description"),
                 max_points=float(c.get("max_marks") or c.get("max_points") or 0),
                 order_index=idx,
-                performance_levels=c.get("levels") or list(DEFAULT_LEVELS),
+                performance_levels=_criterion_levels(c),
                 weight=float(c.get("weight") or 0),
                 is_required=bool(c.get("is_required", True)),
                 criterion_key=c.get("criterion_key") or c.get("key"),
@@ -624,7 +656,7 @@ class RubricIntelligence:
                 description=c.get("description"),
                 max_points=float(c["max_marks"]),
                 order_index=idx,
-                performance_levels=c.get("levels") or list(DEFAULT_LEVELS),
+                performance_levels=_criterion_levels(c),
                 weight=float(c["weight"]),
                 is_required=bool(c.get("is_required", True)),
                 criterion_key=c["key"],

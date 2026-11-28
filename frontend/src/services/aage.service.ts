@@ -245,7 +245,7 @@ export function unwrapReviewPayload<T extends Record<string, unknown>>(payload: 
         evidence: packet.evidence,
         learning_example: packet.learning_example,
         published: packet.published,
-      } as T;
+      } as unknown as T;
     }
   }
   return data as T;
@@ -267,6 +267,9 @@ export function normalizeRubricPayload<T>(payload: unknown): T {
   const record = payload as Record<string, unknown>;
   if (!Array.isArray(record.criteria)) return payload as T;
 
+  const rubricLevels = Array.isArray(record.performance_levels)
+    ? record.performance_levels
+    : undefined;
   const criteria = record.criteria.map((raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     const criterion = raw as Record<string, unknown>;
@@ -279,23 +282,33 @@ export function normalizeRubricPayload<T>(payload: unknown): T {
       finiteNumber(criterion.max_points) ??
       finiteNumber(criterion.maximum) ??
       finiteNumber(criterion.max_score);
-    return {
+    // Performance levels belong to a criterion, never to the rubric as a
+    // whole. Normalise both spellings on every criterion so editors and the
+    // scoring engine read the same source of truth. Legacy rubric-level bands
+    // only fill criteria that carry none of their own.
+    const levels = Array.isArray(criterion.levels)
+      ? criterion.levels
+      : Array.isArray(criterion.performance_levels)
+        ? criterion.performance_levels
+        : rubricLevels;
+    const normalized: Record<string, unknown> = {
       ...criterion,
       ...(key ? { key, criterion_key: key } : {}),
       ...(marks !== undefined ? { max_marks: marks, max_points: marks } : {}),
     };
+    if (levels) {
+      normalized.levels = levels;
+      normalized.performance_levels = levels;
+    }
+    return normalized;
   });
-  const firstLevels = criteria.find(
-    (criterion) => criterion && typeof criterion === 'object' &&
-      Array.isArray((criterion as Record<string, unknown>).levels)
-  ) as Record<string, unknown> | undefined;
-  const performanceLevels = Array.isArray(record.performance_levels)
-    ? record.performance_levels
-    : firstLevels?.levels;
+  // A legacy top-level performance_levels array is deliberately not promoted
+  // to a rubric-wide source of truth; callers must use criterion levels.
+  const normalizedRubric: Record<string, unknown> = { ...record };
+  delete normalizedRubric.performance_levels;
   return {
-    ...record,
+    ...normalizedRubric,
     criteria,
-    ...(performanceLevels ? { performance_levels: performanceLevels } : {}),
   } as T;
 }
 
@@ -369,13 +382,18 @@ export function unwrapLearningInsights(payload: unknown): LearningInsight[] {
       ? calibration.recent
           .filter((item): item is Record<string, unknown> =>
             item !== null && typeof item === 'object' && !Array.isArray(item))
-          .map((item) => ({
-            id: finiteNumber(item.id),
-            name: typeof item.name === 'string' ? item.name : undefined,
-            status: typeof item.status === 'string' ? item.status : undefined,
-            decision: typeof item.decision === 'string' ? item.decision : undefined,
-          }))
-          .filter((item): item is CalibrationRunSummary => item.id !== undefined)
+          .map((item) => {
+            const id = finiteNumber(item.id);
+            if (id === undefined) return null;
+            const run: CalibrationRunSummary = {
+              id,
+              name: typeof item.name === 'string' ? item.name : undefined,
+              status: typeof item.status === 'string' ? item.status : undefined,
+              decision: typeof item.decision === 'string' ? item.decision : undefined,
+            };
+            return run;
+          })
+          .filter((item): item is CalibrationRunSummary => item !== null)
       : [];
     insights.push({
       category: 'calibration',
@@ -507,6 +525,23 @@ export function buildGradingResultsUrl(filters: GradingQueueFilters = {}): strin
   return `${AAGE_BASE_PATH}/grading/results${buildQuery({ ...filters })}`;
 }
 
+/** Instructor-safe evaluator catalogue (names and aggregate metrics only). */
+export function buildInstructorEvaluatorsUrl(): string {
+  return buildUrl('evaluators');
+}
+
+export function buildLearningInsightsUrl(courseId?: number): string {
+  return `${buildUrl('learning', 'insights')}${buildQuery({ course_id: courseId })}`;
+}
+
+export function buildLearningExamplesUrl(status?: string, courseId?: number): string {
+  return `${buildUrl('learning', 'examples')}${buildQuery({ status, course_id: courseId })}`;
+}
+
+export function buildLearningCalibrationUrl(runId: number, courseId?: number): string {
+  return `${buildUrl('learning', 'calibration', runId)}${buildQuery({ course_id: courseId })}`;
+}
+
 /** URL for the student-safe published-result endpoint. */
 export function buildStudentResultUrl(
   submissionId: number | string,
@@ -595,6 +630,8 @@ export interface RubricCriterion {
   weight: number;
   /** Criterion's own mark scale; backend also accepts max_points/maximum. */
   max_marks?: number;
+  /** Generation/scoring alias for `max_marks`. */
+  max_points?: number;
   maximum?: number;
   max_score?: number;
   is_required?: boolean;
@@ -602,6 +639,9 @@ export interface RubricCriterion {
   evidence_category?: string;
   evaluator_hint?: string;
   evaluator_instructions?: string;
+  /** Canonical per-criterion bands; `performance_levels` is the API alias. */
+  levels?: PerformanceLevel[];
+  performance_levels?: PerformanceLevel[];
   order_index?: number;
   [key: string]: unknown;
 }
@@ -612,6 +652,10 @@ export interface Rubric {
   name?: string;
   status?: string;
   version?: number;
+  /** Set when this draft was forked from an approved/graded rubric. */
+  parent_rubric_id?: number | null;
+  /** Legacy display bands; criterion `levels` are the canonical source. */
+  performance_levels?: PerformanceLevel[];
   discipline?: string;
   assessment_kind?: AssessmentKind;
   assessment_id?: number;
@@ -625,7 +669,6 @@ export interface Rubric {
   evaluation_methods?: string[];
   evaluator_recommendations?: Array<EvaluatorRecommendation | string>;
   unverifiable_requirements?: string[];
-  performance_levels?: PerformanceLevel[];
   criteria_weights_total?: number;
   criteria?: RubricCriterion[];
   approved_by?: number | null;
@@ -653,7 +696,12 @@ export interface RubricUpdate {
   summary?: string;
   discipline?: string;
   criteria?: RubricCriterion[];
-  performance_levels?: PerformanceLevel[];
+  /**
+   * Required only when saving a rubric that is approved or already used by a
+   * graded submission. The backend forks a new draft instead of rewriting the
+   * immutable snapshot; the UI must confirm that fork before sending this.
+   */
+  acknowledge_graded?: boolean;
   evaluator_recommendations?: Array<EvaluatorRecommendation | string>;
   [key: string]: unknown;
 }
@@ -897,7 +945,13 @@ export interface GradingHistoryEntry {
 // Review types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'resolved' | string;
+export type ReviewStatus =
+  | 'pending'
+  | 'changes_requested'
+  | 'approved'
+  | 'rejected'
+  | 'resolved'
+  | string;
 
 export interface Review {
   id: number;
@@ -914,12 +968,15 @@ export interface Review {
   evidence?: Evidence[];
   learning_example?: Record<string, unknown> | null;
   published?: boolean;
+  [key: string]: unknown;
 }
 
 export interface PendingReviewsParams {
   course_id?: number;
   page?: number;
   per_page?: number;
+  /** Backend accepts `open`, `pending` and `changes_requested`. */
+  status?: string;
 }
 
 export interface PendingReviewsResponse {
@@ -1039,6 +1096,8 @@ export interface EvaluatorVersionSummary {
 export interface StartCalibrationRequest {
   evaluator_name: string;
   candidate_version_id: number;
+  /** Optional instructor scope; deployments without course-scoped runs ignore it. */
+  course_id?: number;
 }
 
 export interface CalibrationRun {
@@ -1217,7 +1276,7 @@ export function unwrapAnalyticsPayload(payload: unknown): AageAnalytics {
   // resolved (0-1). Convert to the same 0-100 unit used by every other card in
   // the dashboard, and keep the denominator so an empty system never reads as
   // "0% corrections".
-  const correctionRate = ratioToPercent(correction.rate);
+  const correctionRate = ratioToPercent(finiteNumber(correction.rate));
 
   return {
     ...record,
@@ -1532,6 +1591,43 @@ export interface GradingQueueFilters {
   date_to?: string;
   page?: number;
   per_page?: number;
+}
+
+/**
+ * Backend page size is capped at 100. Keep every UI request inside that cap so
+ * rows are never silently dropped by the server.
+ */
+export const AAGE_MAX_PER_PAGE = 100;
+
+export function clampPerPage(value: number | undefined, maximum = AAGE_MAX_PER_PAGE): number {
+  return Math.max(1, Math.min(maximum, Math.floor(finiteNumber(value) ?? 20)));
+}
+
+/** Clamp a user-supplied page into the pages reported by the backend. */
+export function clampPage(page: number | undefined, pages: number | undefined): number {
+  const current = Math.max(1, Math.floor(finiteNumber(page) ?? 1));
+  const last = finiteNumber(pages);
+  return last === undefined || last < 1 ? current : Math.min(current, last);
+}
+
+export type ConfidenceBand = 'all' | 'high' | 'medium' | 'low' | 'unknown';
+
+/**
+ * Classify only real confidence values. Missing data maps to `unknown` so a
+ * filter never mistakes an unenriched row for low confidence.
+ */
+export function confidenceBand(value: number | null | undefined): ConfidenceBand {
+  const numeric = finiteNumber(value);
+  if (numeric === undefined) return 'unknown';
+  if (numeric >= 80) return 'high';
+  if (numeric >= 50) return 'medium';
+  return 'low';
+}
+
+/** Reviews with these statuses may still be edited and decided on. */
+export function isOpenReviewStatus(status: string | null | undefined): boolean {
+  const normalized = typeof status === 'string' ? status.trim().toLowerCase() : '';
+  return normalized === 'pending' || normalized === 'changes_requested';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1867,20 +1963,18 @@ export class AageService {
 
   // ── Learning & calibration ────────────────────────────────────────────────
 
-  static async getLearningInsights(): Promise<LearningInsight[]> {
+  static async getLearningInsights(courseId?: number): Promise<LearningInsight[]> {
     try {
-      const response = await apiClient.get(buildUrl('learning', 'insights'));
+      const response = await apiClient.get(buildLearningInsightsUrl(courseId));
       return unwrapLearningInsights(response.data);
     } catch (error) {
       handleRequestError(error);
     }
   }
 
-  static async getLearningExamples(status?: string): Promise<LearningExample[]> {
+  static async getLearningExamples(status?: string, courseId?: number): Promise<LearningExample[]> {
     try {
-      const response = await apiClient.get(
-        `${this.BASE_PATH}/learning/examples${buildQuery({ status })}`
-      );
+      const response = await apiClient.get(buildLearningExamplesUrl(status, courseId));
       return unwrapList<LearningExample>(response.data, 'examples');
     } catch (error) {
       handleRequestError(error);
@@ -1907,9 +2001,9 @@ export class AageService {
     }
   }
 
-  static async getCalibration(runId: number): Promise<CalibrationRun> {
+  static async getCalibration(runId: number, courseId?: number): Promise<CalibrationRun> {
     try {
-      const response = await apiClient.get(buildUrl('learning', 'calibration', runId));
+      const response = await apiClient.get(buildLearningCalibrationUrl(runId, courseId));
       return normalizeCalibrationRun(unwrapEnvelope<CalibrationRun>(response.data));
     } catch (error) {
       handleRequestError(error);
@@ -1942,8 +2036,24 @@ export class AageService {
     }
   }
 
-  // ── Admin evaluators / policies ───────────────────────────────────────────
+  // ── Evaluator catalogue / admin policies ──────────────────────────────────
 
+  /**
+   * Instructor-safe catalogue for rubric editing. The admin endpoint exposes
+   * more deployment detail and must stay out of instructor screens.
+   */
+  static async getInstructorEvaluators(): Promise<EvaluatorConfig[]> {
+    try {
+      const response = await apiClient.get(buildInstructorEvaluatorsUrl());
+      return unwrapList<EvaluatorConfig>(response.data, 'evaluators').map(
+        normalizeEvaluatorMetrics
+      );
+    } catch (error) {
+      handleRequestError(error);
+    }
+  }
+
+  /** Admin-only evaluator catalogue; keep for operational tooling. */
   static async getEvaluators(): Promise<EvaluatorConfig[]> {
     try {
       const response = await apiClient.get(buildUrl('admin', 'evaluators'));

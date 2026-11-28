@@ -16,7 +16,7 @@
 - AAGE owns rubric selection, evidence validation, `scoring.compute_breakdown()`, confidence, review, learning and canonical grade publication through `persistence.write_through_grade()`.
 - `uses_excel_grader()` is only a status/UI hint that the spreadsheet specialist is likely to be selected; it never selects an engine.
 - Legacy Excel endpoints are compatibility views/shims onto AAGE. Historical `ExcelGradingResult` rows remain readable; no new grade is created by a second engine.
-- One `Grading` sidebar entry with three in-page tabs: `Submissions`, `AI Grading`, `Assessment Intelligence`. There is no `/instructor/grading-dashboard` and no separate Excel dashboard.
+- One `Grading` sidebar entry with three in-page tabs: `Submissions` (`/instructor/grading`), `AI Grading` (`/instructor/ai-grading-dashboard`, the retained Excel/AI results dashboard), and `Assessment Intelligence` (`/instructor/assessment-intelligence`). `/instructor/ai-grading-dashboard` is an in-page workspace tab, not an additional sidebar entry or grading engine; `/instructor/grading-dashboard` does not exist.
 - `UniversalAIGradingButton` is the only AI entry on grading detail pages. Historical spreadsheet results are rendered read-only inside it; AAGE review lives in the Assessment Intelligence tab.
 
 ---
@@ -36,7 +36,7 @@
 | Instructor review | `aage/review.py`, `aage/compatibility.py` | Canonical; original AI marks kept |
 | Learning | `aage/learning.py` | Canonical; legacy Excel rows mapped as compatibility data |
 | History | `EvaluationResult` / audit log; legacy `ExcelGradingResult` readable | One canonical store, historical rows preserved |
-| Frontend | Existing grading pages, `GradingSubNavigation`, `UniversalAIGradingButton` | One workspace, three tabs, real API data |
+| Frontend | Existing grading pages, `GradingSubNavigation`, `UniversalAIGradingButton`, and the `/instructor/ai-grading-dashboard` AI Grading tab | One workspace, three tabs, real API data |
 
 ## Final duplication register
 

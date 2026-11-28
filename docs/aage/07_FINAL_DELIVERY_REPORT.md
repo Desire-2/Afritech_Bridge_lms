@@ -87,7 +87,7 @@ record. Summary:
 - No student-code execution in Flask or workers; browser/API/notebook adapters
   are explicitly labelled static-analysis placeholders.
 - No new microservice, no duplicate submission/grading tables, no competing
-  cumulative-grade calculation, no separate Excel dashboard or sidebar entry.
+  cumulative-grade calculation, no separate Excel sidebar entry (the AI Grading tab lives at `/instructor/ai-grading-dashboard`).
 - No execution or refresh of submitted formulas, macros, queries or pivots; they
   are inspected only as static evidence.
 
@@ -539,7 +539,7 @@ confidence, scoring and publication; evidence-linked failure feedback; audit
 context on corrections; real-list pagination; correct assignment/project
 routing; published/progression badges; deeper evidence display; one `Grading`
 sidebar entry with `Submissions`, `AI Grading` and `Assessment Intelligence`
-tabs; no `/instructor/grading-dashboard` and no separate Excel dashboard.
+tabs; no `/instructor/grading-dashboard` and no separate Excel sidebar entry.
 
 **Removed from active paths:** Excel-first/AAGE-fallback engine selection;
 legacy auto-grader triggers; ownership suppression of AAGE; duplicate

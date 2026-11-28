@@ -18,7 +18,10 @@ from .excel_file_detection import (
     course_is_excel,
     has_excel_files as _has_detected_excel_files,
 )
-from ..grading_feedback import build_revision_reason, build_student_feedback
+from ..grading_feedback import (
+    build_revision_reason, build_student_feedback,
+    request_assignment_modification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +94,14 @@ def _run_grading_in_background(
                         app, submission_id, submission_type, student_id, result,
                     )
                     publication_status = outcome.get('status')
-                    if publication_status == 'published':
+                    if str(publication_status).startswith('published'):
                         logger.info(
-                            "✅ Auto-grade published for %s #%s",
-                            submission_type, submission_id,
+                            "✅ Auto-grade %s for %s #%s%s",
+                            publication_status, submission_type, submission_id,
+                            (
+                                f" (warnings: {', '.join(outcome.get('warnings', []))})"
+                                if outcome.get('warnings') else ""
+                            ),
                         )
                     elif publication_status == 'pending_review':
                         logger.info(
@@ -691,6 +698,11 @@ def _update_learning_progress(
         return False
 
 
+def _set_auto_modification_error(details: Optional[Dict[str, Any]], error: str) -> None:
+    if details is not None:
+        details.update({"status": "failed", "error": error})
+
+
 def _auto_request_modification_if_needed(
     app,
     submission_id: int,
@@ -699,13 +711,18 @@ def _auto_request_modification_if_needed(
     total_score: float,
     max_score: float,
     grade_data: Dict[str, Any],
+    details: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     If the auto-graded score is below the assignment/project passing score,
     automatically request modifications so the student can resubmit.
 
-    Returns True if a modification request was created.
+    Returns True if a modification request was created. ``details`` receives
+    ``status`` and ``error`` so publication can distinguish "not needed" from
+    a genuine side-effect failure without changing legacy callers.
     """
+    if details is not None:
+        details.update({"status": "not_applicable", "error": None})
     try:
         from src.models.course_models import (
             Assignment, AssignmentSubmission,
@@ -721,17 +738,21 @@ def _auto_request_modification_if_needed(
         if submission_type == 'assignment':
             submission = AssignmentSubmission.query.get(submission_id)
             if not submission:
+                _set_auto_modification_error(details, "submission_not_found")
                 return False
             parent = Assignment.query.get(submission.assignment_id)
         elif submission_type == 'project':
             submission = ProjectSubmission.query.get(submission_id)
             if not submission:
+                _set_auto_modification_error(details, "submission_not_found")
                 return False
             parent = Project.query.get(submission.project_id)
         else:
+            _set_auto_modification_error(details, "unsupported_submission_type")
             return False
 
         if not parent:
+            _set_auto_modification_error(details, "parent_not_found")
             return False
 
         passing_score = getattr(parent, 'passing_score', None) or 60.0
@@ -741,16 +762,44 @@ def _auto_request_modification_if_needed(
                 f"✅ Score {score_pct:.1f}% meets passing threshold "
                 f"{passing_score}% — no modification request needed"
             )
+            if details is not None:
+                details["status"] = "not_needed"
             return False
 
         # Check resubmission limits — use submission-level count (per-student)
         max_resubs = getattr(parent, 'max_resubmissions', 3) or 3
         current_resubs = getattr(submission, 'resubmission_count', 0) or 0
         if current_resubs >= max_resubs:
+            # An existing pending revision is not a new attempt: refreshing
+            # its rubric-based reason must stay possible at the limit.
+            already_pending = bool(
+                getattr(submission, 'modification_requested', False)
+                or getattr(submission, 'can_resubmit', False)
+            )
+            if submission_type == 'assignment':
+                lc = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=getattr(parent, 'lesson_id', None),
+                ).first()
+                already_pending = already_pending or bool(
+                    lc and (
+                        lc.assignment_needs_resubmission
+                        or lc.modification_request_reason
+                    )
+                )
+            if already_pending:
+                if details is not None:
+                    details["status"] = "already_pending"
+                return True
             logger.info(
                 f"⚠️ Score {score_pct:.1f}% below passing ({passing_score}%) "
                 f"but max resubmissions ({max_resubs}) already reached"
             )
+            if details is not None:
+                details.update({
+                    "status": "limit_reached",
+                    "error": "max_resubmissions_reached",
+                })
             return False
 
         # Build the reason from the rubric marks and AAGE criterion feedback.
@@ -804,28 +853,36 @@ def _auto_request_modification_if_needed(
                 graded_by=submission.graded_by,
             )
         else:
-            # Assignments keep their legacy parent-level policy.
-            parent.modification_requested = True
-            parent.modification_request_reason = reason
-            parent.modification_requested_at = now_local()
-            parent.modification_requested_by = None  # System/AI initiated
-            parent.can_resubmit = True
-
-        # Update lesson completion if applicable (assignments only)
-        if submission_type == 'assignment':
-            lesson_id = getattr(parent, 'lesson_id', None)
-            if lesson_id:
-                lc = LessonCompletion.query.filter_by(
-                    student_id=student_id,
-                    lesson_id=lesson_id,
-                ).first()
-                if lc:
-                    lc.assignment_graded = False
-                    lc.assignment_needs_resubmission = True
-                    lc.modification_request_reason = reason[:500]
+            # Per-student revision state plus the legacy cohort flags. The
+            # helper increments the submission's attempt count only when the
+            # revision first becomes pending.
+            request_assignment_modification(
+                submission, parent, reason, requested_by=None,
+            )
 
         db.session.commit()
 
+        # In-app notification is part of the revision workflow, not a nice-to-
+        # have: email can be disabled, but the student still needs the alert.
+        try:
+            from src.services.notification_service import notify_modification_requested
+            if submission_type == 'project':
+                notified_ids = sorted({int(row.student_id) for row in rows if row.student_id})
+            else:
+                notified_ids = [student_id]
+            for notified_id in notified_ids:
+                notify_modification_requested(
+                    notified_id, parent, reason, actor_id=None,
+                    course_id=getattr(parent, 'course_id', None),
+                    is_project=submission_type == 'project',
+                )
+        except Exception as notif_err:
+            logger.warning(
+                f"In-app auto-revision notification failed (non-blocking): {notif_err}"
+            )
+
+        if details is not None:
+            details["status"] = "created"
         logger.info(
             f"🔄 Auto-modification requested: {submission_type} #{submission_id} — "
             f"score {score_pct:.1f}% < passing {passing_score}%"
@@ -833,6 +890,7 @@ def _auto_request_modification_if_needed(
         return True
 
     except Exception as e:
+        _set_auto_modification_error(details, str(e))
         logger.exception(
             f"❌ Failed to auto-request modification for {submission_type} "
             f"#{submission_id}: {e}"
@@ -852,25 +910,24 @@ def _notify_student_auto_graded(
     student_id: int,
     result: Dict[str, Any],
     modification_requested: bool = False,
-):
+) -> bool:
     """
-    Send a lightweight notification to the student that AI grading is ready.
-    This is a preliminary grade; instructor review may adjust it.
+    Send a lightweight notification that AI grading is ready.
+
+    Returns True only when at least one notification was actually sent. This
+    lets publication report a notification failure instead of claiming success.
     """
+    sent = False
     try:
         from src.models.user_models import User
         from src.models.course_models import Assignment, AssignmentSubmission, Project, ProjectSubmission
+        from src.services.project_scoring_service import team_member_ids
         from src.utils.email_notifications import send_grade_notification, send_project_graded_notification
-
-        student = User.query.get(student_id)
-        if not student or not student.email:
-            return
 
         grade_data = result.get('result', {})
         score = grade_data.get('total_score', 0)
         feedback = grade_data.get('overall_feedback', '')
 
-        # Add a note that this is AI-generated preliminary feedback
         if modification_requested:
             ai_note = (
                 "\n\n---\n"
@@ -888,33 +945,47 @@ def _notify_student_auto_graded(
 
         if submission_type == 'assignment':
             submission = AssignmentSubmission.query.get(submission_id)
-            if submission:
-                assignment = Assignment.query.get(submission.assignment_id)
-                if assignment:
-                    send_grade_notification(
-                        submission=submission,
-                        assignment=assignment,
-                        student=student,
-                        grade=score,
-                        feedback=feedback_with_note,
-                    )
-                    logger.info(f"📧 Auto-grade notification sent to {student.email}")
+            if not submission:
+                return False
+            assignment = Assignment.query.get(submission.assignment_id)
+            student = User.query.get(student_id)
+            if assignment and student and student.email:
+                send_grade_notification(
+                    submission=submission,
+                    assignment=assignment,
+                    student=student,
+                    grade=score,
+                    feedback=feedback_with_note,
+                )
+                sent = True
+                logger.info(f"📧 Auto-grade notification sent to {student.email}")
         elif submission_type == 'project':
             submission = ProjectSubmission.query.get(submission_id)
-            if submission:
-                project = Project.query.get(submission.project_id)
-                if project:
-                    send_project_graded_notification(
-                        submission=submission,
-                        project=project,
-                        student=student,
-                        grade=score,
-                        feedback=feedback_with_note,
-                    )
-                    logger.info(f"📧 Auto-grade notification sent to {student.email}")
-
+            if not submission:
+                return False
+            project = Project.query.get(submission.project_id)
+            if not project:
+                return False
+            # A team result belongs to every teammate, not just the row the
+            # grader happened to look at.
+            member_ids = team_member_ids(project, submission) or {student_id}
+            for member_id in sorted(int(mid) for mid in member_ids):
+                member = User.query.get(member_id)
+                if not member or not member.email:
+                    continue
+                send_project_graded_notification(
+                    submission=submission,
+                    project=project,
+                    student=member,
+                    grade=score,
+                    feedback=feedback_with_note,
+                )
+                sent = True
+                logger.info(f"📧 Auto-grade notification sent to {member.email}")
     except Exception as e:
         logger.warning(f"⚠️ Auto-grade notification failed: {e}")
+
+    return sent
 
 
 def _resolve_student_id(submission_id: int, submission_type: str) -> Optional[int]:
@@ -964,6 +1035,11 @@ def finalize_excel_grade(
         "modification_requested": False,
         "learning_progress_updated": False,
         "notified": False,
+        # Tri-state side effects: callers can tell "not needed" from "failed".
+        "modification_state": "not_applicable",
+        "learning_progress_state": "not_applicable",
+        "errors": [],
+        "warnings": [],
     }
 
     eligible = _auto_approve_grading_result(
@@ -974,7 +1050,10 @@ def finalize_excel_grade(
 
     publication.update({"approved": True, "reason": None})
     if not student_id:
-        publication.update({"status": "failed", "reason": "student_not_found"})
+        publication.update({
+            "status": "failed", "reason": "student_not_found",
+            "errors": ["student_not_found"],
+        })
         return publication
 
     applied = _apply_grade_to_submission(
@@ -991,29 +1070,50 @@ def finalize_excel_grade(
         publication.update({
             "status": "kept_higher_grade",
             "reason": "higher_published_grade_retained",
+            "errors": ["higher_published_grade_retained"],
         })
         return publication
 
     publication["applied"] = True
+    modification_details: Dict[str, Any] = {}
     modification_requested = _auto_request_modification_if_needed(
         app, submission_id, submission_type, student_id,
-        total_score, max_score, grade_data,
+        total_score, max_score, grade_data, details=modification_details,
     )
-    publication["modification_requested"] = modification_requested
-    if not modification_requested:
-        publication["learning_progress_updated"] = _update_learning_progress(
+    publication["modification_requested"] = bool(modification_requested)
+    publication["modification_state"] = (
+        modification_details.get("status")
+        or ("created" if modification_requested else "not_applicable")
+    )
+    if publication["modification_state"] == "failed":
+        error = modification_details.get("error") or "revision_request_failed"
+        publication["errors"].append(f"revision_request_failed:{error}")
+
+    if publication["modification_state"] != "failed" and not modification_requested:
+        progress_ok = bool(_update_learning_progress(
             app, submission_id, submission_type, student_id,
             total_score, max_score,
+        ))
+        publication["learning_progress_updated"] = progress_ok
+        publication["learning_progress_state"] = (
+            "success" if progress_ok else "failed"
         )
+        if not progress_ok:
+            publication["warnings"].append("learning_progress_not_updated")
 
     if notify:
-        _notify_student_auto_graded(
+        notified = bool(_notify_student_auto_graded(
             app, submission_id, submission_type, student_id, result,
             modification_requested=modification_requested,
-        )
-        publication["notified"] = True
+        ))
+        publication["notified"] = notified
+        if not notified:
+            publication["warnings"].append("notification_not_sent")
 
-    publication["status"] = "published"
+    publication["status"] = (
+        "published" if not publication["errors"] and not publication["warnings"]
+        else "published_with_warnings"
+    )
     return publication
 
 

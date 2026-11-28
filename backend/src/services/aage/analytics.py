@@ -24,7 +24,9 @@ from .constants import (
     JOB_FAILED,
     JOB_SUCCEEDED,
     LEARNING_APPROVED,
+    OPEN_REVIEW_STATUSES,
     REVIEW_APPROVED,
+    REVIEW_CHANGES,
     REVIEW_PENDING,
     REVIEW_REJECTED,
 )
@@ -89,7 +91,9 @@ def dashboard_metrics(course_id: Optional[int] = None) -> Dict[str, Any]:
 
     total_submissions = len(_submissions(course_id))
     auto_graded = sum(1 for r in results if not r.requires_review)
-    pending_reviews = sum(1 for r in review_rows if r.status == REVIEW_PENDING)
+    # ``changes_requested`` is still waiting on an instructor decision.
+    pending_reviews = sum(1 for r in review_rows
+                          if r.status in OPEN_REVIEW_STATUSES)
     failed_jobs = sum(1 for j in jobs if j.status == JOB_FAILED)
 
     durations = [float(r.duration_ms) for r in runs
@@ -153,7 +157,8 @@ def dashboard_metrics(course_id: Optional[int] = None) -> Dict[str, Any]:
         "confidence_distribution": _distribution(confidences, CONFIDENCE_BUCKETS),
         "review_status_counts": {
             status: sum(1 for r in review_rows if r.status == status)
-            for status in (REVIEW_PENDING, REVIEW_APPROVED, REVIEW_REJECTED)
+            for status in (REVIEW_PENDING, REVIEW_CHANGES, REVIEW_APPROVED,
+                           REVIEW_REJECTED)
         },
         "learning_examples": {
             "total": len(examples),

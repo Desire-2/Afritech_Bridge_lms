@@ -17,12 +17,14 @@ import {
 import { Course } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 import AageService, {
+  AageError,
   AssessmentKind,
   EvaluatorConfig,
   EvaluatorRecommendation,
   PerformanceLevel,
   Rubric,
   RubricCriterion,
+  RubricUpdate,
   RubricVersion,
   isAageNotFound,
   validateWeights,
@@ -53,6 +55,12 @@ function evaluatorName(value: EvaluatorRecommendation | string): string {
   return typeof value === 'string' ? value : value.name;
 }
 
+/** Canonical bands live on each criterion; both API aliases stay in sync. */
+function criterionLevels(criterion: RubricCriterion | undefined): PerformanceLevel[] {
+  if (!criterion) return [];
+  return criterion.levels || criterion.performance_levels || [];
+}
+
 export default function RubricBuilder({ courses }: { courses: Course[] }) {
   const [courseId, setCourseId] = useState<number | null>(null);
   const [overview, setOverview] = useState<Overview>({ assignments: [], projects: [] });
@@ -62,6 +70,8 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
   const [versions, setVersions] = useState<RubricVersion[]>([]);
   const [evaluators, setEvaluators] = useState<EvaluatorConfig[]>([]);
   const [selectedEvaluators, setSelectedEvaluators] = useState<string[]>([]);
+  const [levelCriterionIndex, setLevelCriterionIndex] = useState(0);
+  const [forkSourceId, setForkSourceId] = useState<number | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -71,6 +81,10 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
   const [error, setError] = useState<string | null>(null);
 
   const assessments = kind === 'assignment' ? overview.assignments : overview.projects;
+  const selectedLevelIndex = Math.min(
+    levelCriterionIndex,
+    Math.max(0, (rubric?.criteria?.length || 1) - 1)
+  );
 
   const weightCheck = useMemo(
     () => validateWeights(rubric?.criteria || []),
@@ -78,7 +92,8 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
   );
 
   useEffect(() => {
-    AageService.getEvaluators()
+    // Instructors must never hit the admin-only evaluator catalogue.
+    AageService.getInstructorEvaluators()
       .then(setEvaluators)
       .catch(() => setEvaluators([]));
   }, []);
@@ -119,6 +134,8 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
     setAssessmentId(null);
     setRubric(null);
     setVersions([]);
+    setLevelCriterionIndex(0);
+    setForkSourceId(null);
     setError(null);
   }, [kind, courseId]);
 
@@ -132,6 +149,8 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
       ]);
       setRubric(rubricData);
       setVersions(versionData);
+      setLevelCriterionIndex(0);
+      setForkSourceId(rubricData.parent_rubric_id ?? null);
       setSelectedEvaluators(
         (rubricData.evaluator_recommendations || []).map(evaluatorName).filter(Boolean)
       );
@@ -191,12 +210,36 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
     });
   };
 
-  const updatePerformanceLevel = (index: number, patch: Partial<PerformanceLevel>) => {
+  const updateCriterionLevel = (
+    criterionIndex: number,
+    levelIndex: number,
+    patch: Partial<PerformanceLevel>
+  ) => {
     setRubric((current) => {
       if (!current) return current;
-      const levels = [...(current.performance_levels || [])];
-      levels[index] = { ...levels[index], ...patch };
-      return { ...current, performance_levels: levels };
+      const criteria = [...(current.criteria || [])];
+      const criterion = criteria[criterionIndex];
+      if (!criterion) return current;
+      const levels = [...criterionLevels(criterion)];
+      if (!levels[levelIndex]) return current;
+      levels[levelIndex] = { ...levels[levelIndex], ...patch };
+      criteria[criterionIndex] = { ...criterion, levels, performance_levels: levels };
+      return { ...current, criteria };
+    });
+  };
+
+  const addCriterionLevel = (criterionIndex: number) => {
+    setRubric((current) => {
+      if (!current) return current;
+      const criteria = [...(current.criteria || [])];
+      const criterion = criteria[criterionIndex];
+      if (!criterion) return current;
+      const levels = [
+        ...criterionLevels(criterion),
+        { label: 'New level', min_score: 0, max_score: 100 },
+      ];
+      criteria[criterionIndex] = { ...criterion, levels, performance_levels: levels };
+      return { ...current, criteria };
     });
   };
 
@@ -207,6 +250,8 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
     try {
       const generated = await AageService.generateRubric(kind, assessmentId);
       setRubric(generated);
+      setLevelCriterionIndex(0);
+      setForkSourceId(generated.parent_rubric_id ?? null);
       setSelectedEvaluators(
         (generated.evaluator_recommendations || []).map(evaluatorName).filter(Boolean)
       );
@@ -230,20 +275,55 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
     setSaving(true);
     setError(null);
     try {
-      const criteria = (rubric.criteria || []).map((criterion) => ({
-        ...criterion,
-        levels: rubric.performance_levels?.length
-          ? rubric.performance_levels
-          : criterion.performance_levels,
-      }));
-      const saved = await AageService.updateRubric(rubric.id, {
+      // Bands are written to each criterion under both aliases. No rubric-level
+      // performance_levels are sent: that would recreate the ambiguous source
+      // of truth the backend normalises away.
+      const criteria = (rubric.criteria || []).map((criterion) => {
+        const levels = criterionLevels(criterion);
+        return { ...criterion, levels, performance_levels: levels };
+      });
+      const payload: RubricUpdate = {
+        title: rubric.title ?? rubric.name,
+        summary: rubric.summary,
         criteria,
         evaluator_recommendations: selectedEvaluators,
-        summary: rubric.summary,
-      });
+      };
+      const originalId = rubric.id;
+      let saved: Rubric;
+      try {
+        saved = await AageService.updateRubric(originalId, payload);
+      } catch (err: unknown) {
+        const code = err instanceof AageError
+          ? err.code
+          : (err as { code?: string })?.code;
+        if (code !== 'rubric_graded_locked') throw err;
+
+        const details = err instanceof AageError ? err.details : (err as { details?: unknown }).details;
+        const gradedCount = Array.isArray(details)
+          ? (details[0] as { graded_results?: number } | undefined)?.graded_results
+          : undefined;
+        const explanation = gradedCount
+          ? `This rubric has ${gradedCount} graded submission(s) or is approved. Saving will fork a new draft; the original rubric and its graded results stay unchanged.`
+          : 'This rubric is approved or already used by graded submissions. Saving will fork a new draft; the original rubric and its graded results stay unchanged.';
+        if (!window.confirm(`${explanation}\n\nContinue and create a fork?`)) {
+          setError('Save cancelled; nothing was changed.');
+          return;
+        }
+        saved = await AageService.updateRubric(originalId, {
+          ...payload,
+          acknowledge_graded: true,
+        });
+        setForkSourceId(originalId);
+      }
       setRubric(saved);
+      if (saved.id !== originalId) setForkSourceId(originalId);
+      setLevelCriterionIndex(0);
       setVersions(await AageService.getRubricVersions(kind, assessmentId!).catch(() => []));
-      toast.success('Rubric saved.');
+      toast.success(
+        saved.id !== originalId
+          ? `New draft #${saved.id} created; rubric #${originalId} was left unchanged.`
+          : 'Rubric saved.'
+      );
     } catch (err: unknown) {
       setError((err as { message?: string })?.message || 'Unable to save the rubric.');
     } finally {
@@ -252,7 +332,7 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
   };
 
   const handleApprove = async () => {
-    if (!rubric) return;
+    if (!rubric || rubric.status === 'approved') return;
     if (!weightCheck.valid) {
       setError(weightCheck.message);
       return;
@@ -374,6 +454,11 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
             action={
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge status={rubric.status || 'draft'} />
+                {forkSourceId !== null && (
+                  <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                    Draft forked from rubric #{forkSourceId} · original kept unchanged
+                  </span>
+                )}
                 <SecondaryButton onClick={() => setShowPreview((value) => !value)}>
                   <Eye className="h-4 w-4" /> {showPreview ? 'Hide preview' : 'Preview'}
                 </SecondaryButton>
@@ -528,73 +613,91 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
 
           <AagePanel
             title="Performance levels"
-            description="Human-readable bands shown to instructors when interpreting the final score."
+            description="Bands belong to one criterion at a time. Both API aliases are saved from this editor."
           >
-            {(rubric.performance_levels || []).length === 0 ? (
-              <EmptyState title="No performance levels" description="Add bands such as Excellent / Pass / Needs work." />
+            {(rubric.criteria || []).length === 0 ? (
+              <EmptyState
+                title="No criteria to edit"
+                description="Add a criterion before defining its performance bands."
+              />
             ) : (
-              <div className="space-y-3">
-                {(rubric.performance_levels || []).map((level, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-4">
-                    <Field label="Label">
-                      <input
-                        className={inputClass}
-                        value={level.label}
-                        onChange={(event) => updatePerformanceLevel(index, { label: event.target.value })}
-                      />
-                    </Field>
-                    <Field label="Min score (%)">
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={level.min_score ?? 0}
-                        onChange={(event) =>
-                          updatePerformanceLevel(index, { min_score: Number(event.target.value) })
-                        }
-                      />
-                    </Field>
-                    <Field label="Max score (%)">
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={level.max_score ?? 100}
-                        onChange={(event) =>
-                          updatePerformanceLevel(index, { max_score: Number(event.target.value) })
-                        }
-                      />
-                    </Field>
-                    <Field label="Description">
-                      <input
-                        className={inputClass}
-                        value={level.description || ''}
-                        onChange={(event) =>
-                          updatePerformanceLevel(index, { description: event.target.value })
-                        }
-                      />
-                    </Field>
+              <>
+                <Field label="Criterion">
+                  <select
+                    className={inputClass}
+                    value={selectedLevelIndex}
+                    onChange={(event) => setLevelCriterionIndex(Number(event.target.value))}
+                  >
+                    {(rubric.criteria || []).map((criterion, index) => (
+                      <option key={criterion.criterion_key || index} value={index}>
+                        {criterion.name || `Criterion ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {criterionLevels(rubric.criteria![selectedLevelIndex]).length === 0 ? (
+                  <div className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+                    No bands for this criterion yet.
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    {criterionLevels(rubric.criteria![selectedLevelIndex]).map((level, index) => (
+                      <div key={index} className="grid gap-3 md:grid-cols-4">
+                        <Field label="Label">
+                          <input
+                            className={inputClass}
+                            value={level.label}
+                            onChange={(event) =>
+                              updateCriterionLevel(selectedLevelIndex, index, { label: event.target.value })
+                            }
+                          />
+                        </Field>
+                        <Field label="Min score (%)">
+                          <input
+                            type="number"
+                            className={inputClass}
+                            value={level.min_score ?? 0}
+                            onChange={(event) =>
+                              updateCriterionLevel(selectedLevelIndex, index, {
+                                min_score: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Max score (%)">
+                          <input
+                            type="number"
+                            className={inputClass}
+                            value={level.max_score ?? 100}
+                            onChange={(event) =>
+                              updateCriterionLevel(selectedLevelIndex, index, {
+                                max_score: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Description">
+                          <input
+                            className={inputClass}
+                            value={level.description || ''}
+                            onChange={(event) =>
+                              updateCriterionLevel(selectedLevelIndex, index, {
+                                description: event.target.value,
+                              })
+                            }
+                          />
+                        </Field>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3">
+                  <SecondaryButton onClick={() => addCriterionLevel(selectedLevelIndex)}>
+                    <Plus className="h-4 w-4" /> Add level to this criterion
+                  </SecondaryButton>
+                </div>
+              </>
             )}
-            <div className="mt-3">
-              <SecondaryButton
-                onClick={() =>
-                  setRubric((current) =>
-                    current
-                      ? {
-                          ...current,
-                          performance_levels: [
-                            ...(current.performance_levels || []),
-                            { label: 'New level', min_score: 0, max_score: 100 },
-                          ],
-                        }
-                      : current
-                  )
-                }
-              >
-                <Plus className="h-4 w-4" /> Add level
-              </SecondaryButton>
-            </div>
           </AagePanel>
 
           <AagePanel
@@ -634,7 +737,7 @@ export default function RubricBuilder({ courses }: { courses: Course[] }) {
             </PrimaryButton>
             <PrimaryButton
               onClick={handleApprove}
-              disabled={approving || !weightCheck.valid}
+              disabled={approving || !weightCheck.valid || rubric.status === 'approved'}
               className="bg-green-600 hover:bg-green-700"
             >
               {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}

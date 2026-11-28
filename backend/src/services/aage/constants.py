@@ -71,6 +71,9 @@ REVIEW_PENDING = "pending"
 REVIEW_APPROVED = "approved"
 REVIEW_REJECTED = "rejected"
 REVIEW_CHANGES = "changes_requested"
+# States an instructor can still act on.  A correction moves a review from
+# ``pending`` to ``changes_requested`` without closing it, so both are open.
+OPEN_REVIEW_STATUSES = (REVIEW_PENDING, REVIEW_CHANGES)
 
 # --- learning ---------------------------------------------------------------
 

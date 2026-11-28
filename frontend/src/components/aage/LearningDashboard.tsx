@@ -39,8 +39,11 @@ import {
 
 export default function LearningDashboard({
   canAdminister = false,
+  courseId,
 }: {
   canAdminister?: boolean;
+  /** When present, all learning/calibration reads and writes stay in this course. */
+  courseId?: number | null;
 }) {
   const [insights, setInsights] = useState<LearningInsight[]>([]);
   const [examples, setExamples] = useState<LearningExample[]>([]);
@@ -68,8 +71,8 @@ export default function LearningDashboard({
     setLoading(true);
     setError(null);
     const results = await Promise.allSettled([
-      AageService.getLearningInsights(),
-      AageService.getLearningExamples('candidate'),
+      AageService.getLearningInsights(courseId ?? undefined),
+      AageService.getLearningExamples('candidate', courseId ?? undefined),
       // The evaluator catalogue endpoint is admin-only; instructors get the
       // aggregate evaluator summary in the insights cards instead.
       canAdminister ? AageService.getEvaluators() : Promise.resolve([] as EvaluatorConfig[]),
@@ -90,7 +93,7 @@ export default function LearningDashboard({
       setError('Unable to load learning data. Check your connection and try again.');
     }
     setLoading(false);
-  }, [canAdminister]);
+  }, [canAdminister, courseId]);
 
   const loadRun = useCallback(async (runId: number) => {
     setSelectedRunId(runId);
@@ -98,7 +101,7 @@ export default function LearningDashboard({
     setDetailError(null);
     setCalibrationDetail(null);
     try {
-      setCalibrationDetail(await AageService.getCalibration(runId));
+      setCalibrationDetail(await AageService.getCalibration(runId, courseId ?? undefined));
     } catch (err: unknown) {
       setDetailError(
         isAageNotFound(err)
@@ -108,7 +111,7 @@ export default function LearningDashboard({
     } finally {
       setDetailLoading(false);
     }
-  }, []);
+  }, [courseId]);
 
   const refresh = useCallback(async () => {
     await load();
@@ -328,7 +331,9 @@ export default function LearningDashboard({
 
       <AagePanel
         title="Calibration runs"
-        description="Recent runs come from the learning insights summary; open one to see its aggregate decision metrics."
+        description={courseId
+          ? `Recent runs in course #${courseId}, from the learning insights summary.`
+          : 'Global benchmarks: without a course scope, runs may cover platform-wide calibration cases.'}
         icon={<History className="h-4 w-4 text-indigo-600" />}
       >
         {calibrationRuns.length === 0 ? (
@@ -348,6 +353,11 @@ export default function LearningDashboard({
                     {run.name || `Run #${run.id}`}
                   </span>
                   <StatusBadge status={run.status || 'pending'} />
+                  {!courseId && (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                      Global benchmark
+                    </span>
+                  )}
                   {run.decision && <span className="text-xs text-slate-400">{run.decision.replace(/_/g, ' ')}</span>}
                 </div>
                 <SecondaryButton
@@ -368,6 +378,11 @@ export default function LearningDashboard({
               <span className="font-semibold text-slate-800 dark:text-slate-100">
                 Calibration run #{selectedRunId}
               </span>
+              {!courseId && (
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                  Global benchmark
+                </span>
+              )}
               {calibrationDetail && <StatusBadge status={calibrationDetail.status || 'pending'} />}
             </div>
             {detailLoading && <p className="mt-2 text-xs text-slate-500">Loading run detail…</p>}
@@ -464,6 +479,7 @@ export default function LearningDashboard({
                         AageService.startCalibration({
                           evaluator_name: evaluatorName,
                           candidate_version_id: Number(candidateVersionId),
+                          ...(courseId ? { course_id: courseId } : {}),
                         }).then((run) => {
                           setCalibrationDetail(run);
                           setSelectedRunId(run.id);

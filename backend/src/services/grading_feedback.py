@@ -354,6 +354,115 @@ def assignment_revision_state(submission: Any, assignment: Any = None) -> Dict[s
     return state
 
 
+def _lesson_completion_for(submission: Any, assignment: Any) -> Any:
+    if not getattr(assignment, "lesson_id", None) or submission is None:
+        return None
+    try:
+        from ..models.student_models import LessonCompletion
+        return LessonCompletion.query.filter_by(
+            student_id=getattr(submission, "student_id", None),
+            lesson_id=assignment.lesson_id,
+        ).first()
+    except Exception:  # pragma: no cover - non-critical enrichment
+        return None
+
+
+def request_assignment_modification(
+    submission: Any,
+    assignment: Any,
+    reason: str,
+    *,
+    requested_by: Any = None,
+    lesson_completion: Any = None,
+) -> bool:
+    """Apply a revision request to one student's assignment submission.
+
+    Returns True when this call moved the submission into the pending state.
+    The per-student resubmission count is incremented only on that transition,
+    so re-requesting with an improved reason never consumes another attempt.
+    """
+    from ..utils.time_utils import now_local
+
+    if lesson_completion is None:
+        lesson_completion = _lesson_completion_for(submission, assignment)
+
+    # The student's own record is authoritative. The parent flags are only a
+    # fallback for legacy rows, otherwise one student's revision would hide
+    # another student's pending revision.
+    if lesson_completion is not None:
+        already_pending = bool(
+            getattr(lesson_completion, "assignment_needs_resubmission", False)
+            or getattr(lesson_completion, "modification_request_reason", None)
+        )
+    else:
+        already_pending = bool(getattr(assignment, "modification_requested", False))
+
+    newly_pending = not already_pending
+    if newly_pending:
+        submission.resubmission_count = (
+            getattr(submission, "resubmission_count", 0) or 0
+        ) + 1
+        # Legacy aggregate, retained for older dashboards.
+        assignment.resubmission_count = (
+            getattr(assignment, "resubmission_count", 0) or 0
+        ) + 1
+
+    assignment.modification_requested = True
+    assignment.modification_request_reason = reason
+    assignment.modification_requested_at = now_local()
+    assignment.modification_requested_by = requested_by
+    assignment.can_resubmit = True
+
+    if lesson_completion is not None:
+        lesson_completion.assignment_graded = False
+        lesson_completion.assignment_needs_resubmission = True
+        lesson_completion.modification_request_reason = reason[:500]
+
+    return newly_pending
+
+
+def can_resubmit_assignment(submission: Any, assignment: Any) -> bool:
+    """Whether this student may use their pending revision on an assignment."""
+    state = assignment_revision_state(submission, assignment)
+    if not state["modification_requested"] or not state["can_resubmit"]:
+        return False
+    maximum = getattr(assignment, "max_resubmissions", 3) or 3
+    used = getattr(submission, "resubmission_count", 0) or 0
+    return used <= maximum
+
+
+def complete_assignment_resubmission(
+    submission: Any,
+    assignment: Any,
+    *,
+    lesson_completion: Any = None,
+    notes: Any = None,
+) -> None:
+    """Clear one student's revision state without clearing their teammates'."""
+    from ..models.student_models import LessonCompletion
+
+    if lesson_completion is None:
+        lesson_completion = _lesson_completion_for(submission, assignment)
+    if lesson_completion is not None:
+        lesson_completion.assignment_needs_resubmission = False
+        lesson_completion.modification_request_reason = None
+        lesson_completion.is_resubmission = True
+        if notes:
+            lesson_completion.resubmission_reason = str(notes)[:500]
+
+    another_pending = LessonCompletion.query.filter(
+        LessonCompletion.lesson_id == assignment.lesson_id,
+        LessonCompletion.student_id != getattr(submission, "student_id", None),
+        LessonCompletion.assignment_needs_resubmission.is_(True),
+    ).first()
+    if not another_pending:
+        assignment.modification_requested = False
+        assignment.modification_request_reason = None
+        assignment.modification_requested_at = None
+        assignment.modification_requested_by = None
+        assignment.can_resubmit = False
+
+
 def aage_grade_data(submission_type: str, submission_id: int) -> Dict[str, Any]:
     """Latest published AAGE result as a grade payload for a legacy submission."""
     try:

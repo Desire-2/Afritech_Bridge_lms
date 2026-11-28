@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   File,
   Folder,
@@ -24,6 +25,7 @@ import AageService, {
   GradingResult,
   Review,
   SubmissionArtifact,
+  isOpenReviewStatus,
   projectEvidenceForDisplay,
 } from '@/services/aage.service';
 import {
@@ -113,6 +115,8 @@ export default function ReviewWorkspace({
 }) {
   const [courseId, setCourseId] = useState<number | null>(null);
   const [pending, setPending] = useState<Review[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageMeta, setPageMeta] = useState<{ total?: number; pages?: number }>({});
   const [reviewId, setReviewId] = useState<number | null>(initialReviewId ?? null);
   const [review, setReview] = useState<Review | null>(null);
   const [result, setResult] = useState<GradingResult | null>(null);
@@ -126,34 +130,48 @@ export default function ReviewWorkspace({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPending = useCallback(async () => {
+  const loadPending = useCallback(async (): Promise<boolean> => {
     setLoadingList(true);
     try {
-      const response = await AageService.getPendingReviews({ course_id: courseId ?? undefined, per_page: 100 });
-      setPending(response.reviews);
-      if (!reviewId && response.reviews.length > 0) setReviewId(response.reviews[0].id);
+      const response = await AageService.getPendingReviews({
+        course_id: courseId ?? undefined,
+        // Backend hard-caps at 100; page through results instead of asking for more.
+        page,
+        per_page: 100,
+      });
+      const reviews = response.reviews.filter((item) => isOpenReviewStatus(item.status));
+      setPending(reviews);
+      setPageMeta({
+        ...(typeof response.total === 'number' ? { total: response.total } : {}),
+        ...(typeof response.pages === 'number' ? { pages: response.pages } : {}),
+      });
+      setReviewId((current) =>
+        current || reviews.length === 0 ? current : reviews[0].id
+      );
+      return true;
     } catch (err: unknown) {
       setError((err as { message?: string })?.message || 'Unable to load pending reviews.');
       setPending([]);
+      return false;
     } finally {
       setLoadingList(false);
     }
-  }, [courseId, reviewId]);
+  }, [courseId, page]);
 
   useEffect(() => {
     void loadPending();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseId]);
+  }, [courseId, page]);
 
   useEffect(() => {
     if (initialReviewId) setReviewId(initialReviewId);
   }, [initialReviewId]);
 
-  const loadDetail = useCallback(async () => {
+  const loadDetail = useCallback(async (): Promise<boolean> => {
     if (!reviewId) {
       setReview(null);
       setResult(null);
-      return;
+      return true;
     }
     setLoadingDetail(true);
     setError(null);
@@ -189,9 +207,11 @@ export default function ReviewWorkspace({
       setError((err as { message?: string })?.message || 'Unable to load the review.');
       setReview(null);
       setResult(null);
+      return false;
     } finally {
       setLoadingDetail(false);
     }
+    return true;
   }, [reviewId]);
 
   useEffect(() => {
@@ -199,6 +219,7 @@ export default function ReviewWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewId]);
 
+  const isOpen = review ? isOpenReviewStatus(review.status) : false;
   const artifacts = useMemo(() => result?.artifacts || [], [result]);
   const fileTree = useMemo(() => buildFileTree(artifacts), [artifacts]);
 
@@ -222,40 +243,58 @@ export default function ReviewWorkspace({
     action: 'mark' | 'correction' | 'approve' | 'reject',
     criterion?: CriterionScore
   ) => {
-    if (!review) return;
+    if (!review || !isOpenReviewStatus(review.status)) return;
     setBusy(true);
     setError(null);
     try {
+      let message: string;
+      let updated: Review;
       if (action === 'mark' && criterion) {
         const edit = edits[criterion.criterion_key];
         if (!edit || !edit.reason.trim()) {
           toast.error('Provide a reason before saving a mark correction.');
           return;
         }
-        await AageService.updateCriterionMark(review.id, criterion.criterion_key, {
+        updated = await AageService.updateCriterionMark(review.id, criterion.criterion_key, {
           marks: edit.marks,
           reason: edit.reason,
         });
-        toast.success('Mark correction saved.');
+        message = 'Mark correction saved.';
       } else if (action === 'correction') {
         if (!correctionExplanation.trim()) {
           toast.error('Explain the correction before submitting it.');
           return;
         }
-        await AageService.submitCorrection(review.id, correctionExplanation.trim());
-        toast.success('Correction submitted for learning.');
+        updated = await AageService.submitCorrection(review.id, correctionExplanation.trim());
+        message = 'Correction submitted for learning.';
       } else if (action === 'approve') {
-        await AageService.approveReview(review.id);
-        toast.success('Review approved.');
-      } else if (action === 'reject') {
+        updated = await AageService.approveReview(review.id);
+        message = 'Review approved.';
+      } else {
         if (!rejectReason.trim()) {
           toast.error('A rejection reason is required.');
           return;
         }
-        await AageService.rejectReview(review.id, rejectReason.trim());
-        toast.success('Review rejected.');
+        updated = await AageService.rejectReview(review.id, rejectReason.trim());
+        message = 'Review rejected.';
       }
-      await Promise.all([loadDetail(), loadPending()]);
+
+      // Use the server's returned review immediately (it carries the new
+      // status/score), then refresh the page before claiming success.
+      setReview(updated);
+      const terminal = !isOpenReviewStatus(updated.status);
+      const nextReviewId = terminal
+        ? (pending.find((item) => item.id !== review.id)?.id ?? null)
+        : null;
+      const [detailOk, listOk] = await Promise.all([loadDetail(), loadPending()]);
+      if (!detailOk || !listOk) {
+        const refreshError = 'The action completed, but the workspace could not be refreshed. Review the list before deciding again.';
+        setError(refreshError);
+        toast.error(refreshError);
+        return;
+      }
+      toast.success(message);
+      if (terminal) setReviewId(nextReviewId);
     } catch (err: unknown) {
       const message = (err as { message?: string })?.message || 'Unable to complete the review action.';
       setError(message);
@@ -279,6 +318,7 @@ export default function ReviewWorkspace({
               value={courseId ?? ''}
               onChange={(event) => {
                 setCourseId(event.target.value ? Number(event.target.value) : null);
+                setPage(1);
                 setReviewId(null);
               }}
             >
@@ -312,6 +352,28 @@ export default function ReviewWorkspace({
         {error && (
           <div className="mt-4"><ErrorState message={error} onRetry={() => void (reviewId ? loadDetail() : loadPending())} /></div>
         )}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <span>
+            Open reviews · page {page} / {pageMeta.pages && pageMeta.pages > 0 ? pageMeta.pages : 1}
+            {pageMeta.total !== undefined ? ` · ${pageMeta.total} total` : ''}
+          </span>
+          <div className="flex items-center gap-2">
+            <SecondaryButton
+              className="px-2 py-1 text-xs"
+              disabled={loadingList || page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" /> Previous
+            </SecondaryButton>
+            <SecondaryButton
+              className="px-2 py-1 text-xs"
+              disabled={loadingList || (pageMeta.pages !== undefined && page >= pageMeta.pages)}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next <ChevronRight className="h-3.5 w-3.5" />
+            </SecondaryButton>
+          </div>
+        </div>
       </AagePanel>
 
       {loadingDetail && (
@@ -397,7 +459,9 @@ export default function ReviewWorkspace({
 
           <AagePanel
             title="Criterion scores"
-            description="Enter a corrected mark and a mandatory reason. Evidence is scoped to this student's submission."
+            description={isOpen
+              ? "Enter a corrected mark and a mandatory reason. Evidence is scoped to this student's submission."
+              : "Read-only: this review has already been resolved. Evidence is scoped to this student's submission."}
             icon={<MessageSquare className="h-4 w-4 text-blue-600" />}
           >
             {(result.criteria || []).length === 0 ? (
@@ -492,6 +556,7 @@ export default function ReviewWorkspace({
                             max={criterion.maximum || undefined}
                             step={0.5}
                             className={inputClass}
+                            disabled={!isOpen}
                             value={edit.marks}
                             onChange={(event) =>
                               updateEdit(criterion.criterion_key, { marks: Number(event.target.value) })
@@ -501,6 +566,7 @@ export default function ReviewWorkspace({
                         <Field label="Reason for correction">
                           <input
                             className={inputClass}
+                            disabled={!isOpen}
                             placeholder="Explain why the mark changed…"
                             value={edit.reason}
                             onChange={(event) =>
@@ -511,7 +577,7 @@ export default function ReviewWorkspace({
                         <div className="flex items-end">
                           <SecondaryButton
                             className="text-xs"
-                            disabled={busy}
+                            disabled={busy || !isOpen}
                             onClick={() => void runReviewAction('mark', criterion)}
                           >
                             <Save className="h-3.5 w-3.5" /> Save mark
@@ -525,56 +591,88 @@ export default function ReviewWorkspace({
             )}
           </AagePanel>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <AagePanel
-              title="Submit correction"
-              description="Approved corrections may become learning examples after your explicit approval."
-            >
-              <Field label="Correction explanation">
-                <textarea
-                  className={`${inputClass} min-h-24`}
-                  value={correctionExplanation}
-                  onChange={(event) => setCorrectionExplanation(event.target.value)}
-                  placeholder="Describe what the AI missed and why your marks are more accurate…"
-                />
-              </Field>
-              <div className="mt-3">
-                <SecondaryButton
-                  disabled={busy || !correctionExplanation.trim()}
-                  onClick={() => void runReviewAction('correction')}
-                >
-                  <Save className="h-4 w-4" /> Submit correction
-                </SecondaryButton>
-              </div>
-            </AagePanel>
+          {isOpen ? (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AagePanel
+                title="Submit correction"
+                description="Approved corrections may become learning examples after your explicit approval."
+              >
+                <Field label="Correction explanation">
+                  <textarea
+                    className={`${inputClass} min-h-24`}
+                    value={correctionExplanation}
+                    onChange={(event) => setCorrectionExplanation(event.target.value)}
+                    placeholder="Describe what the AI missed and why your marks are more accurate…"
+                  />
+                </Field>
+                <div className="mt-3">
+                  <SecondaryButton
+                    disabled={busy || !correctionExplanation.trim()}
+                    onClick={() => void runReviewAction('correction')}
+                  >
+                    <Save className="h-4 w-4" /> Submit correction
+                  </SecondaryButton>
+                </div>
+              </AagePanel>
 
-            <AagePanel title="Decision" description="Approve publishes the reviewed grade; rejection returns it for rework.">
-              <Field label="Rejection reason (required to reject)">
-                <textarea
-                  className={`${inputClass} min-h-20`}
-                  value={rejectReason}
-                  onChange={(event) => setRejectReason(event.target.value)}
-                  placeholder="Explain why this evaluation cannot be accepted…"
-                />
-              </Field>
-              <div className="mt-3 flex flex-wrap gap-3">
-                <PrimaryButton
-                  className="bg-green-600 hover:bg-green-700"
-                  disabled={busy}
-                  onClick={() => void runReviewAction('approve')}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Approve
-                </PrimaryButton>
-                <SecondaryButton
-                  className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300"
-                  disabled={busy || !rejectReason.trim()}
-                  onClick={() => void runReviewAction('reject')}
-                >
-                  <XCircle className="h-4 w-4" /> Reject
-                </SecondaryButton>
+              <AagePanel title="Decision" description="Approve publishes the reviewed grade; rejection returns it for rework.">
+                <Field label="Rejection reason (required to reject)">
+                  <textarea
+                    className={`${inputClass} min-h-20`}
+                    value={rejectReason}
+                    onChange={(event) => setRejectReason(event.target.value)}
+                    placeholder="Explain why this evaluation cannot be accepted…"
+                  />
+                </Field>
+                <div className="mt-3 flex flex-wrap gap-3">
+                  <PrimaryButton
+                    className="bg-green-600 hover:bg-green-700"
+                    disabled={busy}
+                    onClick={() => void runReviewAction('approve')}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Approve
+                  </PrimaryButton>
+                  <SecondaryButton
+                    className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300"
+                    disabled={busy || !rejectReason.trim()}
+                    onClick={() => void runReviewAction('reject')}
+                  >
+                    <XCircle className="h-4 w-4" /> Reject
+                  </SecondaryButton>
+                </div>
+              </AagePanel>
+            </div>
+          ) : (
+            <AagePanel
+              title="Resolved review — read only"
+              description="This review has already been decided. The summary below is retained for audit; marks and decisions are locked."
+              icon={<ShieldCheck className="h-4 w-4 text-slate-500" />}
+            >
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="rounded-lg bg-slate-50 p-4 dark:bg-slate-700/40">
+                  <p className="text-xs text-slate-500">Status</p>
+                  <div className="mt-1"><StatusBadge status={review.status} /></div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-4 dark:bg-slate-700/40">
+                  <p className="text-xs text-slate-500">Final score</p>
+                  <p className="text-xl font-bold text-slate-900 dark:text-white">
+                    {formatPercent(review.final_score ?? result.final_score)}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-4 dark:bg-slate-700/40">
+                  <p className="text-xs text-slate-500">Resolved</p>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
+                    {formatDate(review.resolved_at) || 'Not recorded'}
+                  </p>
+                </div>
               </div>
+              {review.decision_note && (
+                <p className="mt-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                  {review.decision_note}
+                </p>
+              )}
             </AagePanel>
-          </div>
+          )}
 
           <AagePanel
             title="Grading history"

@@ -783,3 +783,191 @@ def test_student_grading_status_is_scoped_to_own_submissions(app, client, env):
         query_string={"submission_type": "quiz"},
         headers=_auth(app, env["student"]))
     assert invalid.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Rubric level vocabulary, instructor catalog, open reviews
+# ---------------------------------------------------------------------------
+
+_CUSTOM_LEVELS = [
+    {"label": "Exceptional", "min_percent": 95.0,
+     "description": "Exceeds every requirement"},
+    {"label": "Pass", "min_percent": 40.0,
+     "description": "Meets the core requirement"},
+]
+
+
+def _level_criteria(*, alias_first=True):
+    criteria = []
+    for idx, key in enumerate(("c1", "c2")):
+        criterion = {
+            "key": key, "criterion_key": key, "name": key,
+            "description": f"Custom criterion {key}",
+            "weight": 50, "max_marks": 50,
+        }
+        if alias_first or idx:
+            criterion["performance_levels"] = _CUSTOM_LEVELS
+        else:
+            criterion["levels"] = _CUSTOM_LEVELS
+        criteria.append(criterion)
+    return criteria
+
+
+def test_rubric_level_alias_round_trips_into_fork_and_version(app, client, env):
+    from src.models.aage_models import RubricVersion
+    from src.services.aage.rubric_intelligence import RubricIntelligence
+
+    instructor = _auth(app, env["instructor"])
+    rubric_id = env["rubric"].id
+    updated = client.put(
+        f"/api/v1/aage/rubrics/{rubric_id}",
+        json={"criteria": _level_criteria()}, headers=instructor)
+    assert updated.status_code == 200, updated.get_data(as_text=True)
+    emitted = updated.get_json()["data"]["criteria"]
+    assert [c["levels"] for c in emitted] == [_CUSTOM_LEVELS, _CUSTOM_LEVELS]
+    assert [c["performance_levels"] for c in emitted] == [
+        _CUSTOM_LEVELS, _CUSTOM_LEVELS]
+
+    with app.app_context():
+        rows = (RubricCriterion.query.filter_by(rubric_id=rubric_id)
+                .order_by(RubricCriterion.order_index).all())
+        assert [row.performance_levels for row in rows] == [
+            _CUSTOM_LEVELS, _CUSTOM_LEVELS]
+        snapshot = RubricIntelligence.snapshot(Rubric.query.get(rubric_id))
+        for criterion in snapshot["criteria"]:
+            assert criterion["levels"] == _CUSTOM_LEVELS
+            assert criterion["performance_levels"] == _CUSTOM_LEVELS
+
+    approved = client.post(f"/api/v1/aage/rubrics/{rubric_id}/approve",
+                           headers=instructor)
+    assert approved.status_code == 200, approved.get_data(as_text=True)
+    with app.app_context():
+        version = (RubricVersion.query.filter_by(rubric_id=rubric_id)
+                   .order_by(RubricVersion.version.desc()).first())
+        assert version.payload["criteria"][0]["levels"] == _CUSTOM_LEVELS
+        assert version.payload["criteria"][0]["performance_levels"] == _CUSTOM_LEVELS
+
+    # Editing an approved rubric forks it; custom levels must survive the copy
+    # even though the ORM column is named ``performance_levels``.
+    forked = client.put(f"/api/v1/aage/rubrics/{rubric_id}",
+                        json={"title": "Forked rubric", "acknowledge_graded": True},
+                        headers=instructor)
+    assert forked.status_code == 200, forked.get_data(as_text=True)
+    fork_id = forked.get_json()["data"]["id"]
+    assert fork_id != rubric_id
+    with app.app_context():
+        fork = Rubric.query.get(fork_id)
+        assert fork.parent_rubric_id == rubric_id
+        rows = (RubricCriterion.query.filter_by(rubric_id=fork_id)
+                .order_by(RubricCriterion.order_index).all())
+        assert [row.performance_levels for row in rows] == [
+            _CUSTOM_LEVELS, _CUSTOM_LEVELS]
+
+
+def test_legacy_top_level_performance_levels_are_mapped(app, client, env):
+    instructor = _auth(app, env["instructor"])
+    rubric_id = env["rubric"].id
+    criteria = _level_criteria()
+    for criterion in criteria:
+        criterion.pop("levels", None)
+        criterion.pop("performance_levels", None)
+    updated = client.put(
+        f"/api/v1/aage/rubrics/{rubric_id}",
+        json={"performance_levels": _CUSTOM_LEVELS, "criteria": criteria},
+        headers=instructor)
+    assert updated.status_code == 200, updated.get_data(as_text=True)
+    assert updated.get_json()["meta"]["legacy_performance_levels_applied"] == 2
+    with app.app_context():
+        rows = RubricCriterion.query.filter_by(rubric_id=rubric_id).all()
+        assert [row.performance_levels for row in rows] == [
+            _CUSTOM_LEVELS, _CUSTOM_LEVELS]
+
+    # Without criteria there is nothing to apply it to — fail loudly.
+    rejected = client.put(f"/api/v1/aage/rubrics/{rubric_id}",
+                          json={"performance_levels": _CUSTOM_LEVELS},
+                          headers=instructor)
+    assert rejected.status_code == 400
+    assert rejected.get_json()["error"]["code"] == "invalid_payload"
+
+
+def test_instructor_evaluator_catalog_is_whitelisted(app, client, env):
+    # Use a private name so other suites' evaluator-version rows cannot change
+    # which version the catalog treats as active.
+    name = f"catalog_probe_{uuid.uuid4().hex[:8]}"
+    with app.app_context():
+        db.session.add(EvaluatorVersion(
+            name=name, version="v1", status="active",
+            benchmark_mae=0.25, criterion_agreement=0.9,
+            false_pass_rate=0.1, false_fail_rate=0.05,
+            override_rate=0.2, sample_count=100,
+            created_by=env["instructor"].id))
+        db.session.commit()
+
+    instructor = _auth(app, env["instructor"])
+    catalog = client.get("/api/v1/aage/evaluators", headers=instructor)
+    assert catalog.status_code == 200, catalog.get_data(as_text=True)
+    rows = catalog.get_json()["data"]
+    row = next(r for r in rows if r["name"] == name)
+    assert set(row) == {
+        "name", "version", "active", "registered", "description",
+        "supported_disciplines",
+    }
+    assert row["version"] == "v1"
+    assert row["active"] is True
+
+    denied = client.get("/api/v1/aage/evaluators",
+                        headers=_auth(app, env["student"]))
+    assert denied.status_code == 403
+
+    admin = client.get("/api/v1/aage/admin/evaluators",
+                       headers=_auth(app, env["admin"]))
+    assert admin.status_code == 200
+    admin_row = next(r for r in admin.get_json()["data"]
+                     if r["name"] == name)
+    assert admin_row["benchmark_mae"] == 0.25
+    assert admin_row["versions"]
+
+
+def test_open_review_states_listing_status_filter_and_audit(app, client, env):
+    instructor = _auth(app, env["instructor"])
+    review_id = env["review"].id
+    with app.app_context():
+        row = GradingReview.query.get(review_id)
+        row.status = "changes_requested"
+        db.session.commit()
+
+    listed = client.get("/api/v1/aage/reviews/pending", headers=instructor)
+    assert listed.status_code == 200
+    assert review_id in [row["id"] for row in listed.get_json()["data"]]
+
+    pending_only = client.get("/api/v1/aage/reviews/pending",
+                              query_string={"status": "pending"},
+                              headers=instructor)
+    assert review_id not in [row["id"] for row in pending_only.get_json()["data"]]
+    changes_only = client.get("/api/v1/aage/reviews/pending",
+                              query_string={"status": "changes_requested"},
+                              headers=instructor)
+    assert review_id in [row["id"] for row in changes_only.get_json()["data"]]
+    bad_status = client.get("/api/v1/aage/reviews/pending",
+                            query_string={"status": "nonsense"},
+                            headers=instructor)
+    assert bad_status.status_code == 400
+
+    metrics = client.get("/api/v1/aage/analytics",
+                         query_string={"course_id": env["course"].id},
+                         headers=instructor)
+    data = metrics.get_json()["data"]
+    assert data["pending_reviews"] >= 1
+    assert data["review_status_counts"]["changes_requested"] >= 1
+
+    correction = client.post(
+        f"/api/v1/aage/reviews/{review_id}/correction",
+        json={"explanation": "Sent back again for another look"},
+        headers=instructor)
+    assert correction.status_code == 200, correction.get_data(as_text=True)
+    with app.app_context():
+        audit = (GradingAuditLog.query
+                 .filter_by(action="review_correction_submitted", entity_id=review_id)
+                 .order_by(GradingAuditLog.id.desc()).first())
+        assert audit is not None
+        assert audit.before["status"] == "changes_requested"

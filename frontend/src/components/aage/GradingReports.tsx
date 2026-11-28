@@ -11,9 +11,12 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Course } from '@/types/api';
 import { UnauthorizedAccess } from '@/components/guards/UnauthorizedAccess';
 import AageService, {
+  AAGE_MAX_PER_PAGE,
+  SubmissionType,
   isAageNotFound,
 } from '@/services/aage.service';
 import type { AageAnalytics } from '@/services/aage.service';
@@ -48,6 +51,10 @@ export default function GradingReports({
   const [stats, setStats] = useState<AageAnalytics | null>(null);
   const [rows, setRows] = useState<ReportRow[]>([]);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [resultStatus, setResultStatus] = useState<string>('');
+  const [submissionType, setSubmissionType] = useState<SubmissionType | ''>('');
+  const [page, setPage] = useState(1);
+  const [resultMeta, setResultMeta] = useState<{ total?: number; pages?: number }>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,7 +68,13 @@ export default function GradingReports({
     setError(null);
     const [analyticsResult, resultsResult, reviewsResult] = await Promise.allSettled([
       AageService.getAnalytics(scope),
-      AageService.getGradingResultsPage({ course_id: scope, per_page: 100 }),
+      AageService.getGradingResultsPage({
+        course_id: scope,
+        status: resultStatus || undefined,
+        submission_type: submissionType || undefined,
+        page,
+        per_page: AAGE_MAX_PER_PAGE,
+      }),
       AageService.getPendingReviews({ course_id: scope, per_page: 1 }),
     ]);
 
@@ -80,6 +93,14 @@ export default function GradingReports({
       setStats(null);
     }
     if (resultsResult.status === 'fulfilled') {
+      setResultMeta({
+        ...(typeof resultsResult.value.meta.total === 'number'
+          ? { total: resultsResult.value.meta.total }
+          : {}),
+        ...(typeof resultsResult.value.meta.pages === 'number'
+          ? { pages: resultsResult.value.meta.pages }
+          : {}),
+      });
       setRows(
         resultsResult.value.items
           .map((item) => projectReportRow(item))
@@ -87,12 +108,13 @@ export default function GradingReports({
       );
     } else {
       setRows([]);
+      setResultMeta({});
     }
     setPendingCount(
       reviewsResult.status === 'fulfilled' ? reviewsResult.value.total ?? null : null
     );
     setLoading(false);
-  }, [role]);
+  }, [role, resultStatus, submissionType, page]);
 
   useEffect(() => {
     void load(courseId);
@@ -126,14 +148,46 @@ export default function GradingReports({
             <select
               className={inputClass}
               value={courseId ?? ''}
-              onChange={(event) =>
-                setCourseId(event.target.value ? Number(event.target.value) : undefined)
-              }
+              onChange={(event) => {
+                setCourseId(event.target.value ? Number(event.target.value) : undefined);
+                setPage(1);
+              }}
             >
               {canViewAllCourses(role) && <option value="">All courses</option>}
               {courses.map((course) => (
                 <option key={course.id} value={course.id}>{course.title}</option>
               ))}
+            </select>
+          </Field>
+          <Field label="Result status">
+            <select
+              className={inputClass}
+              value={resultStatus}
+              onChange={(event) => {
+                setResultStatus(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All statuses</option>
+              <option value="draft">Draft</option>
+              <option value="pending_review">Pending review</option>
+              <option value="approved">Approved</option>
+              <option value="published">Published</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </Field>
+          <Field label="Submission type">
+            <select
+              className={inputClass}
+              value={submissionType}
+              onChange={(event) => {
+                setSubmissionType(event.target.value as SubmissionType | '');
+                setPage(1);
+              }}
+            >
+              <option value="">All types</option>
+              <option value="assignment">Assignment</option>
+              <option value="project">Project</option>
             </select>
           </Field>
           {!canViewAllCourses(role) && (
@@ -260,6 +314,28 @@ export default function GradingReports({
                 </table>
               </div>
             )}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <span>
+                Page {page} / {resultMeta.pages && resultMeta.pages > 0 ? resultMeta.pages : 1}
+                {resultMeta.total !== undefined ? ` · ${resultMeta.total} results` : ''}
+              </span>
+              <div className="flex items-center gap-2">
+                <SecondaryButton
+                  className="px-2 py-1 text-xs"
+                  disabled={loading || page <= 1}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                </SecondaryButton>
+                <SecondaryButton
+                  className="px-2 py-1 text-xs"
+                  disabled={loading || (resultMeta.pages !== undefined && page >= resultMeta.pages)}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </SecondaryButton>
+              </div>
+            </div>
           </AagePanel>
         </>
       )}

@@ -27,6 +27,8 @@ import {
   AlertTriangle,
   Clock,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   ExternalLink,
   Loader2,
@@ -178,7 +180,11 @@ export default function AIGradingDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
+  // Backend caps history pages at 100; keep the dashboard well inside it.
   const perPage = 10;
+  const [page, setPage] = useState(1);
+  const [historyMeta, setHistoryMeta] = useState<{ total?: number; pages?: number }>({});
+  const [reviewFilter, setReviewFilter] = useState<"all" | "needs" | "reviewed">("all");
 
   // ── Assessment Contract Preview state ─────────────────────────
   const [assignmentIdInput, setAssignmentIdInput] = useState("");
@@ -261,7 +267,7 @@ export default function AIGradingDashboardPage() {
           : Promise.resolve(null),
         ExcelGradingService.getHistory({
           course_id: courseIdNum > 0 ? courseIdNum : undefined,
-          page: 1,
+          page,
           per_page: perPage,
         }).catch(() => null),
       ]);
@@ -269,12 +275,16 @@ export default function AIGradingDashboardPage() {
       setStats(statsData);
       setLearningStats(learningData);
       setRecentResults(historyData?.results || []);
+      setHistoryMeta({
+        ...(typeof historyData?.total === "number" ? { total: historyData.total } : {}),
+        ...(typeof historyData?.pages === "number" ? { pages: historyData.pages } : {}),
+      });
     } catch (err: any) {
       setError(err.message || "Failed to load AI grading data");
     } finally {
       setLoading(false);
     }
-  }, [selectedCourseId]);
+  }, [selectedCourseId, page]);
 
   useEffect(() => {
     if (courses.length > 0) {
@@ -283,9 +293,25 @@ export default function AIGradingDashboardPage() {
   }, [fetchData, courses.length]);
 
   // ── Derived data ────────────────────────────────────────────
+  const visibleResults = useMemo(() => {
+    if (reviewFilter === "all") return recentResults;
+    return recentResults.filter((result) => {
+      const needsReview = result.manual_review_required && !result.instructor_reviewed;
+      return reviewFilter === "needs" ? needsReview : !needsReview;
+    });
+  }, [recentResults, reviewFilter]);
+
+  // Prefer the course-wide stat when available; otherwise be explicit that the
+  // count only covers the currently fetched page.
   const pendingReviewCount = useMemo(() => {
-    return recentResults.filter((r) => r.manual_review_required && !r.instructor_reviewed).length;
-  }, [recentResults]);
+    if (stats?.review_status?.pending_review !== undefined) {
+      return stats.review_status.pending_review;
+    }
+    return visibleResults.filter(
+      (r) => r.manual_review_required && !r.instructor_reviewed
+    ).length;
+  }, [stats, visibleResults]);
+  const pendingCountIsPageScoped = stats?.review_status?.pending_review === undefined;
 
   const totalTheoryTasks = useMemo(() => {
     let count = 0;
@@ -336,6 +362,7 @@ export default function AIGradingDashboardPage() {
             onChange={(e) => {
               const val = e.target.value;
               setSelectedCourseId(val === "all" ? "all" : parseInt(val));
+              setPage(1);
             }}
             className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none cursor-pointer"
           >
@@ -345,6 +372,22 @@ export default function AIGradingDashboardPage() {
                 {c.title}
               </option>
             ))}
+          </select>
+        </div>
+        <div className="relative">
+          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <select
+            value={reviewFilter}
+            onChange={(e) => {
+              setReviewFilter(e.target.value as "all" | "needs" | "reviewed");
+              setPage(1);
+            }}
+            aria-label="Filter results by review status"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none cursor-pointer"
+          >
+            <option value="all">All reviews</option>
+            <option value="needs">Needs review</option>
+            <option value="reviewed">Reviewed</option>
           </select>
         </div>
         <button
@@ -433,7 +476,9 @@ export default function AIGradingDashboardPage() {
           <StatCard
             label="Pending Review"
             value={pendingReviewCount}
-            sub={`${totalTheoryTasks} theory questions flagged`}
+            sub={pendingCountIsPageScoped
+              ? `On this page · ${totalTheoryTasks} theory questions flagged`
+              : `${totalTheoryTasks} theory questions flagged`}
             icon={AlertTriangle}
             gradient={`from-${pendingReviewCount > 0 ? "amber-500 to-orange-400" : "green-500 to-emerald-400"}`}
             bgLight={pendingReviewCount > 0 ? "bg-amber-50 dark:bg-amber-950/30" : "bg-green-50 dark:bg-green-950/30"}
@@ -546,13 +591,13 @@ export default function AIGradingDashboardPage() {
                   Recent AI Grading Results
                 </h3>
                 <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                  ({recentResults.length} result{recentResults.length !== 1 ? "s" : ""})
+                  ({visibleResults.length} result{visibleResults.length !== 1 ? "s" : ""} on this page)
                 </span>
               </div>
             </div>
           </div>
 
-          {recentResults.length === 0 ? (
+          {visibleResults.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-4">
               <div className="rounded-full bg-gray-100 dark:bg-gray-800 p-4">
                 <Brain className="h-8 w-8 text-gray-400" />
@@ -579,7 +624,7 @@ export default function AIGradingDashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {recentResults.map((r) => {
+                  {visibleResults.map((r) => {
                     const pct = r.max_score > 0 ? Math.round((r.total_score / r.max_score) * 100) : 0;
                     const meta = r.rubric_data?.rubric_metadata;
                     const needsReview = r.manual_review_required && !r.instructor_reviewed;
@@ -816,6 +861,29 @@ export default function AIGradingDashboardPage() {
               </table>
             </div>
           )}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-gray-700">
+            <span>
+              Page {page} / {historyMeta.pages && historyMeta.pages > 0 ? historyMeta.pages : 1}
+              {historyMeta.total !== undefined ? ` · ${historyMeta.total} results` : ""}
+              {reviewFilter !== "all" ? " · filter applies to this page" : ""}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={loading || page <= 1}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-40"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              </button>
+              <button
+                onClick={() => setPage((current) => current + 1)}
+                disabled={loading || (historyMeta.pages !== undefined && page >= historyMeta.pages)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 disabled:opacity-40"
+              >
+                Next <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

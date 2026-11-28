@@ -11,7 +11,12 @@ from typing import Optional
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, Assignment, ApplicationWindow
+from ..models.course_models import (
+    Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission,
+    Announcement, Assignment, AssignmentSubmission, Project, ProjectSubmission,
+    ApplicationWindow,
+)
+from ..models.student_models import LessonCompletion
 from ..services.background_service import background_service
 from ..utils.email_utils import send_email
 from ..utils.email_templates import course_announcement_email
@@ -208,6 +213,47 @@ def get_instructor_dashboard():
             )
         ).scalar() or 0
         
+        course_ids = [c.id for c in courses]
+
+        # Ungraded assignment/project work and pending revisions belong on the
+        # dashboard too; the old quiz-only count hid most grading work.
+        ungraded_assignments = AssignmentSubmission.query.filter(
+            AssignmentSubmission.assignment_id.in_(
+                db.session.query(Assignment.id).filter(
+                    Assignment.course_id.in_(course_ids)
+                )
+            ),
+            AssignmentSubmission.grade.is_(None),
+            AssignmentSubmission.submitted_at.isnot(None),
+        ).count()
+        ungraded_projects = ProjectSubmission.query.filter(
+            ProjectSubmission.project_id.in_(
+                db.session.query(Project.id).filter(
+                    Project.course_id.in_(course_ids)
+                )
+            ),
+            ProjectSubmission.grade.is_(None),
+            ProjectSubmission.submitted_at.isnot(None),
+        ).count()
+        pending_assignment_revisions = LessonCompletion.query.filter(
+            LessonCompletion.lesson_id.in_(
+                db.session.query(Lesson.id).join(
+                    Assignment, Assignment.lesson_id == Lesson.id
+                ).filter(Assignment.course_id.in_(course_ids))
+            ),
+            LessonCompletion.assignment_needs_resubmission.is_(True),
+        ).count()
+        pending_project_revisions = ProjectSubmission.query.filter(
+            ProjectSubmission.project_id.in_(
+                db.session.query(Project.id).filter(
+                    Project.course_id.in_(course_ids)
+                )
+            ),
+            ProjectSubmission.modification_requested.is_(True),
+            ProjectSubmission.can_resubmit.is_(True),
+        ).count()
+        pending_submissions += ungraded_assignments + ungraded_projects
+
         # Get recent enrollments
         recent_enrollments = db.session.query(Enrollment).filter(
             Enrollment.course_id.in_([c.id for c in courses])
@@ -222,6 +268,14 @@ def get_instructor_dashboard():
             "taughtCourses": [course.to_dict() for course in courses],
             "totalStudents": total_students,
             "pendingGradingItems": pending_submissions,
+            "pendingRevisionItems": (
+                pending_assignment_revisions + pending_project_revisions
+            ),
+            "gradingBreakdown": {
+                "quizzes": pending_submissions - ungraded_assignments - ungraded_projects,
+                "assignments": ungraded_assignments,
+                "projects": ungraded_projects,
+            },
             "recentEnrollments": [enrollment.to_dict() for enrollment in recent_enrollments],
             "recentAnnouncements": [
                 {

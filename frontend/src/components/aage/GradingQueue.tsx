@@ -6,6 +6,8 @@ import {
   AlertCircle,
   Ban,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   Filter,
   Loader2,
@@ -17,11 +19,14 @@ import {
 import { Course } from '@/types/api';
 import GradingService, { AssignmentSubmission, ProjectSubmission } from '@/services/grading.service';
 import AageService, {
+  AAGE_MAX_PER_PAGE,
   GradingJob,
   GradingQueueFilters,
   GradingResult,
   Review,
   SubmissionType,
+  clampPage,
+  confidenceBand,
 } from '@/services/aage.service';
 import {
   AagePanel,
@@ -55,15 +60,115 @@ interface QueueRow {
 }
 
 type ConfidenceFilter = 'all' | 'high' | 'medium' | 'low';
+type ReviewFilter = 'all' | 'yes' | 'no';
+type PageMeta = { total?: number; pages?: number };
 
 const terminalStatuses = new Set(['succeeded', 'failed', 'cancelled', 'timed_out', 'published']);
+const PAGE_SIZE = AAGE_MAX_PER_PAGE;
 
-/** Backend confidence is already a 0-100 percentage. */
-function confidenceBand(value: number | undefined): ConfidenceFilter {
-  if (value === undefined || !Number.isFinite(value)) return 'low';
-  if (value >= 80) return 'high';
-  if (value >= 50) return 'medium';
-  return 'low';
+function submissionKey(submissionType: SubmissionType, submissionId: number): string {
+  return `${submissionType}:${submissionId}`;
+}
+
+function resultEvaluator(result: GradingResult): string | undefined {
+  const names = (result.evaluator_versions || []).filter(Boolean);
+  return names.length ? names.join(', ') : undefined;
+}
+
+/** A result row for jobs whose own page has not been loaded yet. */
+function rowFromResult(result: GradingResult): QueueRow {
+  return {
+    key: `result-${result.id}`,
+    jobId: result.job_id ?? undefined,
+    resultId: result.id,
+    submissionId: result.submission_id,
+    submissionType: result.submission_type,
+    assessmentId: result.assessment_id,
+    courseId: result.course_id ?? undefined,
+    studentId: result.student_id ?? undefined,
+    status: result.is_official ? 'published' : result.status,
+    confidence: result.confidence,
+    requiresReview: result.requires_review,
+    evaluator: resultEvaluator(result),
+    submittedAt: result.created_at,
+    source: 'aage',
+  };
+}
+
+/** Merge result data into a job row without inventing missing values. */
+function mergeResult(row: QueueRow, result: GradingResult | undefined): QueueRow {
+  if (!result) return row;
+  return {
+    ...row,
+    jobId: row.jobId ?? result.job_id ?? undefined,
+    resultId: row.resultId ?? result.id,
+    assessmentId: row.assessmentId ?? result.assessment_id,
+    courseId: row.courseId ?? result.course_id ?? undefined,
+    studentId: row.studentId ?? result.student_id ?? undefined,
+    status: result.is_official ? 'published' : row.status,
+    confidence: result.confidence,
+    requiresReview: result.requires_review,
+    evaluator: row.evaluator ?? resultEvaluator(result),
+    submittedAt: row.submittedAt ?? result.created_at,
+  };
+}
+
+function ResultLookup(results: GradingResult[]) {
+  const byResultId = new Map<number, GradingResult>();
+  const bySubmission = new Map<string, GradingResult>();
+  results.forEach((result) => {
+    byResultId.set(result.id, result);
+    bySubmission.set(submissionKey(result.submission_type, result.submission_id), result);
+  });
+  return {
+    find(row: QueueRow): GradingResult | undefined {
+      return (row.resultId !== undefined ? byResultId.get(row.resultId) : undefined) ??
+        bySubmission.get(submissionKey(row.submissionType, row.submissionId));
+    },
+  };
+}
+
+function Pager({
+  page,
+  pages,
+  total,
+  label,
+  disabled,
+  onPage,
+}: {
+  page: number;
+  pages?: number;
+  total?: number;
+  label: string;
+  disabled?: boolean;
+  onPage: (page: number) => void;
+}) {
+  const current = clampPage(page, pages);
+  const last = pages && pages > 0 ? pages : 1;
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <span>
+        {label}: page {current} / {last}
+        {total !== undefined ? ` · ${total} total` : ''}
+      </span>
+      <div className="flex items-center gap-2">
+        <SecondaryButton
+          className="px-2 py-1 text-xs"
+          disabled={disabled || current <= 1}
+          onClick={() => onPage(current - 1)}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" /> Previous
+        </SecondaryButton>
+        <SecondaryButton
+          className="px-2 py-1 text-xs"
+          disabled={disabled || current >= last}
+          onClick={() => onPage(current + 1)}
+        >
+          Next <ChevronRight className="h-3.5 w-3.5" />
+        </SecondaryButton>
+      </div>
+    </div>
+  );
 }
 
 export default function GradingQueue({
@@ -75,7 +180,7 @@ export default function GradingQueue({
 }) {
   const [filters, setFilters] = useState<GradingQueueFilters>({});
   const [confidence, setConfidence] = useState<ConfidenceFilter>('all');
-  const [requiresReview, setRequiresReview] = useState<'all' | 'yes' | 'no'>('all');
+  const [requiresReview, setRequiresReview] = useState<ReviewFilter>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [rows, setRows] = useState<QueueRow[]>([]);
@@ -86,23 +191,34 @@ export default function GradingQueue({
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [usingFallback, setUsingFallback] = useState(false);
+  const [page, setPage] = useState(1);
+  const [queueMeta, setQueueMeta] = useState<PageMeta>({});
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewMeta, setReviewMeta] = useState<PageMeta>({});
 
   const setFilter = <K extends keyof GradingQueueFilters>(key: K, value: GradingQueueFilters[K]) => {
     setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
   };
 
   const loadReviews = useCallback(async (courseId?: number) => {
     try {
-      const response = await AageService.getPendingReviews({ course_id: courseId, per_page: 200 });
+      const response = await AageService.getPendingReviews({
+        course_id: courseId,
+        page: reviewPage,
+        per_page: PAGE_SIZE,
+      });
       const mapping: Record<number, number> = {};
       response.reviews.forEach((review: Review) => {
         if (review.result_id) mapping[review.result_id] = review.id;
       });
       setReviewMap(mapping);
+      setReviewMeta({ total: response.total, pages: response.pages });
     } catch {
       setReviewMap({});
+      setReviewMeta({});
     }
-  }, []);
+  }, [reviewPage]);
 
   const load = useCallback(
     async (silent = false) => {
@@ -113,50 +229,77 @@ export default function GradingQueue({
         let loadedRows: QueueRow[] = [];
         setUsingFallback(false);
 
-        try {
-          const jobs = await AageService.listJobs({
-            course_id: filters.course_id,
-            submission_type: filters.submission_type,
-            status: filters.status,
-            evaluator: filters.evaluator,
-            per_page: 200,
-          });
-          loadedRows = jobs.map((job: GradingJob) => ({
-            key: `job-${job.id}`,
-            jobId: job.id,
-            resultId: job.result_id ?? undefined,
-            submissionId: job.submission_id,
-            submissionType: job.submission_type,
-            assessmentId: job.assessment_id,
-            courseId: job.course_id ?? undefined,
-            studentId: job.student_id ?? undefined,
-            status: job.status,
-            evaluator: Array.isArray(job.evaluators) ? job.evaluators.join(', ') : undefined,
-            submittedAt: job.queued_at || job.created_at || undefined,
-            source: 'aage',
-          }));
+        // Confidence/review filtering lives on the result endpoint. Request
+        // one full backend page (cap 100) and merge by result_id or submission
+        // identity instead of enriching an arbitrary first-N rows.
+        const resultFilters: GradingQueueFilters = {
+          course_id: filters.course_id,
+          assessment_id: filters.assessment_id,
+          submission_type: filters.submission_type,
+          evaluator: filters.evaluator,
+          page,
+          per_page: PAGE_SIZE,
+          ...(dateFrom ? { date_from: dateFrom } : {}),
+          ...(dateTo ? { date_to: dateTo } : {}),
+          ...(confidence !== 'all' ? { confidence } : {}),
+          ...(requiresReview !== 'all' ? { requires_review: requiresReview === 'yes' } : {}),
+        };
 
-          // Enrich a bounded number of jobs with result confidence / review flags.
-          const withResults = loadedRows.filter((row) => row.resultId).slice(0, 25);
-          const results = await Promise.all(
-            withResults.map(async (row) => {
-              try {
-                return { key: row.key, result: await AageService.getResult(row.resultId!) };
-              } catch {
-                return { key: row.key, result: null };
-              }
-            })
-          );
-          const resultByKey = new Map(results.filter((item) => item.result).map((item) => [item.key, item.result!]));
-          loadedRows = loadedRows.map((row) => {
-            const result = resultByKey.get(row.key);
-            if (!result) return row;
-            return {
-              ...row,
-              confidence: result.confidence,
-              requiresReview: result.requires_review,
-              status: result.is_official ? 'published' : row.status,
+        let resultsPage: Awaited<ReturnType<typeof AageService.getGradingResultsPage>> | null = null;
+        try {
+          resultsPage = await AageService.getGradingResultsPage(resultFilters);
+        } catch {
+          resultsPage = null;
+        }
+        const results = resultsPage?.items ?? [];
+        const lookup = ResultLookup(results);
+
+        try {
+          const jobsPage = await AageService.getGradingJobsPage({
+            course_id: filters.course_id,
+            assessment_id: filters.assessment_id,
+            submission_type: filters.submission_type,
+            // "not_started" is a UI-only state; the backend job list only
+            // accepts real job statuses.
+            status: filters.status === 'not_started' ? undefined : filters.status,
+            evaluator: filters.evaluator,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
+            page,
+            per_page: PAGE_SIZE,
+          });
+          loadedRows = jobsPage.items.map((job: GradingJob) => {
+            const row: QueueRow = {
+              key: `job-${job.id}`,
+              jobId: job.id,
+              resultId: job.result_id ?? undefined,
+              submissionId: job.submission_id,
+              submissionType: job.submission_type,
+              assessmentId: job.assessment_id,
+              courseId: job.course_id ?? undefined,
+              studentId: job.student_id ?? undefined,
+              status: job.status,
+              evaluator: Array.isArray(job.evaluators) ? job.evaluators.join(', ') : undefined,
+              submittedAt: job.queued_at || job.created_at || undefined,
+              source: 'aage',
             };
+            return mergeResult(row, lookup.find(row));
+          });
+          // Results without a job on this page still belong to the queue —
+          // especially when the result endpoint is applying our filters.
+          // Dedupe against the rows already loaded from jobs, not against the
+          // lookup built from these same results (which would skip all of them).
+          results.forEach((result) => {
+            if (loadedRows.some((row) =>
+              row.resultId === result.id ||
+              (row.submissionType === result.submission_type &&
+                row.submissionId === result.submission_id))) return;
+            loadedRows.push(rowFromResult(result));
+          });
+          const { total, pages } = jobsPage.meta;
+          setQueueMeta({
+            ...(typeof total === 'number' ? { total } : {}),
+            ...(typeof pages === 'number' ? { pages } : {}),
           });
         } catch {
           // Deployment may only expose the single-resource contract. Fall back
@@ -165,43 +308,77 @@ export default function GradingQueue({
           const submissionFilters = {
             course_id: filters.course_id,
             status: 'all' as const,
-            page: 1,
-            per_page: 100,
+            page,
+            per_page: PAGE_SIZE,
           };
           const submissions: Array<AssignmentSubmission | ProjectSubmission> = [];
+          let total = 0;
+          let pages = 1;
           if (!filters.submission_type || filters.submission_type === 'assignment') {
             try {
-              submissions.push(
-                ...(await GradingService.getAssignmentSubmissions(submissionFilters)).submissions
-              );
+              const response = await GradingService.getAssignmentSubmissions(submissionFilters);
+              submissions.push(...response.submissions);
+              total += response.pagination?.total ?? response.submissions.length;
+              pages = Math.max(pages, response.pagination?.pages ?? 1);
             } catch {
               /* handled by empty state */
             }
           }
           if (!filters.submission_type || filters.submission_type === 'project') {
             try {
-              submissions.push(
-                ...(await GradingService.getProjectSubmissions(submissionFilters)).submissions
-              );
+              const response = await GradingService.getProjectSubmissions(submissionFilters);
+              submissions.push(...response.submissions);
+              total += response.pagination?.total ?? response.submissions.length;
+              pages = Math.max(pages, response.pagination?.pages ?? 1);
             } catch {
               /* handled by empty state */
             }
           }
-          loadedRows = submissions.map((submission) => ({
-            key: `submission-${submission.id}`,
-            submissionId: submission.id,
-            submissionType: ('assignment_id' in submission ? 'assignment' : 'project') as SubmissionType,
-            assessmentId: ('assignment_id' in submission ? submission.assignment_id : submission.project_id),
-            courseId: submission.course_id,
-            studentId: submission.student_id,
-            status: 'not_started',
-            submittedAt: submission.submitted_at,
-            source: 'legacy',
-          }));
+          loadedRows = submissions.map((submission) => {
+            const submissionType = ('assignment_id' in submission ? 'assignment' : 'project') as SubmissionType;
+            const row: QueueRow = {
+              key: `submission-${submissionType}-${submission.id}`,
+              submissionId: submission.id,
+              submissionType,
+              assessmentId: ('assignment_id' in submission ? submission.assignment_id : submission.project_id),
+              courseId: submission.course_id,
+              studentId: submission.student_id,
+              status: 'not_started',
+              submittedAt: submission.submitted_at,
+              source: 'legacy',
+            };
+            return mergeResult(row, lookup.find(row));
+          });
+          setQueueMeta({ total, pages });
+        }
+
+        if (!resultsPage) {
+          // No list endpoint for results on this deployment: enrich every row
+          // on the current page (never a fixed first-N slice), then filter.
+          const enriched = await Promise.all(
+            loadedRows.map(async (row) => {
+              if (!row.resultId) return row;
+              try {
+                return mergeResult(row, await AageService.getResult(row.resultId));
+              } catch {
+                return row;
+              }
+            })
+          );
+          loadedRows = enriched;
+        }
+
+        if (confidence !== 'all' || requiresReview !== 'all') {
+          loadedRows = loadedRows.filter((row) => {
+            // Missing enrichment is never a match for either filter.
+            if (confidence !== 'all' && confidenceBand(row.confidence) !== confidence) return false;
+            if (requiresReview === 'yes' && row.requiresReview !== true) return false;
+            if (requiresReview === 'no' && row.requiresReview !== false) return false;
+            return true;
+          });
         }
 
         setRows(loadedRows);
-        void loadReviews(filters.course_id);
       } catch (err: unknown) {
         setError((err as { message?: string })?.message || 'Unable to load the grading queue.');
       } finally {
@@ -209,15 +386,23 @@ export default function GradingQueue({
         setRefreshing(false);
       }
     },
-    [filters, loadReviews]
+    [filters, confidence, requiresReview, dateFrom, dateTo, page]
   );
 
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.course_id, filters.submission_type, filters.status, filters.evaluator, filters.assessment_id]);
+  }, [filters.course_id, filters.submission_type, filters.status, filters.evaluator,
+    filters.assessment_id, confidence, requiresReview, dateFrom, dateTo, page]);
 
-  // Poll active jobs so status changes appear without a manual refresh.
+  useEffect(() => {
+    void loadReviews(filters.course_id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.course_id, reviewPage]);
+
+  // Poll active jobs so status changes appear without a manual refresh. When a
+  // job gains a result, enrich that row immediately instead of waiting for a
+  // full reload.
   useEffect(() => {
     const activeJobs = rows.filter(
       (row) => row.jobId && !terminalStatuses.has(row.status)
@@ -238,17 +423,41 @@ export default function GradingQueue({
       const byKey = new Map<string, GradingJob>(
         updates.filter(Boolean).map((item) => [item!.key, item!.job] as [string, GradingJob])
       );
+      const discovered = await Promise.all(
+        activeJobs.map(async (row) => {
+          const job = byKey.get(row.key);
+          const resultId = job?.result_id ?? undefined;
+          if (!resultId || (row.resultId === resultId && row.confidence !== undefined)) return null;
+          try {
+            return { key: row.key, result: await AageService.getResult(resultId) };
+          } catch {
+            return null;
+          }
+        })
+      );
+      const resultByKey = new Map(
+        discovered.filter(Boolean).map((item) => [item!.key, item!.result] as [string, GradingResult])
+      );
       setRows((current) =>
         current.map((row) => {
           const job = byKey.get(row.key);
-          return job
-            ? { ...row, status: job.status, resultId: job.result_id ?? row.resultId }
+          const result = resultByKey.get(row.key);
+          let next = job
+            ? {
+                ...row,
+                status: job.status,
+                resultId: job.result_id ?? row.resultId,
+                evaluator: row.evaluator ??
+                  (Array.isArray(job.evaluators) ? job.evaluators.join(', ') : undefined),
+              }
             : row;
+          if (result) next = mergeResult(next, result);
+          return next;
         })
       );
     };
 
-    const interval = window.setInterval(poll, 15_000);
+    const interval = window.setInterval(() => void poll(), 15_000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void poll();
     };
@@ -269,13 +478,19 @@ export default function GradingQueue({
       if (filters.status && row.status !== filters.status) return false;
       if (confidence !== 'all' && confidenceBand(row.confidence) !== confidence) return false;
       if (requiresReview === 'yes' && row.requiresReview !== true) return false;
-      if (requiresReview === 'no' && row.requiresReview === true) return false;
+      if (requiresReview === 'no' && row.requiresReview !== false) return false;
       if (dateFrom && row.submittedAt && new Date(row.submittedAt) < new Date(dateFrom)) return false;
       if (dateTo && row.submittedAt && new Date(row.submittedAt) > new Date(`${dateTo}T23:59:59`))
         return false;
       return true;
     });
   }, [rows, filters, confidence, requiresReview, dateFrom, dateTo]);
+
+  // A row with no result data must not silently behave like "low confidence"
+  // or "no review needed". Show the data gap and lock the derived filters.
+  const unenrichedCount = visibleRows.filter(
+    (row) => row.confidence === undefined || row.requiresReview === undefined
+  ).length;
 
   const runAction = async (row: QueueRow, action: 'start' | 'retry' | 'cancel' | 'publish') => {
     setBusyKey(row.key);
@@ -297,7 +512,7 @@ export default function GradingQueue({
         await AageService.publishResult(row.resultId);
         toast.success('Result published to the student.');
       }
-      await load(true);
+      await Promise.all([load(true), loadReviews(filters.course_id)]);
     } catch (err: unknown) {
       const message = (err as { message?: string })?.message || `Unable to ${action} this job.`;
       setError(message);
@@ -322,6 +537,7 @@ export default function GradingQueue({
     setRequiresReview('all');
     setDateFrom('');
     setDateTo('');
+    setPage(1);
   };
 
   return (
@@ -341,9 +557,10 @@ export default function GradingQueue({
             <select
               className={inputClass}
               value={filters.course_id ?? ''}
-              onChange={(event) =>
-                setFilter('course_id', event.target.value ? Number(event.target.value) : undefined)
-              }
+              onChange={(event) => {
+                setFilter('course_id', event.target.value ? Number(event.target.value) : undefined);
+                setReviewPage(1);
+              }}
             >
               <option value="">All courses</option>
               {courses.map((course) => (
@@ -407,7 +624,12 @@ export default function GradingQueue({
             <select
               className={inputClass}
               value={confidence}
-              onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}
+              disabled={unenrichedCount > 0}
+              title={unenrichedCount > 0 ? 'Some visible rows have no result data yet.' : undefined}
+              onChange={(event) => {
+                setConfidence(event.target.value as ConfidenceFilter);
+                setPage(1);
+              }}
             >
               <option value="all">Any confidence</option>
               <option value="high">High (≥ 80%)</option>
@@ -419,7 +641,12 @@ export default function GradingQueue({
             <select
               className={inputClass}
               value={requiresReview}
-              onChange={(event) => setRequiresReview(event.target.value as 'all' | 'yes' | 'no')}
+              disabled={unenrichedCount > 0}
+              title={unenrichedCount > 0 ? 'Some visible rows have no result data yet.' : undefined}
+              onChange={(event) => {
+                setRequiresReview(event.target.value as ReviewFilter);
+                setPage(1);
+              }}
             >
               <option value="all">Any</option>
               <option value="yes">Requires review</option>
@@ -431,7 +658,10 @@ export default function GradingQueue({
               className={inputClass}
               type="date"
               value={dateFrom}
-              onChange={(event) => setDateFrom(event.target.value)}
+              onChange={(event) => {
+                setDateFrom(event.target.value);
+                setPage(1);
+              }}
             />
           </Field>
           <Field label="Submitted to">
@@ -439,7 +669,10 @@ export default function GradingQueue({
               className={inputClass}
               type="date"
               value={dateTo}
-              onChange={(event) => setDateTo(event.target.value)}
+              onChange={(event) => {
+                setDateTo(event.target.value);
+                setPage(1);
+              }}
             />
           </Field>
         </div>
@@ -449,6 +682,16 @@ export default function GradingQueue({
           </button>
         </div>
 
+        {unenrichedCount > 0 && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              {unenrichedCount} visible row{unenrichedCount === 1 ? ' has' : 's have'} no grading
+              result yet. Confidence and review filters are disabled because missing data is not
+              the same as low confidence or “no review needed”.
+            </span>
+          </div>
+        )}
         {usingFallback && (
           <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -459,6 +702,13 @@ export default function GradingQueue({
         {error && (
           <div className="mt-4"><ErrorState message={error} onRetry={() => void load()} /></div>
         )}
+        <Pager
+          label="Pending review map"
+          page={reviewPage}
+          pages={reviewMeta.pages}
+          total={reviewMeta.total}
+          onPage={setReviewPage}
+        />
       </AagePanel>
 
       <AagePanel
@@ -564,6 +814,13 @@ export default function GradingQueue({
             </table>
           </div>
         )}
+        <Pager
+          label="Queue"
+          page={page}
+          pages={queueMeta.pages}
+          total={queueMeta.total}
+          onPage={setPage}
+        />
       </AagePanel>
 
       {selectedResult && (

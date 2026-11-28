@@ -3544,12 +3544,43 @@ def submit_project(project_id):
                 )
 
             db.session.commit()
+
+            # In-app notification is the reliable channel; SMTP is optional.
+            try:
+                from ..services.notification_service import notify_resubmission_received
+                owner = User.query.get(project.course.instructor_id) if project.course else None
+                student = User.query.get(current_user_id)
+                if owner and student:
+                    notify_resubmission_received(
+                        owner.id, student, project,
+                        course_id=project.course_id, is_project=True,
+                    )
+            except Exception as notif_err:
+                logger.warning(
+                    f"In-app project resubmission notification failed (non-blocking): {notif_err}"
+                )
+
             aage_job = enqueue_for_submission(
                 submission_type='project',
                 submission_id=existing_submission.id,
                 student_id=current_user_id,
                 force=is_resubmission,
             )
+
+            try:
+                from ..utils.email_notifications import notify_instructor_of_submission
+                notify_instructor_of_submission(
+                    existing_submission,
+                    is_project=True,
+                    has_text=bool(data.get('text_content')),
+                    team_size=len(team_members) if project.collaboration_allowed else 0,
+                    is_resubmission=is_resubmission,
+                )
+            except Exception as notif_err:
+                logger.warning(
+                    f"Instructor project submission notification failed (non-blocking): {notif_err}"
+                )
+
             payload = existing_submission.to_dict()
             payload['aage_job_id'] = aage_job.id if aage_job else None
             return jsonify({
@@ -3595,6 +3626,22 @@ def submit_project(project_id):
             )
 
         db.session.commit()
+
+        try:
+            from ..services.notification_service import notify_system
+            course = Course.query.get(project.course_id)
+            owner = User.query.get(course.instructor_id) if course else None
+            if owner:
+                notify_system(
+                    owner.id,
+                    f"Project submitted: {project.title}",
+                    "A student submitted a project. Tap to review it.",
+                    action_url="/instructor/grading",
+                )
+        except Exception as notif_err:
+            logger.warning(
+                f"In-app project submission notification failed (non-blocking): {notif_err}"
+            )
 
         # Mirror the file-upload route: AAGE owns every project grade and
         # selects the spreadsheet specialist when a workbook was submitted.

@@ -417,3 +417,81 @@ def test_assignment_revision_state_is_per_student(app, env):
         assert other_status["modification_request_reason"] is None
         assert other_status["can_resubmit"] is False
         assert other_status["grade"] == 90.0
+
+
+def test_auto_revision_counts_once_and_file_resubmit_is_gated(app, env, client):
+    """Auto revisions count once; only the student's own revision opens resubmit."""
+    with app.app_context():
+        row = db.session.get(AssignmentSubmission, env["submission_id"])
+        row.grade = 45.0
+
+    token = create_access_token(identity=str(env["student_id"]))
+    headers = {"Authorization": f"Bearer {token}"}
+    blocked = client.post(
+        f"/api/v1/uploads/assignments/{env['assignment_id']}/resubmit-with-files",
+        headers=headers,
+        json={"content": "revised", "files": []},
+    )
+    assert blocked.status_code == 400, blocked.get_data(as_text=True)
+
+    with app.app_context():
+        created = _auto_request_modification_if_needed(
+            app, env["submission_id"], "assignment", env["student_id"],
+            45.0, 100.0, RUBRIC_GRADE_DATA,
+        )
+        assert created is True
+        after_first = db.session.get(
+            AssignmentSubmission, env["submission_id"]
+        ).resubmission_count
+        assert after_first == 1
+
+        again = _auto_request_modification_if_needed(
+            app, env["submission_id"], "assignment", env["student_id"],
+            45.0, 100.0, RUBRIC_GRADE_DATA,
+        )
+        assert again is True  # still pending, but not a new attempt
+        assert db.session.get(
+            AssignmentSubmission, env["submission_id"]
+        ).resubmission_count == after_first
+
+    allowed = client.post(
+        f"/api/v1/uploads/assignments/{env['assignment_id']}/resubmit-with-files",
+        headers=headers,
+        json={"content": "revised", "files": []},
+    )
+    assert allowed.status_code == 200, allowed.get_data(as_text=True)
+    with app.app_context():
+        row = db.session.get(AssignmentSubmission, env["submission_id"])
+        assert row.is_resubmission is True
+        assert row.grade is None
+        assignment = db.session.get(Assignment, env["assignment_id"])
+        assert assignment.modification_requested is False
+        completion = LessonCompletion.query.filter_by(
+            student_id=env["student_id"], lesson_id=assignment.lesson_id,
+        ).first()
+        assert completion.assignment_needs_resubmission is False
+
+
+def test_modification_history_and_stats_include_projects(app, env):
+    from src.services.modification_service import ModificationRequestService
+
+    with app.app_context():
+        primary = db.session.get(ProjectSubmission, env["primary_id"])
+        primary.modification_requested = True
+        primary.can_resubmit = True
+        primary.resubmission_count = 1
+        primary.modification_request_reason = "Add evidence to claim 3"
+        primary.modification_requested_at = now_local()
+        db.session.commit()
+
+        history = ModificationRequestService.get_student_modification_history(
+            env["student_id"]
+        )
+        assert any(row["type"] == "project" for row in history)
+
+        stats = ModificationRequestService.get_assignment_modification_stats(
+            env["instructor_id"]
+        )
+        assert stats["total_projects"] >= 1
+        assert stats["projects_with_modifications"] >= 1
+        assert stats["pending_resubmissions"] >= 1

@@ -29,12 +29,12 @@ from ...utils.time_utils import now_local
 from . import persistence, scoring
 from .constants import (
     LEARNING_CANDIDATE,
+    OPEN_REVIEW_STATUSES,
     RESULT_APPROVED,
     RESULT_PENDING_REVIEW,
     RESULT_REJECTED,
     REVIEW_APPROVED,
     REVIEW_CHANGES,
-    REVIEW_PENDING,
     REVIEW_REJECTED,
 )
 
@@ -75,7 +75,7 @@ def _get_result(result_id: int) -> EvaluationResult:
 
 
 def _ensure_open(review: GradingReview) -> None:
-    if review.status not in (REVIEW_PENDING, REVIEW_CHANGES):
+    if review.status not in OPEN_REVIEW_STATUSES:
         raise ReviewError(
             f"review is already {review.status}", "review_not_open", status=409)
 
@@ -234,12 +234,19 @@ def _publish_if_allowed(result: EvaluationResult, review: GradingReview,
 
 def list_pending(course_id: Optional[int] = None, page: int = 1,
                  per_page: int = 20,
-                 course_ids: Optional[Sequence[int]] = None) -> Dict[str, Any]:
-    """Return paginated pending reviews (optionally scoped to courses)."""
+                 course_ids: Optional[Sequence[int]] = None,
+                 statuses: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Return paginated open reviews (optionally scoped to courses).
+
+    ``changes_requested`` is still an open review: the instructor sent it back
+    for revision but has not approved or rejected it.  ``statuses`` lets callers
+    narrow the listing while keeping the default inclusive.
+    """
     page = max(1, int(page or 1))
     per_page = max(1, min(100, int(per_page or 20)))
+    wanted = tuple(statuses) if statuses else OPEN_REVIEW_STATUSES
 
-    query = GradingReview.query.filter(GradingReview.status == REVIEW_PENDING)
+    query = GradingReview.query.filter(GradingReview.status.in_(wanted))
     if course_id is not None:
         allowed = {int(course_id)}
         if course_ids is not None:
@@ -410,6 +417,9 @@ def submit_correction(review_id: int, explanation: str, actor_id: Optional[int],
     if not explanation:
         raise ReviewError("an explanation is required", "explanation_required")
 
+    # A correction can be submitted from either open state; record the real
+    # transition rather than claiming every correction started as pending.
+    previous_status = review.status
     review.correction_reason = explanation[:8000]
     review.status = REVIEW_CHANGES
     review.final_score = result.final_score
@@ -473,7 +483,7 @@ def submit_correction(review_id: int, explanation: str, actor_id: Optional[int],
             actor_id=actor_id, reason=explanation[:500])
 
     _audit_review("review_correction_submitted", review, actor_id=actor_id,
-                  before={"status": REVIEW_PENDING},
+                  before={"status": previous_status},
                   after={"status": review.status,
                          "learning_example_id": example.id if example else None},
                   reason=explanation)

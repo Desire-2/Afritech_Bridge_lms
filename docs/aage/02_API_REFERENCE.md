@@ -55,7 +55,11 @@ Authorization rules:
 
 Rubric criteria must have numeric weights summing to exactly 100 before approval.
 Each criterion has a stable `criterion_key`, `max_marks`, performance `levels`,
-`evidence_requirements` and evaluator instructions.
+`evidence_requirements` and evaluator instructions. `performance_levels` is
+accepted as a per-criterion alias for `levels` and both are emitted in snapshots;
+a legacy rubric-wide `performance_levels` body field on `PUT /rubrics/<id>` is
+mapped onto criteria that do not declare their own bands (or rejected if it
+would overwrite them).
 
 ## Grading jobs and results
 
@@ -84,7 +88,7 @@ write-through helper. The stricter `auto_publish` gate remains opt-in.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/reviews/pending?course_id=&page=&per_page=` | Pending reviews with minimal student-identifying data. |
+| GET | `/reviews/pending?course_id=&page=&per_page=&status=` | Open reviews (`pending` and `changes_requested`) with minimal student-identifying data. `status` accepts `pending`, `changes_requested` or `open` (default). |
 | GET | `/reviews/<id>` | Full review packet: submission view, artifacts, AI result, criterion scores, evidence, feedback, confidence and history. |
 | PUT | `/reviews/<id>/criteria/<key>` | Adjust one criterion: `{"marks": 7.5, "reason": "..."}`. Final score is recomputed deterministically. |
 | POST | `/reviews/<id>/correction` | Record an explanation and optionally create a learning example from original vs adjusted scores. |
@@ -112,7 +116,13 @@ missing counts rather than fabricated metrics. No prompt/model changes silently.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/analytics?course_id=` | Instructor-facing dashboard metrics. `course_id` is required for instructors and checked for ownership; administrators may omit it for a platform-wide view. |
+| GET | `/analytics?course_id=` | Instructor-facing dashboard metrics. `course_id` is required for instructors and checked for ownership; administrators may omit it for a platform-wide view. `pending_reviews` counts all open reviews; `review_status_counts` includes `changes_requested`. |
+
+## Evaluator catalog
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/evaluators` | Instructor-safe catalog of `name`, `version`, `active`, `registered`, `description` and `supported_disciplines`. Benchmark/quality rates and full version rows are admin-only. |
 
 ## Administration
 

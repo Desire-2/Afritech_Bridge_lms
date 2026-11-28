@@ -290,6 +290,14 @@ class ExcelGradingService:
                 'status': result.get('status'),
                 'score': result.get('result', {}).get('total_score') if result.get('result') else None,
                 'publication': publication.get('status'),
+                'publication_detail': {
+                    key: publication.get(key)
+                    for key in (
+                        'applied', 'modification_requested',
+                        'modification_state', 'learning_progress_state',
+                        'notified', 'errors', 'warnings',
+                    )
+                },
                 'error': result.get('error'),
             })
 

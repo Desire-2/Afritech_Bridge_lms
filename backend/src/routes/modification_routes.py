@@ -18,10 +18,21 @@ from ..utils.db_utils import safe_db_session, DatabaseManager
 from ..services.modification_analytics_service import ModificationAnalytics, ModificationInsights
 from ..services.grading_feedback import (
     aage_grade_data,
+    assignment_revision_state,
     build_student_feedback,
+    can_resubmit_assignment,
+    complete_assignment_resubmission,
     is_generic_reason,
+    request_assignment_modification as apply_assignment_modification,
     resolve_modification_reason,
 )
+from ..services.modification_service import (
+    _project_revision_rows, _project_revision_state,
+)
+from ..services.notification_service import (
+    notify_modification_requested, notify_resubmission_received,
+)
+from ..services.project_scoring_service import team_member_ids
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +191,11 @@ def request_assignment_modification(assignment_id):
         if current_resubmissions is None:
             current_resubmissions = getattr(assignment, 'resubmission_count', 0) or 0
 
-        if current_resubmissions >= max_resubmissions:
+        existing_revision = assignment_revision_state(
+            assignment_submission, assignment,
+        )
+        if (current_resubmissions >= max_resubmissions
+                and not existing_revision['modification_requested']):
             return jsonify({'error': f'Maximum resubmissions ({max_resubmissions}) reached'}), 400
         
         # A generic quick-select reason must never hide the rubric feedback
@@ -196,12 +211,13 @@ def request_assignment_modification(assignment_id):
             existing_feedback=assignment_submission.feedback,
         )
 
-        # Update assignment with modification request
-        assignment.modification_requested = True
-        assignment.modification_request_reason = reason
-        assignment.modification_requested_at = now_local()
-        assignment.modification_requested_by = user_id
-        assignment.can_resubmit = True
+        # Apply the revision to this student only. The helper increments the
+        # per-student attempt count on the transition into the pending state,
+        # so an updated reason does not consume another attempt.
+        apply_assignment_modification(
+            assignment_submission, assignment, reason,
+            requested_by=user_id, lesson_completion=lesson_completion,
+        )
 
         logger.info(f"🔍 Debug: About to update assignment {assignment_id}")
 
@@ -213,23 +229,18 @@ def request_assignment_modification(assignment_id):
             enriched = build_student_feedback(grade_data, assignment_submission.feedback)
             assignment_submission.feedback = enriched or reason
 
-        # Update lesson completion to allow resubmission
-        if lesson_completion:
-            lesson_completion.assignment_graded = False  # Allow resubmission
-            lesson_completion.assignment_needs_resubmission = True
-            lesson_completion.modification_request_reason = reason
-        
-        logger.info(f"🔍 Debug: About to update assignment submission {assignment_submission.id}")
-        
-        # Count this student's revision on their submission; the parent count
-        # remains a legacy aggregate for instructor dashboards.
-        assignment_submission.resubmission_count = current_resubmissions + 1
-        assignment.resubmission_count = (getattr(assignment, 'resubmission_count', 0) or 0) + 1
-
         logger.info(f"🔍 Debug: About to commit to database")
         db.session.commit()
         logger.info(f"🔍 Debug: Database commit successful")
-        
+
+        try:
+            notify_modification_requested(
+                student_id, assignment, reason, actor_id=user_id,
+                course_id=assignment.course_id,
+            )
+        except Exception as notif_err:
+            logger.warning(f"In-app revision notification failed (non-blocking): {notif_err}")
+
         # Send email notification to student
         try:
             instructor = User.query.get(user_id)
@@ -389,8 +400,23 @@ def request_project_modification(project_id):
             graded_by=primary.graded_by,
         )
         db.session.commit()
-        
-        # Send email notification to student
+
+        member_ids = sorted({
+            int(row.student_id) for row in member_rows if row.student_id
+        })
+        for member_id in member_ids:
+            try:
+                notify_modification_requested(
+                    member_id, project, reason, actor_id=user_id,
+                    course_id=project.course_id, is_project=True,
+                )
+            except Exception as notif_err:
+                logger.warning(
+                    f"In-app project revision notification failed "
+                    f"(non-blocking): {notif_err}"
+                )
+
+        # Send email notification to every teammate whose row was marked.
         try:
             instructor = User.query.get(user_id)
             
@@ -400,24 +426,28 @@ def request_project_modification(project_id):
             # Calculate resubmission deadline (7 days from now)
             due_date = (datetime.now() + timedelta(days=7)).strftime('%B %d, %Y')
             
-            success = send_modification_request_notification(
-                student_email=student.email,
-                student_name=student.full_name,
-                assignment_title=project.title,
-                instructor_name=instructor.full_name,
-                reason=reason,
-                course_title=course.title,
-                is_project=True,
-                assignment_id=project_id,
-                due_date=due_date,
-                frontend_url=frontend_url,
-                student=student
-            )
-            
-            if success:
-                logger.info(f"📧 Project modification request notification sent to {student.email}")
-            else:
-                logger.warning(f"⚠️ Failed to send project modification request notification to {student.email}")
+            for member_id in member_ids:
+                member = User.query.get(member_id)
+                if not member:
+                    continue
+                success = send_modification_request_notification(
+                    student_email=member.email,
+                    student_name=member.full_name,
+                    assignment_title=project.title,
+                    instructor_name=instructor.full_name,
+                    reason=reason,
+                    course_title=course.title,
+                    is_project=True,
+                    assignment_id=project_id,
+                    due_date=due_date,
+                    frontend_url=frontend_url,
+                    student=member
+                )
+
+                if success:
+                    logger.info(f"📧 Project modification request notification sent to {member.email}")
+                else:
+                    logger.warning(f"⚠️ Failed to send project modification request notification to {member.email}")
             
             # Send admin alert if configured
             admin_email = current_app.config.get('ADMIN_EMAIL')
@@ -472,10 +502,19 @@ def resubmit_assignment(assignment_id):
         if not assignment:
             return jsonify({'error': 'Assignment not found'}), 404
         
-        # Check if modification was requested
-        if not getattr(assignment, 'modification_requested', False):
-            return jsonify({'error': 'No modification request found for this assignment'}), 400
-        
+        # This legacy endpoint still writes LessonCompletion, but the gate
+        # must be the same per-student state used by the canonical submission
+        # endpoints.
+        assignment_submission = AssignmentSubmission.query.filter_by(
+            assignment_id=assignment_id, student_id=user_id,
+        ).first()
+        if not can_resubmit_assignment(assignment_submission, assignment):
+            return jsonify({'error': 'Resubmission not allowed for this assignment or already submitted.'}), 400
+
+        used = (getattr(assignment_submission, 'resubmission_count', 0) or 0)
+        if used > (getattr(assignment, 'max_resubmissions', 3) or 3):
+            return jsonify({'error': f'Maximum resubmissions ({assignment.max_resubmissions or 3}) reached'}), 400
+
         # Find the lesson completion record
         lesson_completion = LessonCompletion.query.filter_by(
             lesson_id=assignment.lesson_id,
@@ -484,15 +523,8 @@ def resubmit_assignment(assignment_id):
         
         if not lesson_completion:
             return jsonify({'error': 'Assignment record not found'}), 404
-        
-        # Check if resubmission is allowed and atomic lockout
-        if not getattr(lesson_completion, 'assignment_needs_resubmission', False):
-            return jsonify({'error': 'Resubmission not allowed for this assignment or already submitted.'}), 400
 
-        # Double-check atomicity: if already resubmitted and flag cleared, block
-        if lesson_completion.is_resubmission and not lesson_completion.assignment_needs_resubmission:
-            return jsonify({'error': 'You have already submitted a response for this modification request.'}), 400
-        
+
         # Validate submission data
         submission_text = data.get('submission_text', '').strip()
         file_url = data.get('file_url', '').strip()
@@ -505,25 +537,53 @@ def resubmit_assignment(assignment_id):
         lesson_completion.assignment_file_url = file_url or lesson_completion.assignment_file_url
         lesson_completion.assignment_submitted_at = now_local()
         lesson_completion.assignment_graded = False  # Reset graded status
-        lesson_completion.assignment_needs_resubmission = False
-        lesson_completion.modification_request_reason = None
-        lesson_completion.is_resubmission = True
-        lesson_completion.resubmission_reason = data.get('resubmission_notes', '')
 
-        # The cohort-level flags are legacy state: only clear them when no
-        # other student is still waiting to resubmit this assignment.
-        another_pending = LessonCompletion.query.filter(
-            LessonCompletion.lesson_id == assignment.lesson_id,
-            LessonCompletion.student_id != user_id,
-            LessonCompletion.assignment_needs_resubmission.is_(True),
-        ).first()
-        if not another_pending:
-            assignment.modification_requested = False
-            assignment.modification_request_reason = None
-            assignment.can_resubmit = False
+        if assignment_submission is not None:
+            assignment_submission.content = submission_text or assignment_submission.content
+            if file_url:
+                assignment_submission.file_url = file_url
+            assignment_submission.submission_notes = data.get('resubmission_notes', '')
+            assignment_submission.submitted_at = now_local()
+            assignment_submission.is_resubmission = True
+            assignment_submission.original_submission_id = (
+                assignment_submission.original_submission_id or assignment_submission.id
+            )
+            assignment_submission.grade = None
+            assignment_submission.feedback = None
+            assignment_submission.graded_at = None
+            assignment_submission.graded_by = None
+
+        complete_assignment_resubmission(
+            assignment_submission, assignment,
+            lesson_completion=lesson_completion,
+            notes=data.get('resubmission_notes', ''),
+        )
 
         db.session.commit()
-        
+
+        if assignment_submission is not None:
+            try:
+                from ..services.aage.submission_dispatch import enqueue_for_submission
+                enqueue_for_submission(
+                    submission_type='assignment',
+                    submission_id=assignment_submission.id,
+                    student_id=user_id,
+                    force=True,
+                )
+            except Exception as enqueue_err:
+                logger.warning(f"Could not enqueue resubmitted assignment (non-blocking): {enqueue_err}")
+
+        try:
+            student = User.query.get(user_id)
+            owner = User.query.get(assignment.instructor_id or getattr(assignment.course, 'instructor_id', None))
+            if student and owner:
+                notify_resubmission_received(
+                    owner.id, student, assignment,
+                    course_id=assignment.course_id,
+                )
+        except Exception as notif_err:
+            logger.warning(f"In-app resubmission notification failed (non-blocking): {notif_err}")
+
         # Send notification to instructor
         try:
             course = Course.query.get(assignment.course_id)
@@ -580,46 +640,75 @@ def get_student_modification_requests():
     try:
         user_id = get_jwt_identity()
         
-        # Get assignments with modification requests for this student
-        assignments_with_modifications = db.session.query(
+        # Assignment revision state is per student; never show another
+        # learner's cohort-level flag as this student's pending work.
+        rows = db.session.query(
+            AssignmentSubmission,
             Assignment,
-            LessonCompletion,
             Course.title.label('course_title'),
-            Lesson.title.label('lesson_title')
+            Lesson.title.label('lesson_title'),
         ).join(
-            LessonCompletion, Assignment.lesson_id == LessonCompletion.lesson_id
+            Assignment, AssignmentSubmission.assignment_id == Assignment.id
         ).join(
             Course, Assignment.course_id == Course.id
         ).join(
             Lesson, Assignment.lesson_id == Lesson.id
         ).filter(
-            LessonCompletion.student_id == user_id,
-            Assignment.modification_requested == True,
-            LessonCompletion.assignment_needs_resubmission == True
+            AssignmentSubmission.student_id == user_id,
+            Assignment.modification_requested.is_(True),
         ).all()
-        
+
         modification_requests = []
-        for assignment, lesson_completion, course_title, lesson_title in assignments_with_modifications:
+        for submission, assignment, course_title, lesson_title in rows:
+            revision = assignment_revision_state(submission, assignment)
+            if not revision['modification_requested']:
+                continue
+            requested_at = revision['modification_requested_at']
             modification_requests.append({
                 'id': assignment.id,
+                'submission_id': submission.id,
                 'title': assignment.title,
                 'description': assignment.description,
                 'course_title': course_title,
                 'lesson_title': lesson_title,
-                'modification_reason': assignment.modification_request_reason,
-                'requested_at': assignment.modification_requested_at.isoformat() if assignment.modification_requested_at else None,
-                'resubmissions_remaining': (assignment.max_resubmissions or 3) - (assignment.resubmission_count or 0),
+                'modification_reason': revision['modification_request_reason'],
+                'requested_at': requested_at.isoformat() if requested_at else None,
+                'resubmissions_remaining': (
+                    (assignment.max_resubmissions or 3)
+                    - (submission.resubmission_count or 0)
+                ),
                 'type': 'assignment',
-                # Assignment-specific fields for enhanced UI
                 'assignment_type': assignment.assignment_type,
                 'max_file_size_mb': assignment.max_file_size_mb,
                 'allowed_file_types': assignment.allowed_file_types,
-                'due_date': assignment.due_date.isoformat() if assignment.due_date else None
+                'due_date': assignment.due_date.isoformat() if assignment.due_date else None,
             })
-        
-        # Get projects with modification requests (if applicable)
-        # This would need to be implemented based on your project submission model
-        
+
+        for submission, project, course_title, _ in _project_revision_rows(
+            student_id=user_id,
+        ):
+            state = _project_revision_state(submission, project)
+            requested_at = state['modification_requested_at']
+            modification_requests.append({
+                'id': project.id,
+                'submission_id': submission.id,
+                'title': project.title,
+                'description': project.description,
+                'course_title': course_title,
+                'lesson_title': None,
+                'modification_reason': state['modification_request_reason'],
+                'requested_at': requested_at.isoformat() if requested_at else None,
+                'resubmissions_remaining': (
+                    (project.max_resubmissions or 3)
+                    - (submission.resubmission_count or 0)
+                ),
+                'type': 'project',
+                'submission_format': project.submission_format,
+                'max_file_size_mb': project.max_file_size_mb,
+                'allowed_file_types': project.allowed_file_types,
+                'due_date': project.due_date.isoformat() if project.due_date else None,
+            })
+
         return jsonify({
             'success': True,
             'data': {
@@ -746,46 +835,96 @@ def get_instructor_modification_requests():
     try:
         user_id = get_jwt_identity()
         
-        # Get assignments with modification requests made by this instructor
-        assignments_with_modifications = db.session.query(
+        # Include manual and auto requests for every student in the
+        # instructor's courses; filtering by requested_by hides AI requests.
+        rows = db.session.query(
+            AssignmentSubmission,
             Assignment,
-            User.full_name.label('student_name'),
+            User,
             User.email.label('student_email'),
             Course.title.label('course_title'),
             Lesson.title.label('lesson_title'),
-            LessonCompletion
         ).join(
-            LessonCompletion, Assignment.lesson_id == LessonCompletion.lesson_id
+            Assignment, AssignmentSubmission.assignment_id == Assignment.id
         ).join(
-            User, LessonCompletion.student_id == User.id
+            User, AssignmentSubmission.student_id == User.id
         ).join(
             Course, Assignment.course_id == Course.id
-        ).join(
+        ).outerjoin(
             Lesson, Assignment.lesson_id == Lesson.id
+        ).outerjoin(
+            LessonCompletion,
+            and_(
+                LessonCompletion.lesson_id == Assignment.lesson_id,
+                LessonCompletion.student_id == AssignmentSubmission.student_id,
+            ),
         ).filter(
-            Assignment.modification_requested_by == user_id,
-            Course.instructor_id == user_id
-        ).order_by(desc(Assignment.modification_requested_at)).all()
-        
+            Course.instructor_id == user_id,
+            or_(
+                Assignment.modification_requested.is_(True),
+                LessonCompletion.assignment_needs_resubmission.is_(True),
+            ),
+        ).all()
+
         modification_requests = []
-        for assignment, student_name, student_email, course_title, lesson_title, lesson_completion in assignments_with_modifications:
+        for submission, assignment, student, student_email, course_title, lesson_title in rows:
+            student_name = student.full_name if student else None
+            revision = assignment_revision_state(submission, assignment)
+            if not revision['modification_requested']:
+                continue
+            requested_at = revision['modification_requested_at']
             modification_requests.append({
                 'id': assignment.id,
+                'submission_id': submission.id,
                 'title': assignment.title,
                 'course_title': course_title,
                 'lesson_title': lesson_title,
                 'student_name': student_name,
                 'student_email': student_email,
-                'student_id': lesson_completion.student_id,
-                'modification_reason': assignment.modification_request_reason,
-                'requested_at': assignment.modification_requested_at.isoformat() if assignment.modification_requested_at else None,
-                'needs_resubmission': lesson_completion.assignment_needs_resubmission,
-                'resubmission_count': assignment.resubmission_count or 0,
+                'student_id': submission.student_id,
+                'modification_reason': revision['modification_request_reason'],
+                'requested_at': requested_at.isoformat() if requested_at else None,
+                'needs_resubmission': bool(revision['can_resubmit']),
+                'resubmission_count': submission.resubmission_count or 0,
                 'max_resubmissions': assignment.max_resubmissions or 3,
                 'type': 'assignment',
-                'status': 'pending_resubmission' if lesson_completion.assignment_needs_resubmission else 'resubmitted'
+                'status': (
+                    'pending_resubmission' if revision['can_resubmit']
+                    else 'resubmitted'
+                ),
             })
-        
+
+        for submission, project, course_title, _ in _project_revision_rows(
+            instructor_id=user_id,
+        ):
+            state = _project_revision_state(submission, project)
+            student = User.query.get(submission.student_id)
+            requested_at = state['modification_requested_at']
+            modification_requests.append({
+                'id': project.id,
+                'submission_id': submission.id,
+                'title': project.title,
+                'course_title': course_title,
+                'lesson_title': None,
+                'student_name': student.full_name if student else None,
+                'student_email': student.email if student else None,
+                'student_id': submission.student_id,
+                'modification_reason': state['modification_request_reason'],
+                'requested_at': requested_at.isoformat() if requested_at else None,
+                'needs_resubmission': bool(state['can_resubmit']),
+                'resubmission_count': submission.resubmission_count or 0,
+                'max_resubmissions': project.max_resubmissions or 3,
+                'type': 'project',
+                'status': (
+                    'pending_resubmission' if state['can_resubmit']
+                    else 'resubmitted'
+                ),
+            })
+
+        modification_requests.sort(
+            key=lambda row: row['requested_at'] or '', reverse=True,
+        )
+
         return jsonify({
             'success': True,
             'data': {
@@ -934,7 +1073,23 @@ def get_modification_trends():
                     
                     if completion:
                         trends[period_key]['resubmissions'] += 1
-        
+
+        project_rows = _project_revision_rows(
+            instructor_id=current_user_id, course_id=course_id,
+            start_date=start_date, end_date=end_date,
+        )
+        for submission, project, _, _ in project_rows:
+            state = _project_revision_state(submission, project)
+            requested_at = state['modification_requested_at']
+            if not requested_at:
+                continue
+            period_key = requested_at.strftime(time_format)
+            if period_key not in trends:
+                continue
+            trends[period_key]['modifications'] += 1
+            if submission.is_resubmission and not state['can_resubmit']:
+                trends[period_key]['resubmissions'] += 1
+
         # Calculate success rates
         for period_data in trends.values():
             if period_data['modifications'] > 0:

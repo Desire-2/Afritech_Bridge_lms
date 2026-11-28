@@ -18,6 +18,11 @@ from ..utils.validators import StudentValidators
 from ..utils.google_drive_service import google_drive_service
 from ..utils.email_notifications import notify_instructor_of_submission
 from ..services.aage.submission_dispatch import enqueue_for_submission
+from ..services.grading_feedback import (
+    assignment_revision_state, can_resubmit_assignment,
+    complete_assignment_resubmission,
+)
+from ..services.notification_service import notify_resubmission_received
 from ..utils.submission_files import parse_submission_files, serialize_submission_files
 
 logger = logging.getLogger(__name__)
@@ -248,11 +253,21 @@ def resubmit_assignment_with_files(assignment_id):
                 "error": "No previous submission found to resubmit"
             }), 400
         
-        # Check if modification was requested
-        if not assignment.modification_requested:
+        # The shared assignment flag is legacy state: only this student's
+        # revision state may open the resubmit endpoint, and the attempt limit
+        # belongs to their submission.
+        if not can_resubmit_assignment(existing, assignment):
+            state = assignment_revision_state(existing, assignment)
+            error = ("No modification request found for this assignment"
+                     if not state["modification_requested"]
+                     else "Resubmission is not available for this assignment")
+            return jsonify({"success": False, "error": error}), 400
+
+        used = getattr(existing, 'resubmission_count', 0) or 0
+        if used > (getattr(assignment, 'max_resubmissions', 3) or 3):
             return jsonify({
                 "success": False,
-                "error": "No modification request found for this assignment"
+                "error": f"Maximum resubmissions ({assignment.max_resubmissions or 3}) reached",
             }), 400
         
         # Validate submission data
@@ -282,21 +297,26 @@ def resubmit_assignment_with_files(assignment_id):
                 }), 400
         
         # Update existing submission
+        previous_id = existing.id
         existing.content = data.get('content')
         existing.file_url = json.dumps(files_data) if files_data else None
         existing.external_url = data.get('external_url')
+        existing.submission_notes = data.get('submission_notes') or existing.submission_notes
         existing.submitted_at = now_local()
+        existing.is_resubmission = True
+        existing.original_submission_id = (
+            getattr(existing, 'original_submission_id', None) or previous_id
+        )
         existing.grade = None  # Reset grade since this is a resubmission
         existing.feedback = None  # Reset feedback
         existing.graded_at = None
         existing.graded_by = None
-        
-        # Clear modification request status
-        assignment.modification_requested = False
-        assignment.modification_request_reason = None
-        assignment.modification_requested_at = None
-        assignment.modification_requested_by = None
-        assignment.can_resubmit = False
+
+        # Clear this student's revision state; only clear the legacy cohort
+        # flags when nobody else is still waiting to resubmit.
+        complete_assignment_resubmission(
+            existing, assignment, notes=data.get('submission_notes', ''),
+        )
 
         from ..talent_passport.hooks import notify_talent_passport
         resubmit_marker = (existing.submitted_at.isoformat()
@@ -346,6 +366,19 @@ def resubmit_assignment_with_files(assignment_id):
             )
         except Exception as notif_err:
             logger.warning(f"Instructor resubmission notification failed (non-blocking): {notif_err}")
+
+        try:
+            student = User.query.get(current_user_id)
+            course = Course.query.get(assignment.course_id)
+            instructor_id = assignment.instructor_id or (course.instructor_id if course else None)
+            instructor = User.query.get(instructor_id) if instructor_id else None
+            if student and instructor:
+                notify_resubmission_received(
+                    instructor.id, student, assignment,
+                    course_id=assignment.course_id,
+                )
+        except Exception as notif_err:
+            logger.warning(f"In-app resubmission notification failed (non-blocking): {notif_err}")
 
         return jsonify({
             "success": True,
@@ -534,6 +567,20 @@ def submit_project_with_files(project_id):
             )
         except Exception as notif_err:
             logger.warning(f"Instructor project submission notification failed (non-blocking): {notif_err}")
+
+        if is_resubmission:
+            try:
+                student = User.query.get(current_user_id)
+                course = Course.query.get(project.course_id)
+                instructor_id = course.instructor_id if course else None
+                instructor = User.query.get(instructor_id) if instructor_id else None
+                if student and instructor:
+                    notify_resubmission_received(
+                        instructor.id, student, project,
+                        course_id=project.course_id, is_project=True,
+                    )
+            except Exception as notif_err:
+                logger.warning(f"In-app project resubmission notification failed (non-blocking): {notif_err}")
 
         return jsonify({
             "success": True,
