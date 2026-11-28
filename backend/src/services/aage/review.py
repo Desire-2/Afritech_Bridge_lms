@@ -506,6 +506,17 @@ def approve_review(review_id: int, actor_id: Optional[int]) -> Dict[str, Any]:
     persistence.db_commit()
 
     published = _publish_if_allowed(result, review, actor_id)
+    if not published:
+        # Never leave a terminal "approved" state behind when the grade was
+        # not actually published (e.g. a cancelled job or a failed write).
+        review.status = before["review_status"]
+        review.resolved_at = None
+        result.status = before["result_status"]
+        result.requires_review = True
+        persistence.db_commit()
+        raise ReviewError("Approved result could not be published",
+                          code="publication_failed", status=409)
+
     _audit_review("review_approved", review, actor_id=actor_id, before=before,
                   after={"review_status": review.status,
                          "result_status": result.status,

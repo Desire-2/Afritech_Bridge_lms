@@ -21,6 +21,9 @@ from ..models.student_models import (
 )
 from ..models.achievement_models import UserAchievement, Achievement
 from ..services.aage.submission_dispatch import enqueue_for_submission
+from ..services.grading_feedback import (
+    assignment_revision_state, stored_feedback_text,
+)
 from ..utils.submission_files import serialize_submission_files
 
 # Set up logging
@@ -2714,6 +2717,7 @@ def _build_assignment_submission_status(assignment, submission):
             'grader_name': None,
         }
 
+    revision = assignment_revision_state(submission, assignment)
     base = {
         'submitted': True,
         'id': submission.id,
@@ -2722,10 +2726,13 @@ def _build_assignment_submission_status(assignment, submission):
         # The revision reason is a *separate* field. Replacing this with the
         # reason used to hide a failing AI grade and its feedback from the
         # student — exactly when they need it most.
-        'feedback': submission.feedback,
-        'modification_request_reason': getattr(
-            assignment, 'modification_request_reason', None
-        ) if getattr(assignment, 'modification_requested', False) else None,
+        'feedback': stored_feedback_text(submission.feedback) if submission.feedback else None,
+        'modification_requested': bool(revision['modification_requested']),
+        'modification_request_reason': (
+            revision['modification_request_reason']
+            if revision['modification_requested'] else None
+        ),
+        'can_resubmit': bool(revision['can_resubmit']),
         'graded_at': submission.graded_at.isoformat() if submission.graded_at and submission.grade is not None else None,
         'grader_name': None,
     }
@@ -2743,7 +2750,7 @@ def _build_assignment_submission_status(assignment, submission):
             pass
 
     # A revision request changes the status, not the recorded grade/feedback.
-    if getattr(assignment, 'modification_requested', False):
+    if revision['modification_requested']:
         base['status'] = 'needs_revision'
     elif submission.grade is not None:
         base['status'] = 'graded'
@@ -2785,6 +2792,7 @@ def get_assignment_details(assignment_id):
         ).first()
         
         include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
+        revision = assignment_revision_state(submission, assignment)
         assignment_data = {
             'id': assignment.id,
             'title': assignment.title,
@@ -2799,12 +2807,22 @@ def get_assignment_details(assignment_id):
             'created_at': assignment.created_at.isoformat(),
             'updated_at': assignment.updated_at.isoformat(),
             
-            # Modification request fields
-            'modification_requested': assignment.modification_requested,
-            'modification_request_reason': assignment.modification_request_reason,
-            'modification_request_at': assignment.modification_requested_at.isoformat() if assignment.modification_requested_at else None,
-            'modification_requested_by': assignment.modification_requested_by,
-            'can_resubmit': assignment.can_resubmit,
+            # Per-student revision state (the shared assignment flags are only
+            # a legacy fallback in assignment_revision_state()).
+            'modification_requested': bool(revision['modification_requested']),
+            'modification_request_reason': (
+                revision['modification_request_reason']
+                if revision['modification_requested'] else None
+            ),
+            'modification_request_at': (
+                revision['modification_requested_at'].isoformat()
+                if revision['modification_requested_at'] else None
+            ),
+            'modification_requested_by': (
+                assignment.modification_requested_by
+                if revision['modification_requested'] else None
+            ),
+            'can_resubmit': bool(revision['can_resubmit']),
             
             'submission_status': _build_assignment_submission_status(assignment, submission),
         }
@@ -2953,12 +2971,16 @@ def get_student_projects():
                 submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at and project.due_date else False
                 
                 state = submission.modification_state()
-                if state['modification_requested'] and state['can_resubmit']:
+                if state['modification_requested']:
+                    # The revision reason lives in its own field; feedback is
+                    # never replaced by it, even when resubmission is closed.
                     submission_status['status'] = 'needs_revision'
-                    submission_status['feedback'] = submission.feedback or state['modification_request_reason']
                     submission_status['modification_request_reason'] = state['modification_request_reason']
+                    submission_status['can_resubmit'] = bool(state['can_resubmit'])
                     if submission.grade is not None:
                         submission_status['grade'] = submission.grade
+                    if submission.feedback:
+                        submission_status['feedback'] = stored_feedback_text(submission.feedback)
                     if submission.graded_at:
                         submission_status['graded_at'] = submission.graded_at.isoformat()
                     if submission.grader:
@@ -2966,7 +2988,7 @@ def get_student_projects():
                 elif submission.grade is not None:
                     submission_status['status'] = 'graded'
                     submission_status['grade'] = submission.grade
-                    submission_status['feedback'] = submission.feedback
+                    submission_status['feedback'] = stored_feedback_text(submission.feedback) if submission.feedback else None
                     submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
                     if submission.grader:
                         submission_status['grader_name'] = submission.grader.full_name
@@ -2984,6 +3006,17 @@ def get_student_projects():
             
             project_data = project.to_dict()
             project_data['course_title'] = project.course.title
+            # The project row is shared; expose this student's revision state.
+            student_state = submission.modification_state() if submission else None
+            project_data['modification_requested'] = bool(
+                student_state and student_state['modification_requested']
+            )
+            project_data['can_resubmit'] = bool(
+                student_state and student_state['can_resubmit']
+            )
+            project_data['modification_request_reason'] = (
+                student_state['modification_request_reason'] if student_state else None
+            )
             # Resolve module names from module_ids
             project_mod_ids = project.get_modules()
             if project_mod_ids:
@@ -3069,12 +3102,14 @@ def get_student_project_details(project_id):
             submission_status['is_late'] = submission_data['is_late']
             
             state = submission.modification_state() if submission else None
-            if state and state['modification_requested'] and state['can_resubmit']:
+            if state and state['modification_requested']:
                 submission_status['status'] = 'needs_revision'
-                submission_status['feedback'] = submission.feedback or state['modification_request_reason']
                 submission_status['modification_request_reason'] = state['modification_request_reason']
+                submission_status['can_resubmit'] = bool(state['can_resubmit'])
                 if submission.grade is not None:
                     submission_status['grade'] = submission.grade
+                if submission.feedback:
+                    submission_status['feedback'] = stored_feedback_text(submission.feedback)
                 if submission.graded_at:
                     submission_status['graded_at'] = submission.graded_at.isoformat()
                 if submission.grader:
@@ -3082,7 +3117,7 @@ def get_student_project_details(project_id):
             elif submission.grade is not None:
                 submission_status['status'] = 'graded'
                 submission_status['grade'] = submission.grade
-                submission_status['feedback'] = submission.feedback
+                submission_status['feedback'] = stored_feedback_text(submission.feedback) if submission.feedback else None
                 submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
                 if submission.grader:
                     submission_status['grader_name'] = submission.grader.full_name

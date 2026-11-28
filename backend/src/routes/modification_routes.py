@@ -173,10 +173,13 @@ def request_assignment_modification(assignment_id):
             logger.error(f"❌ Student {student_id} has not submitted assignment {assignment_id} yet")
             return jsonify({'error': 'Student has not submitted this assignment yet'}), 400
         
-        # Check resubmission limits
+        # The limit belongs to this student's submission, not to the shared
+        # assignment row (which counts requests across the whole cohort).
         max_resubmissions = getattr(assignment, 'max_resubmissions', 3)
-        current_resubmissions = getattr(assignment, 'resubmission_count', 0)
-        
+        current_resubmissions = getattr(assignment_submission, 'resubmission_count', 0)
+        if current_resubmissions is None:
+            current_resubmissions = getattr(assignment, 'resubmission_count', 0) or 0
+
         if current_resubmissions >= max_resubmissions:
             return jsonify({'error': f'Maximum resubmissions ({max_resubmissions}) reached'}), 400
         
@@ -218,12 +221,11 @@ def request_assignment_modification(assignment_id):
         
         logger.info(f"🔍 Debug: About to update assignment submission {assignment_submission.id}")
         
-        # Increment resubmission count
-        if not hasattr(assignment, 'resubmission_count'):
-            assignment.resubmission_count = 1
-        else:
-            assignment.resubmission_count = (assignment.resubmission_count or 0) + 1
-        
+        # Count this student's revision on their submission; the parent count
+        # remains a legacy aggregate for instructor dashboards.
+        assignment_submission.resubmission_count = current_resubmissions + 1
+        assignment.resubmission_count = (getattr(assignment, 'resubmission_count', 0) or 0) + 1
+
         logger.info(f"🔍 Debug: About to commit to database")
         db.session.commit()
         logger.info(f"🔍 Debug: Database commit successful")
@@ -287,7 +289,7 @@ def request_assignment_modification(assignment_id):
                 'student_id': student_id,
                 'reason': reason,
                 'requested_at': assignment.modification_requested_at.isoformat(),
-                'resubmissions_remaining': max_resubmissions - assignment.resubmission_count
+                'resubmissions_remaining': max_resubmissions - assignment_submission.resubmission_count
             }
         }), 200
         
@@ -376,7 +378,16 @@ def request_project_modification(project_id):
             if not row.feedback or is_generic_reason(row.feedback):
                 row.feedback = shared_feedback
 
-        request_project_modification(member_rows, reason, user_id)
+        # Mirror the team's grade metadata so teammates do not see a revision
+        # reason that cites a score while their own grade card stays empty.
+        request_project_modification(
+            member_rows,
+            reason,
+            user_id,
+            grade=primary.grade,
+            graded_at=primary.graded_at,
+            graded_by=primary.graded_by,
+        )
         db.session.commit()
         
         # Send email notification to student
@@ -495,13 +506,22 @@ def resubmit_assignment(assignment_id):
         lesson_completion.assignment_submitted_at = now_local()
         lesson_completion.assignment_graded = False  # Reset graded status
         lesson_completion.assignment_needs_resubmission = False
+        lesson_completion.modification_request_reason = None
         lesson_completion.is_resubmission = True
         lesson_completion.resubmission_reason = data.get('resubmission_notes', '')
-        
-        # Clear modification request flags
-        assignment.modification_requested = False
-        assignment.modification_request_reason = None
-        
+
+        # The cohort-level flags are legacy state: only clear them when no
+        # other student is still waiting to resubmit this assignment.
+        another_pending = LessonCompletion.query.filter(
+            LessonCompletion.lesson_id == assignment.lesson_id,
+            LessonCompletion.student_id != user_id,
+            LessonCompletion.assignment_needs_resubmission.is_(True),
+        ).first()
+        if not another_pending:
+            assignment.modification_requested = False
+            assignment.modification_request_reason = None
+            assignment.can_resubmit = False
+
         db.session.commit()
         
         # Send notification to instructor

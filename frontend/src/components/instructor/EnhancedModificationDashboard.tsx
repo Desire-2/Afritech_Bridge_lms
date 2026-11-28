@@ -1,1 +1,441 @@
-import React, { useState, useEffect } from 'react';\nimport { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';\nimport { Button } from '@/components/ui/button';\nimport { Input } from '@/components/ui/input';\nimport { Textarea } from '@/components/ui/textarea';\nimport { Badge } from '@/components/ui/badge';\nimport { Alert, AlertDescription } from '@/components/ui/alert';\nimport { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';\nimport { \n  TrendingUp, \n  Clock, \n  Users, \n  FileText, \n  AlertTriangle, \n  CheckCircle, \n  BarChart3,\n  Send,\n  RefreshCw\n} from 'lucide-react';\n\ninterface ModificationStats {\n  total_assignments: number;\n  assignments_with_modifications: number;\n  total_modification_requests: number;\n  pending_resubmissions: number;\n  completed_resubmissions: number;\n  average_resubmissions_per_assignment: number;\n  modification_rate: number;\n}\n\ninterface ModificationRequest {\n  id: number;\n  title: string;\n  course_title: string;\n  lesson_title: string;\n  student_name: string;\n  student_email: string;\n  modification_reason: string;\n  requested_at: string;\n  needs_resubmission: boolean;\n  resubmission_count: number;\n  max_resubmissions: number;\n  status: string;\n}\n\ninterface TrendData {\n  date: string;\n  modification_requests: number;\n}\n\nconst EnhancedModificationDashboard: React.FC = () => {\n  const [stats, setStats] = useState<ModificationStats | null>(null);\n  const [requests, setRequests] = useState<ModificationRequest[]>([]);\n  const [trends, setTrends] = useState<TrendData[]>([]);\n  const [loading, setLoading] = useState(true);\n  const [error, setError] = useState<string | null>(null);\n  const [selectedRequests, setSelectedRequests] = useState<Set<number>>(new Set());\n  const [bulkReminderDays, setBulkReminderDays] = useState(7);\n  const [reminderLoading, setReminderLoading] = useState(false);\n  const [reminderResult, setReminderResult] = useState<string | null>(null);\n\n  useEffect(() => {\n    loadDashboardData();\n  }, []);\n\n  const loadDashboardData = async () => {\n    try {\n      setLoading(true);\n      const token = localStorage.getItem('token');\n      \n      if (!token) {\n        setError('No authentication token found');\n        return;\n      }\n\n      const headers = {\n        'Authorization': `Bearer ${token}`,\n        'Content-Type': 'application/json'\n      };\n\n      // Load stats, requests, and trends in parallel\n      const [statsResponse, requestsResponse, trendsResponse] = await Promise.all([\n        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-stats`, { headers }),\n        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-requests`, { headers }),\n        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-trends?days=30`, { headers })\n      ]);\n\n      if (statsResponse.ok) {\n        const statsData = await statsResponse.json();\n        setStats(statsData.data);\n      }\n\n      if (requestsResponse.ok) {\n        const requestsData = await requestsResponse.json();\n        setRequests(requestsData.data.modification_requests || []);\n      }\n\n      if (trendsResponse.ok) {\n        const trendsData = await trendsResponse.json();\n        setTrends(trendsData.data.trends || []);\n      }\n\n    } catch (err) {\n      console.error('Error loading dashboard data:', err);\n      setError('Failed to load dashboard data');\n    } finally {\n      setLoading(false);\n    }\n  };\n\n  const sendBulkReminders = async () => {\n    try {\n      setReminderLoading(true);\n      setReminderResult(null);\n      \n      const token = localStorage.getItem('token');\n      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/send-reminders`, {\n        method: 'POST',\n        headers: {\n          'Authorization': `Bearer ${token}`,\n          'Content-Type': 'application/json'\n        },\n        body: JSON.stringify({\n          days_overdue: bulkReminderDays\n        })\n      });\n\n      if (response.ok) {\n        const result = await response.json();\n        setReminderResult(`Successfully sent ${result.data.reminders_sent} reminders`);\n        loadDashboardData(); // Refresh data\n      } else {\n        const error = await response.json();\n        setReminderResult(`Failed to send reminders: ${error.error}`);\n      }\n    } catch (err) {\n      console.error('Error sending reminders:', err);\n      setReminderResult('Failed to send reminders');\n    } finally {\n      setReminderLoading(false);\n    }\n  };\n\n  const toggleRequestSelection = (requestId: number) => {\n    const newSelected = new Set(selectedRequests);\n    if (newSelected.has(requestId)) {\n      newSelected.delete(requestId);\n    } else {\n      newSelected.add(requestId);\n    }\n    setSelectedRequests(newSelected);\n  };\n\n  const selectAllPendingRequests = () => {\n    const pendingIds = requests\n      .filter(req => req.needs_resubmission)\n      .map(req => req.id);\n    setSelectedRequests(new Set(pendingIds));\n  };\n\n  if (loading) {\n    return (\n      <div className=\"flex items-center justify-center p-8\">\n        <RefreshCw className=\"h-8 w-8 animate-spin text-blue-600\" />\n        <span className=\"ml-2\">Loading modification dashboard...</span>\n      </div>\n    );\n  }\n\n  if (error) {\n    return (\n      <Alert className=\"border-red-200 bg-red-50\">\n        <AlertTriangle className=\"h-4 w-4\" />\n        <AlertDescription>{error}</AlertDescription>\n      </Alert>\n    );\n  }\n\n  return (\n    <div className=\"p-6 space-y-6\">\n      <div className=\"flex items-center justify-between\">\n        <h1 className=\"text-2xl font-bold\">Modification Request Dashboard</h1>\n        <Button onClick={loadDashboardData} variant=\"outline\" size=\"sm\">\n          <RefreshCw className=\"h-4 w-4 mr-2\" />\n          Refresh\n        </Button>\n      </div>\n\n      {/* Stats Overview */}\n      {stats && (\n        <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4\">\n          <Card>\n            <CardContent className=\"p-4\">\n              <div className=\"flex items-center space-x-2\">\n                <FileText className=\"h-8 w-8 text-blue-600\" />\n                <div>\n                  <p className=\"text-sm font-medium text-gray-600\">Total Assignments</p>\n                  <p className=\"text-2xl font-bold\">{stats.total_assignments}</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n\n          <Card>\n            <CardContent className=\"p-4\">\n              <div className=\"flex items-center space-x-2\">\n                <AlertTriangle className=\"h-8 w-8 text-yellow-600\" />\n                <div>\n                  <p className=\"text-sm font-medium text-gray-600\">Pending Resubmissions</p>\n                  <p className=\"text-2xl font-bold\">{stats.pending_resubmissions}</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n\n          <Card>\n            <CardContent className=\"p-4\">\n              <div className=\"flex items-center space-x-2\">\n                <CheckCircle className=\"h-8 w-8 text-green-600\" />\n                <div>\n                  <p className=\"text-sm font-medium text-gray-600\">Completed Resubmissions</p>\n                  <p className=\"text-2xl font-bold\">{stats.completed_resubmissions}</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n\n          <Card>\n            <CardContent className=\"p-4\">\n              <div className=\"flex items-center space-x-2\">\n                <TrendingUp className=\"h-8 w-8 text-purple-600\" />\n                <div>\n                  <p className=\"text-sm font-medium text-gray-600\">Modification Rate</p>\n                  <p className=\"text-2xl font-bold\">{stats.modification_rate}%</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n        </div>\n      )}\n\n      <Tabs defaultValue=\"requests\" className=\"w-full\">\n        <TabsList className=\"grid w-full grid-cols-3\">\n          <TabsTrigger value=\"requests\">Modification Requests</TabsTrigger>\n          <TabsTrigger value=\"trends\">Trends</TabsTrigger>\n          <TabsTrigger value=\"reminders\">Bulk Actions</TabsTrigger>\n        </TabsList>\n\n        <TabsContent value=\"requests\" className=\"space-y-4\">\n          <Card>\n            <CardHeader>\n              <CardTitle className=\"flex items-center justify-between\">\n                <span>Modification Requests</span>\n                <div className=\"flex items-center space-x-2\">\n                  <Badge variant=\"secondary\">\n                    {requests.filter(req => req.needs_resubmission).length} pending\n                  </Badge>\n                  <Button onClick={selectAllPendingRequests} variant=\"outline\" size=\"sm\">\n                    Select All Pending\n                  </Button>\n                </div>\n              </CardTitle>\n            </CardHeader>\n            <CardContent>\n              <div className=\"space-y-4\">\n                {requests.length === 0 ? (\n                  <div className=\"text-center py-8 text-gray-500\">\n                    No modification requests found\n                  </div>\n                ) : (\n                  requests.map((request) => (\n                    <div\n                      key={request.id}\n                      className={`border rounded-lg p-4 transition-colors ${\n                        selectedRequests.has(request.id)\n                          ? 'border-blue-500 bg-blue-50'\n                          : 'border-gray-200 hover:border-gray-300'\n                      }`}\n                    >\n                      <div className=\"flex items-start justify-between\">\n                        <div className=\"flex items-start space-x-3\">\n                          <input\n                            type=\"checkbox\"\n                            checked={selectedRequests.has(request.id)}\n                            onChange={() => toggleRequestSelection(request.id)}\n                            className=\"mt-1\"\n                          />\n                          <div className=\"flex-1\">\n                            <h3 className=\"font-semibold\">{request.title}</h3>\n                            <p className=\"text-sm text-gray-600\">\n                              {request.course_title} • {request.lesson_title}\n                            </p>\n                            <p className=\"text-sm font-medium text-gray-800 mt-1\">\n                              Student: {request.student_name}\n                            </p>\n                            <div className=\"mt-2 p-2 bg-gray-50 rounded text-sm\">\n                              <strong>Reason:</strong> {request.modification_reason}\n                            </div>\n                            <div className=\"flex items-center space-x-4 mt-2 text-sm text-gray-600\">\n                              <span>Requested: {new Date(request.requested_at).toLocaleDateString()}</span>\n                              <span>Resubmissions: {request.resubmission_count}/{request.max_resubmissions}</span>\n                            </div>\n                          </div>\n                        </div>\n                        <div className=\"flex items-center space-x-2\">\n                          <Badge\n                            variant={request.needs_resubmission ? 'destructive' : 'secondary'}\n                          >\n                            {request.needs_resubmission ? 'Pending' : 'Resubmitted'}\n                          </Badge>\n                        </div>\n                      </div>\n                    </div>\n                  ))\n                )}\n              </div>\n            </CardContent>\n          </Card>\n        </TabsContent>\n\n        <TabsContent value=\"trends\" className=\"space-y-4\">\n          <Card>\n            <CardHeader>\n              <CardTitle className=\"flex items-center\">\n                <BarChart3 className=\"h-5 w-5 mr-2\" />\n                Modification Request Trends (Last 30 Days)\n              </CardTitle>\n            </CardHeader>\n            <CardContent>\n              {trends.length === 0 ? (\n                <div className=\"text-center py-8 text-gray-500\">\n                  No trend data available\n                </div>\n              ) : (\n                <div className=\"space-y-2\">\n                  {trends.map((trend, index) => (\n                    <div key={index} className=\"flex items-center justify-between py-2 border-b\">\n                      <span className=\"text-sm font-medium\">\n                        {new Date(trend.date).toLocaleDateString()}\n                      </span>\n                      <div className=\"flex items-center space-x-2\">\n                        <div className=\"bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm\">\n                          {trend.modification_requests} requests\n                        </div>\n                        <div \n                          className=\"bg-blue-500 h-2 rounded\"\n                          style={{ \n                            width: `${Math.max(10, (trend.modification_requests / Math.max(...trends.map(t => t.modification_requests))) * 100)}px` \n                          }}\n                        />\n                      </div>\n                    </div>\n                  ))}\n                </div>\n              )}\n            </CardContent>\n          </Card>\n        </TabsContent>\n\n        <TabsContent value=\"reminders\" className=\"space-y-4\">\n          <Card>\n            <CardHeader>\n              <CardTitle className=\"flex items-center\">\n                <Send className=\"h-5 w-5 mr-2\" />\n                Bulk Actions & Reminders\n              </CardTitle>\n            </CardHeader>\n            <CardContent className=\"space-y-4\">\n              <div className=\"border rounded-lg p-4\">\n                <h3 className=\"font-semibold mb-3\">Send Bulk Reminders</h3>\n                <p className=\"text-sm text-gray-600 mb-4\">\n                  Send reminder emails to students with overdue resubmissions.\n                </p>\n                <div className=\"flex items-center space-x-3\">\n                  <label className=\"text-sm font-medium\">Days overdue:</label>\n                  <Input\n                    type=\"number\"\n                    value={bulkReminderDays}\n                    onChange={(e) => setBulkReminderDays(parseInt(e.target.value) || 7)}\n                    min=\"1\"\n                    max=\"30\"\n                    className=\"w-20\"\n                  />\n                  <Button\n                    onClick={sendBulkReminders}\n                    disabled={reminderLoading}\n                    className=\"flex items-center space-x-2\"\n                  >\n                    {reminderLoading ? (\n                      <RefreshCw className=\"h-4 w-4 animate-spin\" />\n                    ) : (\n                      <Send className=\"h-4 w-4\" />\n                    )}\n                    <span>Send Reminders</span>\n                  </Button>\n                </div>\n                \n                {reminderResult && (\n                  <Alert className=\"mt-3\">\n                    <AlertDescription>{reminderResult}</AlertDescription>\n                  </Alert>\n                )}\n              </div>\n\n              {selectedRequests.size > 0 && (\n                <div className=\"border rounded-lg p-4\">\n                  <h3 className=\"font-semibold mb-3\">\n                    Selected Requests ({selectedRequests.size})\n                  </h3>\n                  <p className=\"text-sm text-gray-600 mb-4\">\n                    Perform bulk actions on selected modification requests.\n                  </p>\n                  <div className=\"flex items-center space-x-3\">\n                    <Button variant=\"outline\" size=\"sm\">\n                      Send Individual Reminders\n                    </Button>\n                    <Button variant=\"outline\" size=\"sm\">\n                      Export Selected\n                    </Button>\n                    <Button\n                      variant=\"outline\"\n                      size=\"sm\"\n                      onClick={() => setSelectedRequests(new Set())}\n                    >\n                      Clear Selection\n                    </Button>\n                  </div>\n                </div>\n              )}\n            </CardContent>\n          </Card>\n        </TabsContent>\n      </Tabs>\n    </div>\n  );\n};\n\nexport default EnhancedModificationDashboard;"
+import React, { useState, useEffect } from 'react';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  TrendingUp,
+  Clock,
+  Users,
+  FileText,
+  AlertTriangle,
+  CheckCircle,
+  BarChart3,
+  Send,
+  RefreshCw
+} from 'lucide-react';
+
+interface ModificationStats {
+  total_assignments: number;
+  assignments_with_modifications: number;
+  total_modification_requests: number;
+  pending_resubmissions: number;
+  completed_resubmissions: number;
+  average_resubmissions_per_assignment: number;
+  modification_rate: number;
+}
+
+interface ModificationRequest {
+  id: number;
+  title: string;
+  course_title: string;
+  lesson_title: string;
+  student_name: string;
+  student_email: string;
+  modification_reason: string;
+  requested_at: string;
+  needs_resubmission: boolean;
+  resubmission_count: number;
+  max_resubmissions: number;
+  status: string;
+}
+
+interface TrendData {
+  date: string;
+  modification_requests: number;
+}
+
+const EnhancedModificationDashboard: React.FC = () => {
+  const [stats, setStats] = useState<ModificationStats | null>(null);
+  const [requests, setRequests] = useState<ModificationRequest[]>([]);
+  const [trends, setTrends] = useState<TrendData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRequests, setSelectedRequests] = useState<Set<number>>(new Set());
+  const [bulkReminderDays, setBulkReminderDays] = useState(7);
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderResult, setReminderResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      const token = localStorage.getItem('token');
+
+      if (!token) {
+        setError('No authentication token found');
+        return;
+      }
+
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      };
+
+      // Load stats, requests, and trends in parallel
+      const [statsResponse, requestsResponse, trendsResponse] = await Promise.all([
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-stats`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-requests`, { headers }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/analytics/trends?period=weekly&weeks_back=4`, { headers })
+      ]);
+
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json();
+        setStats(statsData.data);
+      }
+
+      if (requestsResponse.ok) {
+        const requestsData = await requestsResponse.json();
+        setRequests(requestsData.data.modification_requests || []);
+      }
+
+      if (trendsResponse.ok) {
+        const trendsData = await trendsResponse.json();
+        setTrends((trendsData.data.trends || []).map((trend: any) => ({
+          date: trend.date,
+          modification_requests: trend.modification_requests ?? trend.modifications ?? 0,
+        })));
+      }
+
+    } catch (err) {
+      console.error('Error loading dashboard data:', err);
+      setError('Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendBulkReminders = async () => {
+    try {
+      setReminderLoading(true);
+      setReminderResult(null);
+
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/send-reminders`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          days_overdue: bulkReminderDays
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        setReminderResult(`Successfully sent ${result.data.reminders_sent} reminders`);
+        loadDashboardData(); // Refresh data
+      } else {
+        const error = await response.json();
+        setReminderResult(`Failed to send reminders: ${error.error}`);
+      }
+    } catch (err) {
+      console.error('Error sending reminders:', err);
+      setReminderResult('Failed to send reminders');
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const toggleRequestSelection = (requestId: number) => {
+    const newSelected = new Set(selectedRequests);
+    if (newSelected.has(requestId)) {
+      newSelected.delete(requestId);
+    } else {
+      newSelected.add(requestId);
+    }
+    setSelectedRequests(newSelected);
+  };
+
+  const selectAllPendingRequests = () => {
+    const pendingIds = requests
+      .filter(req => req.needs_resubmission)
+      .map(req => req.id);
+    setSelectedRequests(new Set(pendingIds));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+        <span className="ml-2">Loading modification dashboard...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert className="border-red-200 bg-red-50">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Modification Request Dashboard</h1>
+        <Button onClick={loadDashboardData} variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Stats Overview */}
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2">
+                <FileText className="h-8 w-8 text-blue-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Assignments</p>
+                  <p className="text-2xl font-bold">{stats.total_assignments}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-8 w-8 text-yellow-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Pending Resubmissions</p>
+                  <p className="text-2xl font-bold">{stats.pending_resubmissions}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2">
+                <CheckCircle className="h-8 w-8 text-green-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Completed Resubmissions</p>
+                  <p className="text-2xl font-bold">{stats.completed_resubmissions}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center space-x-2">
+                <TrendingUp className="h-8 w-8 text-purple-600" />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Modification Rate</p>
+                  <p className="text-2xl font-bold">{stats.modification_rate}%</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Tabs defaultValue="requests" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="requests">Modification Requests</TabsTrigger>
+          <TabsTrigger value="trends">Trends</TabsTrigger>
+          <TabsTrigger value="reminders">Bulk Actions</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="requests" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <span>Modification Requests</span>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary">
+                    {requests.filter(req => req.needs_resubmission).length} pending
+                  </Badge>
+                  <Button onClick={selectAllPendingRequests} variant="outline" size="sm">
+                    Select All Pending
+                  </Button>
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {requests.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No modification requests found
+                  </div>
+                ) : (
+                  requests.map((request) => (
+                    <div
+                      key={request.id}
+                      className={`border rounded-lg p-4 transition-colors ${
+                        selectedRequests.has(request.id)
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start space-x-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedRequests.has(request.id)}
+                            onChange={() => toggleRequestSelection(request.id)}
+                            className="mt-1"
+                          />
+                          <div className="flex-1">
+                            <h3 className="font-semibold">{request.title}</h3>
+                            <p className="text-sm text-gray-600">
+                              {request.course_title} • {request.lesson_title}
+                            </p>
+                            <p className="text-sm font-medium text-gray-800 mt-1">
+                              Student: {request.student_name}
+                            </p>
+                            <div className="mt-2 p-2 bg-gray-50 rounded text-sm">
+                              <strong>Reason:</strong> {request.modification_reason}
+                            </div>
+                            <div className="flex items-center space-x-4 mt-2 text-sm text-gray-600">
+                              <span>Requested: {new Date(request.requested_at).toLocaleDateString()}</span>
+                              <span>Resubmissions: {request.resubmission_count}/{request.max_resubmissions}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Badge
+                            variant={request.needs_resubmission ? 'destructive' : 'secondary'}
+                          >
+                            {request.needs_resubmission ? 'Pending' : 'Resubmitted'}
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="trends" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <BarChart3 className="h-5 w-5 mr-2" />
+                Modification Request Trends (Last 30 Days)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {trends.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No trend data available
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {trends.map((trend, index) => (
+                    <div key={index} className="flex items-center justify-between py-2 border-b">
+                      <span className="text-sm font-medium">
+                        {new Date(trend.date).toLocaleDateString()}
+                      </span>
+                      <div className="flex items-center space-x-2">
+                        <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm">
+                          {trend.modification_requests} requests
+                        </div>
+                        <div
+                          className="bg-blue-500 h-2 rounded"
+                          style={{
+                            width: `${Math.max(10, (trend.modification_requests / Math.max(...trends.map(t => t.modification_requests))) * 100)}px`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="reminders" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Send className="h-5 w-5 mr-2" />
+                Bulk Actions & Reminders
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="border rounded-lg p-4">
+                <h3 className="font-semibold mb-3">Send Bulk Reminders</h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Send reminder emails to students with overdue resubmissions.
+                </p>
+                <div className="flex items-center space-x-3">
+                  <label className="text-sm font-medium">Days overdue:</label>
+                  <Input
+                    type="number"
+                    value={bulkReminderDays}
+                    onChange={(e) => setBulkReminderDays(parseInt(e.target.value) || 7)}
+                    min="1"
+                    max="30"
+                    className="w-20"
+                  />
+                  <Button
+                    onClick={sendBulkReminders}
+                    disabled={reminderLoading}
+                    className="flex items-center space-x-2"
+                  >
+                    {reminderLoading ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    <span>Send Reminders</span>
+                  </Button>
+                </div>
+
+                {reminderResult && (
+                  <Alert className="mt-3">
+                    <AlertDescription>{reminderResult}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+
+              {selectedRequests.size > 0 && (
+                <div className="border rounded-lg p-4">
+                  <h3 className="font-semibold mb-3">
+                    Selected Requests ({selectedRequests.size})
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Perform bulk actions on selected modification requests.
+                  </p>
+                  <div className="flex items-center space-x-3">
+                    <Button variant="outline" size="sm">
+                      Send Individual Reminders
+                    </Button>
+                    <Button variant="outline" size="sm">
+                      Export Selected
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedRequests(new Set())}
+                    >
+                      Clear Selection
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default EnhancedModificationDashboard;

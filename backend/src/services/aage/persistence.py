@@ -688,6 +688,23 @@ def write_through_grade(result: EvaluationResult, *,
         logger.error("AAGE write-through failed for result %s", result.id)
         return False
 
+    # A project grade belongs to the whole team, regardless of which teammate
+    # produced the submission the worker evaluated.
+    if loaded.submission_type == "project":
+        try:
+            from ..project_scoring_service import mirror_project_grade
+            mirror_project_grade(
+                loaded.row.project,
+                loaded.row,
+                grade=loaded.row.grade,
+                feedback=loaded.row.feedback,
+                graded_at=loaded.row.graded_at,
+                graded_by=loaded.row.graded_by,
+            )
+        except Exception:  # pragma: no cover - mirroring is non-critical
+            logger.warning("AAGE project grade mirror failed for result %s",
+                           result.id, exc_info=True)
+
     # Failed grades follow the same LMS resubmission policy as manual grading:
     # below the assessment's passing score, create a modification request with
     # evidence-based feedback and do not advance lesson progress yet.
@@ -700,7 +717,15 @@ def write_through_grade(result: EvaluationResult, *,
         100.0,
         grade_data,
     )
-    if not modification_requested:
+    # Only a genuinely passing grade advances progress. A below-passing result
+    # that cannot request another revision is a terminal failure, not a pass.
+    parent = getattr(loaded.row, "project", None) or getattr(loaded.row, "assignment", None)
+    passing_threshold = float(getattr(parent, "passing_score", None) or 60.0)
+    points_possible = float(getattr(parent, "points_possible", None) or 100.0)
+    effective_grade = float(loaded.row.grade if loaded.row.grade is not None
+                            else (result.final_score or 0))
+    effective_percentage = (effective_grade / points_possible * 100.0) if points_possible else 0.0
+    if not modification_requested and effective_percentage >= passing_threshold:
         _update_learning_progress(
             app,
             loaded.submission_id,

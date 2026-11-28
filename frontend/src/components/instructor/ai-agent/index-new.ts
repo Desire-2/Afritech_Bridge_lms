@@ -1,1 +1,27 @@
-/**\n * AI Agent Components for Instructor Course Creation\n * Exports all AI-assisted content generation components\n */\n\n// Enhanced AI Agent Components\nexport { default as EnhancedAIContentGenerator } from './EnhancedAIContentGenerator';\nexport { default as AIProgressTracker } from './AIProgressTracker';\nexport { default as QualityAssessmentDisplay } from './QualityAssessmentDisplay';\n\n// Legacy Components  \nexport { AICourseGenerator } from './AICourseGenerator';\nexport { AIContentGenerator } from './AIContentGenerator';\n\n// Re-export types\nexport type { \n  CourseOutlineRequest,\n  ModuleContentRequest,\n  LessonContentRequest,\n  QuizQuestionsRequest,\n  AssignmentRequest,\n  FinalProjectRequest,\n  EnhanceContentRequest,\n  AIResponse,\n  GenerationProgress,\n  QualityAssessment\n} from '@/services/ai-agent.service';\n
+/**
+ * AI Agent Components for Instructor Course Creation
+ * Exports all AI-assisted content generation components
+ */
+
+// Enhanced AI Agent Components
+export { default as EnhancedAIContentGenerator } from './EnhancedAIContentGenerator';
+export { default as AIProgressTracker } from './AIProgressTracker';
+export { default as QualityAssessmentDisplay } from './QualityAssessmentDisplay';
+
+// Legacy Components
+export { AICourseGenerator } from './AICourseGenerator';
+export { AIContentGenerator } from './AIContentGenerator';
+
+// Re-export types
+export type {
+  CourseOutlineRequest,
+  ModuleContentRequest,
+  LessonContentRequest,
+  QuizQuestionsRequest,
+  AssignmentRequest,
+  FinalProjectRequest,
+  EnhanceContentRequest,
+  AIResponse,
+  GenerationProgress,
+  QualityAssessment
+} from '@/services/ai-agent.service';

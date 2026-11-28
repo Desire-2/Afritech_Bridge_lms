@@ -14,6 +14,8 @@ export interface SubmissionStatus {
   feedback?: string;
   /** Why a revision was requested — kept separate from the grade feedback. */
   modification_request_reason?: string;
+  /** False when the revision limit has been reached. */
+  can_resubmit?: boolean;
   graded_at?: string;
   grader_name?: string;
   is_late: boolean;
@@ -157,6 +159,12 @@ export interface SubmissionDetail {
     graded_at?: string;
     graded_by?: number;
     grader_name?: string;
+    /** Per-submission revision state emitted by ProjectSubmission.to_dict(). */
+    modification_requested?: boolean;
+    modification_request_reason?: string;
+    modification_reason?: string;
+    can_resubmit?: boolean;
+    resubmission_count?: number;
     team_members?: number[];
     is_late?: boolean;
   };

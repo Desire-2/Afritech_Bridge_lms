@@ -191,6 +191,33 @@ def request_project_modification(
     return changed
 
 
+def mirror_project_grade(project, submission, *, grade=None, feedback=None,
+                         graded_at=None, graded_by=None) -> List[int]:
+    """Copy the authoritative grade/feedback to every teammate's row.
+
+    The student who submitted may not be the row an instructor or AAGE worker
+    publishes through. Without this mirror, teammates see a revision reason
+    citing a score while their own grade card is empty.
+    """
+    from ..models.course_models import ProjectSubmission
+
+    member_ids = team_member_ids(project, submission)
+    rows = ProjectSubmission.query.filter(
+        ProjectSubmission.project_id == project.id,
+        ProjectSubmission.student_id.in_(member_ids),
+    ).all()
+    for row in rows:
+        if grade is not None:
+            row.grade = grade
+        if feedback is not None:
+            row.feedback = feedback
+        if graded_at is not None:
+            row.graded_at = graded_at
+        if graded_by is not None:
+            row.graded_by = graded_by
+    return [row.id for row in rows]
+
+
 def resubmission_check(project, submission) -> tuple:
     """``(allowed, reason)`` for a project resubmission."""
     if submission is None or submission.submitted_at is None:

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UnauthorizedAccess } from '@/components/guards/UnauthorizedAccess';
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
 import AageService, {
   GradingOutcome,
   RecommendedResource,
@@ -77,6 +78,10 @@ function projectForStudent(raw: StudentPublishedResult) {
     pointsAwarded: typeof raw.points_awarded === 'number' ? raw.points_awarded : undefined,
     totalPossible: typeof raw.total_possible === 'number' ? raw.total_possible : null,
     feedback: typeof raw.feedback === 'string' ? raw.feedback : null,
+    modificationReason:
+      typeof raw.modification_request_reason === 'string'
+        ? raw.modification_request_reason
+        : null,
     strengths: strings(raw.strengths),
     improvements: strings(raw.improvements),
     resources,
@@ -94,15 +99,18 @@ export default function StudentResultPage() {
   const [result, setResult] = useState<ReturnType<typeof projectForStudent> | null>(null);
   const [outcome, setOutcome] = useState<GradingOutcome | null>(null);
   const [submissionType, setSubmissionType] = useState<SubmissionType | undefined>(undefined);
+  const pollsRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!Number.isFinite(submissionId)) {
       setView('not_found');
       return;
     }
-    setView('loading');
-    setResult(null);
-    setOutcome(null);
+    if (!silent) {
+      setView('loading');
+      setResult(null);
+      setOutcome(null);
+    }
     try {
       // Only the student-safe endpoint is used. Instructor endpoints that
       // return AI internals or other students' data are never called here.
@@ -130,16 +138,29 @@ export default function StudentResultPage() {
       if (kind === 'not_found' || kind === 'forbidden') {
         setView('not_found');
       } else {
-        // A missing student endpoint or a still-processing result both render
-        // as a friendly "under review" state rather than a raw error.
-        setView('pending');
+        // Network/server failures are not proof that grading is still pending.
+        setView('error');
       }
     }
   }, [submissionId]);
 
   useEffect(() => {
+    pollsRef.current = 0;
     void load();
   }, [load]);
+
+  // A job can finish while this page is open. Poll quietly for a bounded time
+  // so the published result appears without a manual refresh; a silent poll
+  // never flips the view back to "loading".
+  useEffect(() => {
+    if (view !== 'pending' && view !== 'error') return;
+    const timer = window.setInterval(() => {
+      if (pollsRef.current >= 15) return;
+      pollsRef.current += 1;
+      void load(true);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [view, load]);
 
   const scoreLabel = useMemo(() => {
     if (!result) return null;
@@ -170,7 +191,7 @@ export default function StudentResultPage() {
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
-          href="/student/assignments"
+          href="/student/assessments"
           className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-blue-600 dark:text-slate-300"
         >
           <ArrowLeft className="h-4 w-4" /> Back to my work
@@ -306,15 +327,31 @@ export default function StudentResultPage() {
             </div>
           </section>
 
+          {/* Revision reason is separate from the published grade feedback. */}
+          {result.modificationReason && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm dark:border-amber-800 dark:bg-amber-900/10">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-amber-800 dark:text-amber-200">
+                <Lightbulb className="h-5 w-5 text-amber-500" /> Revision requested
+              </h2>
+              <MarkdownRenderer
+                content={result.modificationReason}
+                variant="card"
+                className="mt-3 text-sm leading-relaxed text-amber-900 dark:text-amber-100"
+              />
+            </section>
+          )}
+
           {/* Feedback */}
           {result.feedback && (
             <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
               <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-800 dark:text-slate-100">
                 <Sparkles className="h-5 w-5 text-purple-500" /> Instructor feedback
               </h2>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-700 dark:text-slate-200">
-                {result.feedback}
-              </p>
+              <MarkdownRenderer
+                content={result.feedback}
+                variant="card"
+                className="mt-3 text-sm leading-relaxed text-slate-700 dark:text-slate-200"
+              />
             </section>
           )}
 

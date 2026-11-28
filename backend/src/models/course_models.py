@@ -1332,6 +1332,13 @@ class AssignmentSubmission(db.Model):
         return f'<AssignmentSubmission {self.id} for Assignment {self.assignment_id}>'
 
     def to_dict(self):
+        # Imported lazily: services/__init__ imports models, so a module-level
+        # import here would create a circular dependency at app startup.
+        from ..services.grading_feedback import (
+            assignment_revision_state, stored_feedback_text,
+        )
+        revision = assignment_revision_state(self)
+
         # Parse files data if available
         files_data = []
         if self.file_url:
@@ -1356,7 +1363,7 @@ class AssignmentSubmission(db.Model):
             'external_url': self.external_url,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'grade': self.grade,
-            'feedback': self.feedback,
+            'feedback': stored_feedback_text(self.feedback) if self.feedback else None,
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
             'graded_by': self.graded_by,
             'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,
@@ -1368,16 +1375,12 @@ class AssignmentSubmission(db.Model):
             'submission_notes': self.submission_notes,
             # Read-only revision state; student-facing endpoints prefer the
             # submission's own grade/feedback and keep the reason separate.
-            'modification_requested': bool(
-                getattr(self.assignment, 'modification_requested', False)
-            ) if self.assignment else False,
-            'can_resubmit': bool(
-                getattr(self.assignment, 'can_resubmit', False)
-            ) if self.assignment else False,
-            'modification_request_reason': (
-                self.assignment.modification_request_reason
-                if self.assignment and self.assignment.modification_requested
-                else None
+            'modification_requested': bool(revision['modification_requested']),
+            'can_resubmit': bool(revision['can_resubmit']),
+            'modification_request_reason': revision['modification_request_reason'],
+            'modification_requested_at': (
+                revision['modification_requested_at'].isoformat()
+                if revision['modification_requested_at'] else None
             )
         }
     
@@ -1432,46 +1435,60 @@ class AssignmentSubmission(db.Model):
     
     def get_submission_status(self):
         """Get comprehensive submission status information"""
+        from ..services.grading_feedback import assignment_revision_state
+        revision = assignment_revision_state(self)
         status = {
             'is_first_submission': not self.is_resubmission,
             'is_resubmission': self.is_resubmission,
             'resubmission_count': self.resubmission_count,
             'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
-            'modification_requested': self.assignment.modification_requested if self.assignment else False,
-            'can_resubmit': self.assignment.can_resubmit if self.assignment else False,
+            'modification_requested': bool(revision['modification_requested']),
+            'can_resubmit': bool(revision['can_resubmit']),
             'submission_notes': self.submission_notes
         }
-        
-        # Add modification request details if applicable
-        if self.assignment and self.assignment.modification_requested:
+
+        if revision['modification_requested']:
             status.update({
-                'modification_request_reason': self.assignment.modification_request_reason,
-                'modification_requested_at': self.assignment.modification_requested_at.isoformat() if self.assignment.modification_requested_at else None,
-                'modification_requested_by': self.assignment.modification_requested_by
+                'modification_request_reason': revision['modification_request_reason'],
+                'modification_requested_at': (
+                    revision['modification_requested_at'].isoformat()
+                    if revision['modification_requested_at'] else None
+                ),
+                'modification_requested_by': (
+                    getattr(self.assignment, 'modification_requested_by', None)
+                    if self.assignment else None
+                )
             })
-        
+
         return status
     
     def get_submission_status(self):
         """Get comprehensive submission status information"""
+        from ..services.grading_feedback import assignment_revision_state
+        revision = assignment_revision_state(self)
         status = {
             'is_first_submission': not self.is_resubmission,
             'is_resubmission': self.is_resubmission,
             'resubmission_count': self.resubmission_count,
             'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
-            'modification_requested': self.assignment.modification_requested if self.assignment else False,
-            'can_resubmit': self.assignment.can_resubmit if self.assignment else False,
+            'modification_requested': bool(revision['modification_requested']),
+            'can_resubmit': bool(revision['can_resubmit']),
             'submission_notes': self.submission_notes
         }
-        
-        # Add modification request details if applicable
-        if self.assignment and self.assignment.modification_requested:
+
+        if revision['modification_requested']:
             status.update({
-                'modification_request_reason': self.assignment.modification_request_reason,
-                'modification_requested_at': self.assignment.modification_requested_at.isoformat() if self.assignment.modification_requested_at else None,
-                'modification_requested_by': self.assignment.modification_requested_by
+                'modification_request_reason': revision['modification_request_reason'],
+                'modification_requested_at': (
+                    revision['modification_requested_at'].isoformat()
+                    if revision['modification_requested_at'] else None
+                ),
+                'modification_requested_by': (
+                    getattr(self.assignment, 'modification_requested_by', None)
+                    if self.assignment else None
+                )
             })
-        
+
         return status
 
 class Project(db.Model):
@@ -1713,6 +1730,7 @@ class ProjectSubmission(db.Model):
         # Mirror AssignmentSubmission.to_dict(): expose parsed Vercel Blob
         # metadata next to the raw column so grading surfaces never have to
         # decode a JSON string themselves.
+        from ..services.grading_feedback import stored_feedback_text
         from ..utils.submission_files import parse_submission_files
         files_data = parse_submission_files(self.file_path, self.file_name)
         return {
@@ -1728,7 +1746,7 @@ class ProjectSubmission(db.Model):
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'grade': self.grade,
-            'feedback': self.feedback,
+            'feedback': stored_feedback_text(self.feedback) if self.feedback else None,
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
             'graded_by': self.graded_by,
             'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,

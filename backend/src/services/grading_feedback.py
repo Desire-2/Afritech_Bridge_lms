@@ -143,6 +143,7 @@ def rubric_criteria(grade_data: Optional[Dict[str, Any]]) -> List[Dict[str, Any]
         grade_data.get("analysis_data", {}).get("criteria")
         if isinstance(grade_data.get("analysis_data"), dict) else None,
         grade_data.get("rubric_scores"),
+        grade_data.get("rubric_criteria"),
     ]
 
     for candidate in candidates:
@@ -240,13 +241,16 @@ def build_revision_reason(
 
     if total is not None and maximum and maximum > 0:
         pct = (total / maximum) * 100
-        if passing is not None:
+        score_line = f"Your submission scored {total:g}/{maximum:g} ({pct:.1f}%)."
+        if passing is not None and pct < passing:
             parts.append(
                 f"Your submission scored {total:g}/{maximum:g} ({pct:.1f}%), "
                 f"below the passing score of {passing:g}%."
             )
         else:
-            parts.append(f"Your submission scored {total:g}/{maximum:g} ({pct:.1f}%).")
+            # A revision can be requested on a passing submission; never
+            # claim it failed just because a passing threshold was supplied.
+            parts.append(score_line)
 
     breakdown = rubric_breakdown_text(
         grade_data, limit=4, heading="**Rubric areas to address:**"
@@ -297,6 +301,57 @@ def resolve_modification_reason(
         existing_feedback=existing_feedback,
         instructor_reason=None,
     )
+
+
+def assignment_revision_state(submission: Any, assignment: Any = None) -> Dict[str, Any]:
+    """Per-student revision state for an assignment submission.
+
+    ``Assignment`` rows are shared by the whole cohort, so their flags must
+    not decide whether one student may resubmit. The student's own
+    ``LessonCompletion`` is authoritative when present; the parent flags are
+    retained only as a legacy fallback for rows written before that record
+    existed.
+    """
+    assignment = assignment or getattr(submission, "assignment", None)
+    state: Dict[str, Any] = {
+        "modification_requested": bool(
+            getattr(assignment, "modification_requested", False)),
+        "modification_request_reason": getattr(
+            assignment, "modification_request_reason", None),
+        "modification_requested_at": getattr(
+            assignment, "modification_requested_at", None),
+        "can_resubmit": bool(getattr(assignment, "can_resubmit", False)),
+    }
+    if submission is None or assignment is None:
+        return state
+
+    try:
+        from ..models.student_models import LessonCompletion
+        lesson_id = getattr(assignment, "lesson_id", None)
+        if lesson_id is None:
+            return state
+        completion = LessonCompletion.query.filter_by(
+            student_id=getattr(submission, "student_id", None),
+            lesson_id=lesson_id,
+        ).first()
+    except Exception:  # pragma: no cover - revision display is non-critical
+        return state
+
+    if completion is None:
+        return state
+
+    requested = bool(
+        getattr(completion, "assignment_needs_resubmission", False)
+        or getattr(completion, "modification_request_reason", None)
+    )
+    state["modification_requested"] = requested
+    state["can_resubmit"] = bool(
+        getattr(completion, "assignment_needs_resubmission", False))
+    state["modification_request_reason"] = (
+        getattr(completion, "modification_request_reason", None)
+        if requested else None
+    )
+    return state
 
 
 def aage_grade_data(submission_type: str, submission_id: int) -> Dict[str, Any]:

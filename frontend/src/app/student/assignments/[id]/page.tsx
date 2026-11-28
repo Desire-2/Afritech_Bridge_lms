@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import contentAssignmentService from '@/services/contentAssignmentApi';
 import type { ContentAssignment as ApiContentAssignment } from '@/services/contentAssignmentApi';
 import { EnhancedAssignmentPanel } from '@/components/assignments/EnhancedAssignmentPanel';
+import StudentAageGradingResult from '@/components/grading/StudentAageGradingResult';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -90,7 +91,10 @@ export default function AssignmentDetailPage() {
     );
   }
 
-  const needsRevision = assignment.modification_requested && assignment.can_resubmit;
+  const needsRevision =
+    assignment.submission_status?.status === 'needs_revision' ||
+    assignment.modification_requested === true;
+  const submissionId = assignment.submission_status?.id;
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-4">
@@ -112,10 +116,19 @@ export default function AssignmentDetailPage() {
             Revision Requested
           </AlertTitle>
           <AlertDescription className="text-orange-700 dark:text-orange-400">
-            {assignment.modification_request_reason ||
+            {assignment.submission_status?.modification_request_reason ||
+              assignment.modification_request_reason ||
               'Your instructor has requested modifications to your submission. Please review the feedback and resubmit.'}
           </AlertDescription>
         </Alert>
+      )}
+
+      {/* AI grading result (AAGE, with legacy finalized fallback) */}
+      {typeof submissionId === 'number' && (
+        <StudentAageGradingResult
+          submissionId={submissionId}
+          submissionType="assignment"
+        />
       )}
 
       {/* Assignment Panel */}

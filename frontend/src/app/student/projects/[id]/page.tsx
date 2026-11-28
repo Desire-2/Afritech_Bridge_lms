@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
+import StudentAageGradingResult from '@/components/grading/StudentAageGradingResult';
 import {
   getSubmissionRequirements,
   getFileRules,
@@ -208,13 +209,14 @@ export default function ProjectDetailPage() {
   const requirements = getSubmissionRequirements(project.submission_format);
   const rules = getFileRules(project);
   const needsRevision =
-    status?.status === 'needs_revision' ||
-    (!!project.modification_requested && !!project.can_resubmit);
+    status?.status === 'needs_revision' || !!project.modification_requested;
   const isGraded = status?.status === 'graded';
   // An instructor-scaffolded team row has no content and no grade; it must
   // not read as submitted or the form below never appears.
   const isSubmitted = isSubmissionHandedIn(submission);
-  const canSubmit = !isSubmitted || needsRevision;
+  const canResubmit =
+    status?.can_resubmit === true || project.can_resubmit === true;
+  const canSubmit = !isSubmitted || (needsRevision && canResubmit);
   const attachments = parseAttachments(
     submission?.file_path || submission?.file_url,
     submission?.file_name,
@@ -401,15 +403,15 @@ export default function ProjectDetailPage() {
 
       {/* Grade Card — a below-passing auto-grade is still a published grade */}
       {pct !== null && (
-        <Card className="border-green-200 dark:border-green-800">
+        <Card className={needsRevision ? 'border-amber-300 dark:border-amber-800' : 'border-green-200 dark:border-green-800'}>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2 text-green-700 dark:text-green-300">
+            <CardTitle className={`text-base flex items-center gap-2 ${needsRevision ? 'text-amber-700 dark:text-amber-300' : 'text-green-700 dark:text-green-300'}`}>
               <CheckCircle2 className="w-5 h-5" />
-              Grade
+              {needsRevision ? 'Grade (revision requested)' : 'Grade'}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-between bg-green-50 dark:bg-green-950/30 rounded-lg px-4 py-3">
+            <div className={`flex items-center justify-between rounded-lg px-4 py-3 ${needsRevision ? 'bg-amber-50 dark:bg-amber-950/30' : 'bg-green-50 dark:bg-green-950/30'}`}>
               <span className="text-sm text-muted-foreground">Score</span>
               <div className="flex items-center gap-3">
                 <span className="text-lg font-semibold">
@@ -432,12 +434,12 @@ export default function ProjectDetailPage() {
                 </span>
               </div>
             </div>
-            {status?.feedback && (
+            {(submission?.feedback || status?.feedback) && (
               <div className="mt-3 bg-muted/50 rounded-lg px-4 py-3">
                 <p className="text-xs font-semibold text-muted-foreground mb-1">Instructor Feedback</p>
                 <div className="text-sm">
                   <MarkdownRenderer
-                    content={status.feedback}
+                    content={submission?.feedback || status?.feedback || ''}
                     variant="compact"
                     className="prose-sm leading-relaxed"
                   />
@@ -449,6 +451,14 @@ export default function ProjectDetailPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Published AAGE rubric analysis for this project submission */}
+      {(submission?.id || status?.id) && (
+        <StudentAageGradingResult
+          submissionId={submission?.id || status?.id!}
+          submissionType="project"
+        />
       )}
 
       {/* Previous Submission */}

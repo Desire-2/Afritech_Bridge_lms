@@ -51,6 +51,8 @@ export interface AssignmentSubmission {
   modification_requested?: boolean;
   modification_request_reason?: string;
   modification_requested_at?: string;
+  /** Legacy key emitted by some serializers. */
+  modification_request_at?: string;
   modification_requested_by?: number;
   can_resubmit?: boolean;
   // Enhanced fields
@@ -93,10 +95,12 @@ export interface ProjectSubmission {
   is_resubmission?: boolean;
   resubmission_count?: number;
   submission_notes?: string;
-  // Project-level modification request fields
+  // Per-submission revision state (also used for projects)
   modification_requested?: boolean;
   modification_request_reason?: string;
   modification_requested_at?: string;
+  /** Legacy key emitted by some serializers. */
+  modification_request_at?: string;
   modification_requested_by?: number;
   can_resubmit?: boolean;
   // Cohort fields
@@ -146,6 +150,8 @@ export interface SubmissionDetail extends AssignmentSubmission {
     modules?: any[];
     modification_requested?: boolean;
     modification_request_reason?: string;
+    /** Emitted by Project.to_dict(); `modification_request_at` is the legacy key. */
+    modification_requested_at?: string;
     modification_request_at?: string;
     modification_requested_by?: number;
     can_resubmit?: boolean;
@@ -212,13 +218,16 @@ export interface GradeRequest {
   grade: number;
   feedback?: string;
   max_resubmissions?: number;
-  rubric_scores?: {
+  /** Flat criterion-id -> points map emitted by RubricGradingPanel. */
+  rubric_scores?: Record<string, number> | {
     [key: string]: {
       score: number;
       max_score: number;
       feedback?: string;
     };
   };
+  /** Human-readable criterion marks used in rubric-aware feedback. */
+  rubric_criteria?: Array<{ name: string; score: number; max_points: number }>;
 }
 
 export interface BulkGradeRequest {

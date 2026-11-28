@@ -7,11 +7,25 @@ import { Star, CheckCircle, X, Award, Plus } from 'lucide-react';
 import GradingService from '@/services/grading.service';
 
 interface RubricGradingPanelProps {
-  submissionType: 'assignment' | 'project';
+  submissionType?: 'assignment' | 'project';
   maxPoints: number;
-  onApply: (scores: any, total: number) => void;
-  onClose: () => void;
-  initialScores?: any;
+  /** Preferred callback; `onApply` is kept for the quick-grading modal. */
+  onApply?: (
+    scores: Record<string, number>,
+    total: number,
+    details: Array<{ name: string; score: number; max_points: number }>
+  ) => void;
+  /** Alias used by the instructor submission detail pages. */
+  onApplyScores?: (
+    scores: Record<string, number>,
+    total: number,
+    details: Array<{ name: string; score: number; max_points: number }>
+  ) => void;
+  onClose?: () => void;
+  initialScores?: Record<string, number>;
+  /** Accepted for compatibility with the detail pages; rubrics are fetched globally. */
+  assignmentId?: number;
+  projectId?: number;
 }
 
 interface Rubric {
@@ -37,15 +51,15 @@ interface PerformanceLevel {
 }
 
 export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
-  submissionType,
   maxPoints,
   onApply,
+  onApplyScores,
   onClose,
   initialScores = {}
 }) => {
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
-  const [scores, setScores] = useState<Record<number, number>>(initialScores);
+  const [scores, setScores] = useState<Record<string, number>>(initialScores);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -84,14 +98,22 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
 
   const handleApply = () => {
     const total = getTotalScore();
-    const rubricScores = selectedRubric?.criteria.map(criterion => ({
-      criterion_id: criterion.id,
-      criterion_name: criterion.name,
-      max_points: criterion.max_points,
-      score: scores[criterion.id] || 0
-    }));
+    // The grading endpoints and the revision modal both expect a flat map of
+    // criterion id -> awarded points, not an array of criterion objects.
+    const rubricScores: Record<string, number> = {};
+    const details: Array<{ name: string; score: number; max_points: number }> = [];
+    (selectedRubric?.criteria || []).forEach(criterion => {
+      const awarded = scores[criterion.id] || 0;
+      rubricScores[String(criterion.id)] = awarded;
+      details.push({
+        name: criterion.name,
+        score: awarded,
+        max_points: criterion.max_points,
+      });
+    });
 
-    onApply(rubricScores, total);
+    (onApply || onApplyScores)?.(rubricScores, total, details);
+    onClose?.();
   };
 
   if (loading) {

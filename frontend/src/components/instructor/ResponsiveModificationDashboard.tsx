@@ -74,7 +74,7 @@ const ResponsiveModificationDashboard: React.FC = () => {
       const [statsResponse, requestsResponse, trendsResponse] = await Promise.all([
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-stats`, { headers }),
         fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-requests`, { headers }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/instructor/modification-trends?days=30`, { headers })
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/modification/analytics/trends?period=weekly&weeks_back=4`, { headers })
       ]);
 
       if (statsResponse.ok) {
@@ -89,7 +89,10 @@ const ResponsiveModificationDashboard: React.FC = () => {
 
       if (trendsResponse.ok) {
         const trendsData = await trendsResponse.json();
-        setTrends(trendsData.data.trends || []);
+        setTrends((trendsData.data.trends || []).map((trend: any) => ({
+          date: trend.date,
+          modification_requests: trend.modification_requests ?? trend.modifications ?? 0,
+        })));
       }
 
     } catch (err) {

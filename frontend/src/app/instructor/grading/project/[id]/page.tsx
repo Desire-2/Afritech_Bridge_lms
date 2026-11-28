@@ -57,6 +57,7 @@ const ProjectGradingDetail = () => {
   const [autoSaving, setAutoSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [rubricScores, setRubricScores] = useState<Record<string, number>>({});
+  const [rubricDetails, setRubricDetails] = useState<Array<{ name: string; score: number; max_points: number }>>([]);
 
   const [showDescription, setShowDescription] = useState(false);
   const [showObjectives, setShowObjectives] = useState(false);
@@ -96,7 +97,24 @@ const ProjectGradingDetail = () => {
     return { bg: 'bg-red-500', text: 'text-red-600 dark:text-red-400', badge: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' };
   };
 
-  const isModificationRequested = submission?.project?.modification_requested;
+  // Revision state is per submission (shared by teammates), not on the
+  // parent project row. Prefer the top-level values and fall back to the
+  // nested status for older payload shapes.
+  const revisionStatus = submission?.submission_status;
+  const isModificationRequested = Boolean(
+    submission?.modification_requested ??
+    revisionStatus?.modification_requested ??
+    submission?.project?.modification_requested
+  );
+  const modificationReason = submission?.modification_request_reason ??
+    revisionStatus?.modification_request_reason ??
+    submission?.project?.modification_request_reason;
+  const modificationRequestedAt = submission?.modification_requested_at ??
+    revisionStatus?.modification_requested_at ??
+    submission?.project?.modification_requested_at;
+  const canResubmit = submission?.can_resubmit ??
+    revisionStatus?.can_resubmit ??
+    submission?.project?.can_resubmit;
   const isAIGraded = submission?.graded_by === null && submission?.grade !== undefined && submission?.grade !== null;
   const hasExistingGrade = submission?.grade !== undefined && submission?.grade !== null;
 
@@ -163,9 +181,17 @@ const ProjectGradingDetail = () => {
     try {
       const resubLimit = maxResubmissions ? parseInt(maxResubmissions) : undefined;
       if (hasExistingGrade) {
-        await GradingService.updateProjectGrade(submissionId, { grade: gradeValue, feedback, max_resubmissions: resubLimit });
+        await GradingService.updateProjectGrade(submissionId, {
+          grade: gradeValue, feedback, max_resubmissions: resubLimit,
+          rubric_scores: Object.keys(rubricScores).length ? rubricScores : undefined,
+          rubric_criteria: rubricDetails.length ? rubricDetails : undefined,
+        });
       } else {
-        await GradingService.gradeProject(submissionId, { grade: gradeValue, feedback, max_resubmissions: resubLimit });
+        await GradingService.gradeProject(submissionId, {
+          grade: gradeValue, feedback, max_resubmissions: resubLimit,
+          rubric_scores: Object.keys(rubricScores).length ? rubricScores : undefined,
+          rubric_criteria: rubricDetails.length ? rubricDetails : undefined,
+        });
       }
       localStorage.removeItem(`grading_draft_project_${submissionId}`);
       setSuccessMsg(`Grade ${hasExistingGrade ? 'updated' : 'submitted'} successfully! Redirecting...`);
@@ -199,23 +225,31 @@ const ProjectGradingDetail = () => {
     setAutoSaving(true);
     try {
       localStorage.setItem(`grading_draft_project_${submissionId}`, JSON.stringify({
-        grade, feedback, rubricScores, timestamp: new Date().toISOString()
+        grade, feedback, rubricScores, rubricDetails, timestamp: new Date().toISOString()
       }));
       setLastSaved(new Date());
     } catch { /* ignore */ } finally { setAutoSaving(false); }
-  }, [grade, feedback, rubricScores, submissionId]);
+  }, [grade, feedback, rubricScores, rubricDetails, submissionId]);
 
   useEffect(() => {
     const saved = localStorage.getItem(`grading_draft_project_${submissionId}`);
     if (saved && !grade && !feedback) {
-      try { const d = JSON.parse(saved); setGrade(d.grade || ''); setFeedback(d.feedback || ''); setRubricScores(d.rubricScores || {}); } catch { /* ignore */ }
+      try { const d = JSON.parse(saved); setGrade(d.grade || ''); setFeedback(d.feedback || ''); setRubricScores(d.rubricScores || {}); setRubricDetails(d.rubricDetails || []); } catch { /* ignore */ }
     }
   }, [submissionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { const iv = setInterval(autoSaveDraft, AUTO_SAVE_INTERVAL); return () => clearInterval(iv); }, [autoSaveDraft]);
 
   const handleCommentSelect = (comment: string) => { setFeedback(prev => prev ? `${prev}\n\n${comment}` : comment); feedbackRef.current?.focus(); };
-  const handleRubricApply = (totalScore: number, scores: Record<string, number>) => { setGrade(totalScore.toString()); setRubricScores(scores); };
+  const handleRubricApply = (
+    scores: Record<string, number>,
+    totalScore: number,
+    details: Array<{ name: string; score: number; max_points: number }> = []
+  ) => {
+    setGrade(totalScore.toString());
+    setRubricScores(scores);
+    setRubricDetails(details);
+  };
 
   // ═════════════════════════════════════════════════════
   //  LOADING / ERROR STATES
@@ -295,14 +329,14 @@ const ProjectGradingDetail = () => {
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-amber-800 dark:text-amber-300 text-sm">Modification Requested</h3>
-              {submission.project?.modification_request_reason && (
+              {modificationReason && (
                 <div className="mt-1.5 text-sm text-amber-700 dark:text-amber-400">
-                  <MarkdownRenderer content={submission.project.modification_request_reason} variant="card" className="prose-amber text-sm" />
+                  <MarkdownRenderer content={modificationReason} variant="card" className="prose-amber text-sm" />
                 </div>
               )}
               <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-amber-600 dark:text-amber-500">
-                {submission.project?.modification_requested_at && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(submission.project.modification_requested_at).toLocaleString()}</span>}
-                {submission.project?.can_resubmit && <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Student can resubmit</span>}
+                {modificationRequestedAt && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{new Date(modificationRequestedAt).toLocaleString()}</span>}
+                {canResubmit && <span className="flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Student can resubmit</span>}
               </div>
             </div>
           </div>
@@ -560,7 +594,14 @@ const ProjectGradingDetail = () => {
 
               {showRubricPanel && (
                 <div className="border border-purple-200 dark:border-purple-800 rounded-lg p-4 bg-purple-50 dark:bg-purple-900/10">
-                  <RubricGradingPanel projectId={submission.project?.id} maxPoints={maxPoints} onApplyScores={handleRubricApply} initialScores={rubricScores} />
+                  <RubricGradingPanel
+                    submissionType="project"
+                    projectId={submission.project?.id}
+                    maxPoints={maxPoints}
+                    onApplyScores={handleRubricApply}
+                    onClose={() => setShowRubricPanel(false)}
+                    initialScores={rubricScores}
+                  />
                 </div>
               )}
 
@@ -866,7 +907,8 @@ const ProjectGradingDetail = () => {
             project_id: submission.project?.id || 0,
             submission_type: 'project',
             existing_feedback: submission.feedback || feedback,
-            rubricScores
+            rubricScores,
+            rubricDetails
           }}
           onSuccess={() => { setShowModificationModal(false); fetchSubmission(); }}
         />

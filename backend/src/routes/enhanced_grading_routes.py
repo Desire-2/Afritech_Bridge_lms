@@ -19,6 +19,7 @@ from ..models.course_models import (
     Project, ProjectSubmission, Quiz, Submission, Enrollment, Lesson
 )
 from ..models.student_models import AssessmentAttempt, LessonCompletion, ModuleProgress
+from ..services.grading_feedback import aage_grade_data, build_revision_reason, stored_feedback_text
 from ..utils.email_notifications import send_grade_notification, send_project_graded_notification, send_grade_with_modification_notification
 # from ..utils.ai_grading_helper import AIGradingHelper
 # from ..utils.plagiarism_checker import PlagiarismChecker
@@ -455,14 +456,25 @@ def bulk_grade_enhanced():
                     current_resubs = assignment.resubmission_count or 0
                     
                     if current_resubs < max_resubs:
-                        mod_reason = (
-                            f"Your score of {final_grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
-                            f"passing threshold of {passing_threshold}%. "
-                            f"Please review the instructor feedback and resubmit your work with improvements."
+                        grade_data = aage_grade_data('assignment', submission.id)
+                        mod_reason = build_revision_reason(
+                            total_score=final_grade,
+                            max_score=points_possible,
+                            passing_score=passing_threshold,
+                            grade_data=grade_data,
+                            existing_feedback=stored_feedback_text(submission.feedback),
                         )
-                        if submission.feedback:
-                            mod_reason += f"\n\nInstructor Feedback: {submission.feedback}"
-                        
+
+                        if assignment.lesson_id:
+                            lesson_completion = LessonCompletion.query.filter_by(
+                                student_id=submission.student_id,
+                                lesson_id=assignment.lesson_id,
+                            ).first()
+                            if lesson_completion:
+                                lesson_completion.assignment_graded = False
+                                lesson_completion.assignment_needs_resubmission = True
+                                lesson_completion.modification_request_reason = mod_reason
+
                         assignment.modification_requested = True
                         assignment.modification_request_reason = mod_reason
                         assignment.modification_requested_at = now_local()

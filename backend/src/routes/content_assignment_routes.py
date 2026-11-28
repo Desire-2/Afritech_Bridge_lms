@@ -10,6 +10,7 @@ from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Quiz, Assignment, Project, AssignmentSubmission
 from ..models.student_models import ModuleProgress, LessonCompletion
 from ..models.quiz_progress_models import QuizAttempt
+from ..services.grading_feedback import stored_feedback_text
 
 # Helper for role checking
 from functools import wraps
@@ -427,12 +428,16 @@ def get_lesson_assignments(lesson_id):
                     )
                     if has_revision:
                         submission_status['status'] = 'needs_revision'
-                        submission_status['feedback'] = submission.feedback
+                        submission_status['feedback'] = (
+                            stored_feedback_text(submission.feedback) if submission.feedback else None
+                        )
                     elif submission.grade is not None:
                         submission_status['status'] = 'graded'
                         submission_status['grade'] = submission.grade
                         submission_status['score'] = submission.grade  # Frontend expects 'score' field
-                        submission_status['feedback'] = submission.feedback
+                        submission_status['feedback'] = (
+                            stored_feedback_text(submission.feedback) if submission.feedback else None
+                        )
                         submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
                         # Safely get grader name
                         try:

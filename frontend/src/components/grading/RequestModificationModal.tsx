@@ -29,6 +29,8 @@ interface RequestModificationModalProps {
     existing_feedback?: string | null;
     /** Instructor rubric marks, if the grade was entered with the rubric panel. */
     rubricScores?: Record<string, number> | null;
+    /** Human-readable criterion names for the marks above. */
+    rubricDetails?: Array<{ name: string; score: number; max_points: number }> | null;
   };
   onSuccess: () => void;
 }
@@ -62,13 +64,18 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
   }, [submission.existing_feedback]);
 
   const rubricSummary = useMemo(() => {
-    const scores = submission.rubricScores || {};
-    const entries = Object.entries(scores);
+    const details = submission.rubricDetails || [];
+    if (details.length > 0) {
+      return details
+        .map((row) => `• ${row.name}: ${row.score}/${row.max_points}`)
+        .join('\n');
+    }
+    const entries = Object.entries(submission.rubricScores || {});
     if (entries.length === 0) return '';
     return entries
       .map(([criterion, score]) => `• ${criterion}: ${score}`)
       .join('\n');
-  }, [submission.rubricScores]);
+  }, [submission.rubricDetails, submission.rubricScores]);
 
   const feedbackSuggestion = useMemo(() => {
     const sections = [rubricFeedback.split('\n---')[0].trim()];
@@ -78,13 +85,15 @@ export const RequestModificationModal: React.FC<RequestModificationModalProps> =
 
   // Default the reason to the rubric/AI feedback. Generic one-line reasons
   // hide the evidence a student needs and are replaced by the backend too.
+  // Reset when the modal is opened for a different submission, otherwise a
+  // previous student's reason can be sent with this request.
   useEffect(() => {
-    if (!isOpen) {
-      setReason('');
-      setError(null);
-      return;
-    }
-    if (feedbackSuggestion && !reason) {
+    setReason('');
+    setError(null);
+  }, [isOpen, submission.id, submission.submission_type]);
+
+  useEffect(() => {
+    if (isOpen && feedbackSuggestion && !reason) {
       setReason(`Please address the following feedback before resubmitting:\n\n${feedbackSuggestion}`);
     }
   }, [isOpen, feedbackSuggestion]); // eslint-disable-line react-hooks/exhaustive-deps

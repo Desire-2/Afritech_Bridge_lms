@@ -83,6 +83,10 @@ export interface ContentAssignment {
     submitted_at?: string;
     graded_at?: string;
     grader_name?: string;
+    /** Revision reason kept separate from the grade feedback. */
+    modification_request_reason?: string;
+    modification_requested?: boolean;
+    can_resubmit?: boolean;
   };
   // Modification request fields
   modification_requested?: boolean;

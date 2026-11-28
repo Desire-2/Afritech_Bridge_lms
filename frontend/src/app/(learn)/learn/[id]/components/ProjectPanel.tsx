@@ -15,6 +15,7 @@ import StudentSubmissionService, {
 } from '@/services/student-submission.service';
 import { FileUploadService } from '@/services/file-upload.service';
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
+import StudentAageGradingResult from '@/components/grading/StudentAageGradingResult';
 import { TeamSection } from './TeamSection';
 import {
   getSubmissionRequirements,
@@ -198,12 +199,19 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
   const isSubmitted = isSubmissionHandedIn(submission);
   const isGraded = status?.status === 'graded';
   const needsRevision = status?.status === 'needs_revision';
-  const canResubmit = !!project?.can_resubmit || needsRevision || !isSubmitted;
+  // A pending revision request no longer implies an open resubmission window
+  // (the limit may already be reached). Only an explicit flag allows editing.
+  const canResubmit =
+    status?.can_resubmit === true || project?.can_resubmit === true || !isSubmitted;
   const dueDate = project?.due_date ? new Date(project.due_date) : null;
   const isOverdue = dueDate ? dueDate.getTime() < Date.now() : false;
   // Only trust an explicitly numeric grade — never fabricate a 0
   const rawGrade = submission?.grade ?? status?.grade;
   const numericGrade = typeof rawGrade === 'number' && Number.isFinite(rawGrade) ? rawGrade : null;
+  // A failing grade stays visible, but it must not look like a successful result.
+  const gradeTextClass = needsRevision
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-green-600 dark:text-green-400';
 
   // What this project actually accepts, driven by `submission_format`
   const requirements = getSubmissionRequirements(project?.submission_format);
@@ -290,6 +298,7 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
           <MarkdownRenderer
             content={
               status?.modification_request_reason ||
+              submission?.modification_request_reason ||
               submission?.modification_reason ||
               project?.modification_request_reason ||
               'Your instructor asked for changes. Update your work and resubmit.'
@@ -880,8 +889,8 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       <div className="mb-2 flex items-center justify-between">
                         <h5 className="text-sm font-semibold text-gray-900 dark:text-white">Grade</h5>
                         <div className="flex items-center gap-2">
-                          <Award className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden="true" />
-                          <span className="text-lg font-bold tabular-nums text-green-600 dark:text-green-400">
+                          <Award className={`h-4 w-4 ${gradeTextClass}`} aria-hidden="true" />
+                          <span className={`text-lg font-bold tabular-nums ${gradeTextClass}`}>
                             {numericGrade}/{project.points_possible}
                           </span>
                         </div>
@@ -918,6 +927,14 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                       )}
                     </div>
                   </div>
+                )}
+
+                {/* AAGE rubric analysis, published alongside the manual grade */}
+                {(submission?.id || status?.id) && (
+                  <StudentAageGradingResult
+                    submissionId={submission?.id || status?.id!}
+                    submissionType="project"
+                  />
                 )}
               </div>
             )}
@@ -1524,18 +1541,22 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
 
                     {/* Grade */}
                     {numericGrade !== null && (
-                      <div className="mb-6 rounded-xl border-2 border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 p-6 shadow-lg dark:border-green-700 dark:from-green-950/30 dark:to-emerald-950/30 sm:p-8">
+                      <div className={`mb-6 rounded-xl border-2 p-6 shadow-lg sm:p-8 ${
+                        needsRevision
+                          ? 'border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 dark:border-amber-700 dark:from-amber-950/30 dark:to-orange-950/30'
+                          : 'border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 dark:border-green-700 dark:from-green-950/30 dark:to-emerald-950/30'
+                      }`}>
                         <div className="mb-4 text-center">
                           <div className="mb-3 flex justify-center">
-                            <div className="rounded-full bg-green-100 p-3 dark:bg-green-900">
-                              <Award className="h-8 w-8 text-green-600 dark:text-green-400" aria-hidden="true" />
+                            <div className={`rounded-full p-3 ${needsRevision ? 'bg-amber-100 dark:bg-amber-900' : 'bg-green-100 dark:bg-green-900'}`}>
+                              <Award className={`h-8 w-8 ${gradeTextClass}`} aria-hidden="true" />
                             </div>
                           </div>
                           <p className="mb-2 text-xl font-bold tabular-nums text-gray-900 sm:text-2xl dark:text-white">
                             {numericGrade} / {project.points_possible} Points
                           </p>
                           {gradePercent !== null && (
-                            <p className="text-lg font-semibold text-green-600 sm:text-xl dark:text-green-400">
+                            <p className={`text-lg font-semibold sm:text-xl ${gradeTextClass}`}>
                               {gradePercent.toFixed(1)}%
                             </p>
                           )}
@@ -1557,7 +1578,11 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                               aria-label="Project score"
                             >
                               <div
-                                className="h-full rounded-full bg-gradient-to-r from-green-500 to-emerald-500 transition-all duration-700 ease-out"
+                                className={`h-full rounded-full transition-all duration-700 ease-out ${
+                                  needsRevision
+                                    ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                                    : 'bg-gradient-to-r from-green-500 to-emerald-500'
+                                }`}
                                 style={{ width: `${Math.min(Math.max(gradePercent, 0), 100)}%` }}
                               />
                             </div>
@@ -1605,6 +1630,14 @@ export const ProjectPanel: React.FC<ProjectPanelProps> = ({
                           )}
                         </div>
                       </div>
+                    )}
+
+                    {/* AAGE rubric analysis, published alongside the manual grade */}
+                    {(submission.id || status?.id) && (
+                      <StudentAageGradingResult
+                        submissionId={submission.id || status?.id!}
+                        submissionType="project"
+                      />
                     )}
 
                     {/* Revision request */}

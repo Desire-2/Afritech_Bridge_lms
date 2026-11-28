@@ -477,7 +477,12 @@ def _maybe_auto_publish(job: GradingJob, outcome: Any) -> None:
         # lands after the first check must not publish.
         if _job_status(job.id) != JOB_SUCCEEDED:
             return
-        if write_through_grade(result, actor_id=job.requested_by,
+        # Automatic dispatch defaults ``requested_by`` to the student; never
+        # record them as the grader of their own work.
+        actor_id = (job.requested_by
+                    if job.requested_by != getattr(result, "student_id", None)
+                    else None)
+        if write_through_grade(result, actor_id=actor_id,
                                reason="auto-publish (high confidence)"):
             _set_progress(job, {"stage": "published",
                                 "score": outcome.final_score,

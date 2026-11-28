@@ -9,7 +9,7 @@
  * unconditionally, which produced a 404 for every other course.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Lightbulb, Loader2, Sparkles, Target } from "lucide-react";
 import AageService, {
   StudentGradingStatus,
@@ -21,6 +21,7 @@ import ExcelGradingService, {
   StudentGradingResult,
 } from "@/services/excel-grading.service";
 import StudentExcelGradingResult from "./StudentExcelGradingResult";
+import MarkdownRenderer from "@/components/ui/MarkdownRenderer";
 
 type View = "loading" | "aage" | "pending" | "legacy" | "none";
 
@@ -90,9 +91,11 @@ function AageResultCard({ result }: { result: StudentPublishedResult }) {
           </p>
         )}
         {result.feedback && (
-          <p className="text-sm text-gray-600 dark:text-gray-300 mt-2 leading-relaxed whitespace-pre-wrap">
-            {result.feedback}
-          </p>
+          <MarkdownRenderer
+            content={result.feedback}
+            variant="card"
+            className="text-sm text-gray-600 dark:text-gray-300 mt-2 leading-relaxed"
+          />
         )}
       </div>
 
@@ -173,6 +176,7 @@ export default function StudentAageGradingResult({
   const [view, setView] = useState<View>("loading");
   const [aageResult, setAageResult] = useState<StudentPublishedResult | null>(null);
   const [legacyResult, setLegacyResult] = useState<StudentGradingResult | null>(null);
+  const pollsRef = useRef(0);
 
   const load = useCallback(
     async (silent = false): Promise<boolean> => {
@@ -238,15 +242,19 @@ export default function StudentAageGradingResult({
   );
 
   useEffect(() => {
+    pollsRef.current = 0;
     void load();
   }, [load]);
 
   // The page is often left open while the worker finishes. Poll the published
   // result endpoint so the score/feedback appears automatically, without a
-  // browser reload or an instructor action.
+  // browser reload. "none" and "legacy" also need a bounded poll because a
+  // job can be queued after this component first settles.
   useEffect(() => {
-    if (view !== "pending") return;
+    if (view === "loading" || view === "aage") return;
     const timer = window.setInterval(() => {
+      if (pollsRef.current >= 15) return;
+      pollsRef.current += 1;
       void load(true);
     }, 2000);
     return () => window.clearInterval(timer);

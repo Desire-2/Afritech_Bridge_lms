@@ -28,7 +28,9 @@ from ..models.aage_models import (
     GradingJob,
     GradingReview,
 )
-from ..models.course_models import Assignment, Course, Project
+from ..models.course_models import (
+    Assignment, AssignmentSubmission, Course, Project, ProjectSubmission,
+)
 from ..models.excel_grading_models import ExcelGradingResult
 from ..models.grading_models import Rubric
 from ..models.user_models import User, db
@@ -910,6 +912,27 @@ def list_grading_results():
     })
 
 
+def _team_project_ids(submission_id: int, user_id: int):
+    """All project submission ids/owners represented by a teammate's row.
+
+    AAGE is enqueued for the submitting student, but a collaborative grade is
+    mirrored to the whole team. Student-facing lookups must therefore accept
+    any teammate's submission id and return the same published result.
+    """
+    row = ProjectSubmission.query.get(submission_id)
+    if row is None:
+        return None, None
+    from ..services.project_scoring_service import team_member_ids
+    member_ids = team_member_ids(row.project, row)
+    if int(user_id) not in member_ids:
+        return None, None
+    rows = ProjectSubmission.query.filter(
+        ProjectSubmission.project_id == row.project_id,
+        ProjectSubmission.student_id.in_(member_ids),
+    ).all()
+    return [int(item.id) for item in rows], member_ids
+
+
 def _student_result_payload(result) -> Dict[str, Any]:
     """Whitelisted projection: no prompts, evidence or internal diagnostics."""
     model = Assignment if result.assessment_kind == SUBMISSION_ASSIGNMENT else Project
@@ -928,6 +951,23 @@ def _student_result_payload(result) -> Dict[str, Any]:
         if isinstance(item, dict) and isinstance(item.get("title"), str)
     ]
 
+    # Revision state lives on the LMS submission, not on the AI result. Keep
+    # it separate from feedback so the result page can explain why a resubmit
+    # was requested without overwriting the grade narrative.
+    modification_reason = None
+    submission_model = (AssignmentSubmission if result.submission_type == "assignment"
+                        else ProjectSubmission)
+    lms_submission = submission_model.query.get(result.submission_id)
+    if lms_submission is not None:
+        if result.submission_type == "project":
+            state = lms_submission.modification_state()
+            modification_reason = (
+                state.get("modification_request_reason")
+                if state.get("modification_requested") else None
+            )
+        elif getattr(assessment, "modification_requested", False):
+            modification_reason = getattr(assessment, "modification_request_reason", None)
+
     return {
         "submission_id": result.submission_id,
         "submission_type": result.submission_type,
@@ -942,6 +982,7 @@ def _student_result_payload(result) -> Dict[str, Any]:
         "points_awarded": result.points_awarded,
         "total_possible": result.total_possible,
         "feedback": result.feedback,
+        "modification_request_reason": modification_reason,
         "strengths": result.strengths or [],
         "improvements": result.improvements or [],
         "recommended_resources": recommended_resources,
@@ -971,9 +1012,17 @@ def get_student_result(submission_id: int):
         raise RouteError("invalid_payload",
                          "submission_type must be assignment or project")
 
+    submission_ids = [submission_id]
+    student_ids = [user.id]
+    if submission_type != "assignment":
+        team_submissions, team_students = _team_project_ids(submission_id, user.id)
+        if team_submissions:
+            submission_ids = team_submissions
+            student_ids = team_students
+
     query = persistence.EvaluationResult.query.filter(
-        persistence.EvaluationResult.submission_id == submission_id,
-        persistence.EvaluationResult.student_id == user.id,
+        persistence.EvaluationResult.submission_id.in_(submission_ids),
+        persistence.EvaluationResult.student_id.in_(student_ids),
         or_(persistence.EvaluationResult.is_official.is_(True),
             persistence.EvaluationResult.status == RESULT_PUBLISHED))
     if submission_type:
@@ -1011,9 +1060,17 @@ def student_grading_status(submission_id: int):
         raise RouteError("invalid_payload",
                          "submission_type must be assignment or project")
 
+    submission_ids = [submission_id]
+    student_ids = [user.id]
+    if submission_type != "assignment":
+        team_submissions, team_students = _team_project_ids(submission_id, user.id)
+        if team_submissions:
+            submission_ids = team_submissions
+            student_ids = team_students
+
     query = GradingJob.query.filter(
-        GradingJob.submission_id == submission_id,
-        GradingJob.student_id == user.id,
+        GradingJob.submission_id.in_(submission_ids),
+        GradingJob.student_id.in_(student_ids),
         GradingJob.job_type == JOB_TYPE_GRADE,
     )
     if submission_type:
@@ -1027,7 +1084,7 @@ def student_grading_status(submission_id: int):
     if submission_type:
         try:
             loaded = persistence.load_submission(submission_type, submission_id)
-            if int(loaded.student_id) == int(user.id):
+            if int(loaded.student_id) in {int(sid) for sid in student_ids}:
                 course = (getattr(loaded.parent, "course", None)
                           or Course.query.get(loaded.course_id))
                 engine = "aage"
@@ -1103,9 +1160,10 @@ def publish_grading_result(result_id: int):
         raise RouteError("policy_blocked",
                          f"confidence is below the policy minimum of {minimum}", 409)
 
-    # Explicit instructor publication is a human decision: the automated gate
-    # must not silently override it, but the write-through still blocks
-    # superseded results and cancelled jobs.
+    # This generic publish endpoint enforces the confidence policy; the
+    # dedicated review-approval path is the explicit human override that
+    # bypasses automated gates. Both use write_through_grade(manual), which
+    # still blocks superseded results and cancelled jobs.
     published = persistence.write_through_grade(
         result, actor_id=user.id, reason="explicit API publication",
         publication_mode="manual")

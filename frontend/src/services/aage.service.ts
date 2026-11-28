@@ -136,17 +136,31 @@ export function ratioToPercent(value: number | null | undefined, digits = 2): nu
 
 const RATE_METRIC_KEYS = [
   'criterion_agreement',
+  'agreement',
+  'reliability',
   'false_pass_rate',
   'false_fail_rate',
   'override_rate',
 ] as const;
 
+const RATE_METRIC_KEY_SET: ReadonlySet<string> = new Set(RATE_METRIC_KEYS);
+
+/**
+ * Convert backend 0-1 ratios to 0-100 percentages. Calibration nests rates in
+ * `baseline`, `candidate`, `by_evaluator` and `by_evaluator_candidate`, so the
+ * conversion must recurse rather than only inspect the top level.
+ */
 function normalizeRateMetrics(raw: Record<string, unknown>): Record<string, unknown> {
-  const normalized = { ...raw };
-  for (const key of RATE_METRIC_KEYS) {
-    if (!(key in normalized)) continue;
-    const value = finiteNumber(normalized[key]);
-    normalized[key] = value === undefined ? null : ratioToPercent(value);
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (RATE_METRIC_KEY_SET.has(key)) {
+      const numeric = finiteNumber(value);
+      normalized[key] = numeric === undefined ? null : ratioToPercent(numeric);
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      normalized[key] = normalizeRateMetrics(value as Record<string, unknown>);
+    } else {
+      normalized[key] = value;
+    }
   }
   return normalized;
 }
@@ -1249,6 +1263,8 @@ export interface StudentPublishedResult {
   points_awarded?: number | null;
   total_possible?: number;
   feedback?: string | null;
+  /** Separate revision request reason from the LMS submission. */
+  modification_request_reason?: string | null;
   strengths?: string[];
   improvements?: string[];
   recommended_resources?: RecommendedResource[];

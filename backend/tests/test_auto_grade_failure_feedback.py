@@ -370,3 +370,50 @@ def test_manual_revision_preserves_feedback_and_replaces_generic_reason(app, env
         )
         assert row.feedback == original_feedback
         assert row.grade == 45.0
+
+
+def test_assignment_revision_state_is_per_student(app, env):
+    """A cohort-wide legacy flag must not give another student a revision."""
+    with app.app_context():
+        assignment = db.session.get(Assignment, env["assignment_id"])
+        own_completion = LessonCompletion.query.filter_by(
+            student_id=env["student_id"], lesson_id=assignment.lesson_id,
+        ).first()
+        own_completion.assignment_needs_resubmission = True
+        own_completion.modification_request_reason = "Only the first student failed"
+
+        other_completion = LessonCompletion.query.filter_by(
+            student_id=env["teammate_id"], lesson_id=assignment.lesson_id,
+        ).first()
+        if other_completion is None:
+            other_completion = LessonCompletion(
+                student_id=env["teammate_id"], lesson_id=assignment.lesson_id,
+            )
+            db.session.add(other_completion)
+        other_completion.assignment_needs_resubmission = False
+        other_completion.modification_request_reason = None
+
+        # Legacy parent state is still set for the whole assignment.
+        assignment.modification_requested = True
+        assignment.modification_request_reason = "Only the first student failed"
+        assignment.can_resubmit = True
+
+        other_submission = AssignmentSubmission(
+            assignment_id=assignment.id, student_id=env["teammate_id"],
+            content="other work", submitted_at=now_local(), grade=90.0,
+            feedback="Good work", graded_at=now_local(),
+        )
+        db.session.add(other_submission)
+        db.session.commit()
+
+        own = db.session.get(AssignmentSubmission, env["submission_id"])
+        own_status = _build_assignment_submission_status(assignment, own)
+        assert own_status["status"] == "needs_revision"
+        assert own_status["modification_request_reason"] == "Only the first student failed"
+
+        other_status = _build_assignment_submission_status(assignment, other_submission)
+        assert other_status["status"] == "graded"
+        assert other_status["modification_requested"] is False
+        assert other_status["modification_request_reason"] is None
+        assert other_status["can_resubmit"] is False
+        assert other_status["grade"] == 90.0

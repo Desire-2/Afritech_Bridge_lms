@@ -62,6 +62,7 @@ const AssignmentGradingDetail = () => {
   const [autoSaving, setAutoSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [rubricScores, setRubricScores] = useState<Record<string, number>>({});
+  const [rubricDetails, setRubricDetails] = useState<Array<{ name: string; score: number; max_points: number }>>([]);
 
   // ── UI panels ──────────────────────────────────
   const [showDescription, setShowDescription] = useState(false);
@@ -102,7 +103,24 @@ const AssignmentGradingDetail = () => {
     return { bg: 'bg-red-500', text: 'text-red-600 dark:text-red-400', badge: 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400' };
   };
 
-  const isModificationRequested = submission?.assignment?.modification_requested;
+  // The submission row owns revision state; the nested assignment object is
+  // only a legacy fallback for older payloads.
+  const revisionStatus = submission?.submission_status;
+  const isModificationRequested = Boolean(
+    submission?.modification_requested ??
+    revisionStatus?.modification_requested ??
+    submission?.assignment?.modification_requested
+  );
+  const modificationReason = submission?.modification_request_reason ??
+    revisionStatus?.modification_request_reason ??
+    submission?.assignment?.modification_request_reason;
+  const modificationRequestedAt = submission?.modification_requested_at ??
+    submission?.modification_request_at ??
+    revisionStatus?.modification_requested_at ??
+    submission?.assignment?.modification_request_at;
+  const canResubmit = submission?.can_resubmit ??
+    revisionStatus?.can_resubmit ??
+    submission?.assignment?.can_resubmit;
   const isAIGraded = submission?.graded_by === null && submission?.grade !== undefined && submission?.grade !== null;
   const hasExistingGrade = submission?.grade !== undefined && submission?.grade !== null;
 
@@ -189,11 +207,15 @@ const AssignmentGradingDetail = () => {
       const resubLimit = maxResubmissions ? parseInt(maxResubmissions) : undefined;
       if (hasExistingGrade) {
         await GradingService.updateAssignmentGrade(submissionId, {
-          grade: gradeValue, feedback, max_resubmissions: resubLimit
+          grade: gradeValue, feedback, max_resubmissions: resubLimit,
+          rubric_scores: Object.keys(rubricScores).length ? rubricScores : undefined,
+          rubric_criteria: rubricDetails.length ? rubricDetails : undefined,
         });
       } else {
         await GradingService.gradeAssignment(submissionId, {
-          grade: gradeValue, feedback, max_resubmissions: resubLimit
+          grade: gradeValue, feedback, max_resubmissions: resubLimit,
+          rubric_scores: Object.keys(rubricScores).length ? rubricScores : undefined,
+          rubric_criteria: rubricDetails.length ? rubricDetails : undefined,
         });
       }
 
@@ -242,13 +264,13 @@ const AssignmentGradingDetail = () => {
     setAutoSaving(true);
     try {
       localStorage.setItem(`grading_draft_assignment_${submissionId}`, JSON.stringify({
-        grade, feedback, rubricScores, timestamp: new Date().toISOString()
+        grade, feedback, rubricScores, rubricDetails, timestamp: new Date().toISOString()
       }));
       setLastSaved(new Date());
     } catch { /* ignore */ } finally {
       setAutoSaving(false);
     }
-  }, [grade, feedback, rubricScores, submissionId]);
+  }, [grade, feedback, rubricScores, rubricDetails, submissionId]);
 
   // Load draft on mount
   useEffect(() => {
@@ -259,6 +281,7 @@ const AssignmentGradingDetail = () => {
         setGrade(d.grade || '');
         setFeedback(d.feedback || '');
         setRubricScores(d.rubricScores || {});
+        setRubricDetails(d.rubricDetails || []);
       } catch { /* ignore */ }
     }
   }, [submissionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -273,9 +296,14 @@ const AssignmentGradingDetail = () => {
     feedbackRef.current?.focus();
   };
 
-  const handleRubricApply = (totalScore: number, scores: Record<string, number>) => {
+  const handleRubricApply = (
+    scores: Record<string, number>,
+    totalScore: number,
+    details: Array<{ name: string; score: number; max_points: number }> = []
+  ) => {
     setGrade(totalScore.toString());
     setRubricScores(scores);
+    setRubricDetails(details);
   };
 
   // ═════════════════════════════════════════════════════
@@ -391,23 +419,23 @@ const AssignmentGradingDetail = () => {
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-amber-800 dark:text-amber-300 text-sm">Modification Requested</h3>
-              {submission.assignment?.modification_request_reason && (
+              {modificationReason && (
                 <div className="mt-1.5 text-sm text-amber-700 dark:text-amber-400">
                   <MarkdownRenderer
-                    content={submission.assignment.modification_request_reason}
+                    content={modificationReason}
                     variant="card"
                     className="prose-amber text-sm"
                   />
                 </div>
               )}
               <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-amber-600 dark:text-amber-500">
-                {submission.assignment?.modification_request_at && (
+                {modificationRequestedAt && (
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    {new Date(submission.assignment.modification_request_at).toLocaleString()}
+                    {new Date(modificationRequestedAt).toLocaleString()}
                   </span>
                 )}
-                {submission.assignment?.can_resubmit && (
+                {canResubmit && (
                   <span className="flex items-center gap-1">
                     <CheckCircle className="w-3 h-3" /> Student can resubmit
                   </span>
@@ -714,9 +742,11 @@ const AssignmentGradingDetail = () => {
               {showRubricPanel && (
                 <div className="border border-purple-200 dark:border-purple-800 rounded-lg p-4 bg-purple-50 dark:bg-purple-900/10">
                   <RubricGradingPanel
+                    submissionType="assignment"
                     assignmentId={submission.assignment?.id}
                     maxPoints={maxPoints}
                     onApplyScores={handleRubricApply}
+                    onClose={() => setShowRubricPanel(false)}
                     initialScores={rubricScores}
                   />
                 </div>
@@ -1211,7 +1241,8 @@ const AssignmentGradingDetail = () => {
             assignment_id: submission.assignment_id,
             submission_type: 'assignment',
             existing_feedback: submission.feedback || feedback,
-            rubricScores
+            rubricScores,
+            rubricDetails
           }}
           onSuccess={() => {
             setShowModificationModal(false);

@@ -24,6 +24,11 @@ from ..services.notification_service import (
     notify_modification_requested,
     notify_resubmission_received,
 )
+from ..services.grading_feedback import (
+    aage_grade_data,
+    build_revision_reason,
+    stored_feedback_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -438,14 +443,19 @@ def grade_assignment_submission(submission_id):
         
         # Store rubric scores if provided with better structure
         rubric_scores = data.get('rubric_scores')
-        if rubric_scores and isinstance(rubric_scores, dict):
+        rubric_criteria = data.get('rubric_criteria')
+        if (rubric_scores and isinstance(rubric_scores, dict)) or (
+            rubric_criteria and isinstance(rubric_criteria, list)
+        ):
             rubric_data = {
                 'feedback': submission.feedback,
-                'rubric_scores': rubric_scores,
+                'rubric_scores': rubric_scores if isinstance(rubric_scores, dict) else {},
                 'graded_at': submission.graded_at.isoformat(),
                 'graded_by': current_user_id,
                 'version': '1.0'  # For future compatibility
             }
+            if isinstance(rubric_criteria, list):
+                rubric_data['rubric_criteria'] = rubric_criteria
             # Store as properly formatted JSON
             submission.feedback = json.dumps(rubric_data, indent=2)
 
@@ -583,7 +593,13 @@ def grade_assignment_submission(submission_id):
                         student_id, lesson_id
                     )
                     
-                    if can_complete and not lesson_completion.completed:
+                    configured_passing = (
+                        assignment.passing_score
+                        if assignment.passing_score is not None
+                        else DEFAULT_PASSING_PERCENTAGE
+                    )
+                    if (can_complete and not lesson_completion.completed
+                            and assignment_percentage >= configured_passing):
                         # Auto-complete the lesson since all requirements are now met
                         success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
                             student_id, lesson_id
@@ -617,17 +633,30 @@ def grade_assignment_submission(submission_id):
                 current_resubs = assignment.resubmission_count or 0
                 
                 if current_resubs < max_resubs:
-                    # Build auto-modification reason
-                    modification_reason = (
-                        f"Your score of {grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
-                        f"passing threshold of {passing_threshold}%. "
-                        f"Please review the instructor feedback and resubmit your work with improvements."
+                    # Ground the revision request in the AAGE/rubric evidence
+                    # instead of a generic placeholder.
+                    grade_data = aage_grade_data('assignment', submission.id)
+                    if isinstance(rubric_criteria, list):
+                        grade_data['rubric_criteria'] = rubric_criteria
+                    if isinstance(rubric_scores, dict):
+                        grade_data['rubric_scores'] = rubric_scores
+                    modification_reason = build_revision_reason(
+                        total_score=grade,
+                        max_score=points_possible,
+                        passing_score=passing_threshold,
+                        grade_data=grade_data,
+                        existing_feedback=stored_feedback_text(submission.feedback),
                     )
-                    
-                    # If instructor provided custom feedback, include it in the reason
-                    instructor_feedback = data.get('feedback', '').strip()
-                    if instructor_feedback:
-                        modification_reason += f"\n\nInstructor Feedback: {instructor_feedback}"
+
+                    lesson_id = getattr(assignment, 'lesson_id', None)
+                    if lesson_id:
+                        lesson_completion = LessonCompletion.query.filter_by(
+                            student_id=submission.student_id, lesson_id=lesson_id
+                        ).first()
+                        if lesson_completion:
+                            lesson_completion.assignment_graded = False
+                            lesson_completion.assignment_needs_resubmission = True
+                            lesson_completion.modification_request_reason = modification_reason
                     
                     # Set modification request fields on the assignment
                     assignment.modification_requested = True
@@ -895,14 +924,25 @@ def bulk_grade_assignments():
                         current_resubs = assignment.resubmission_count or 0
                         
                         if current_resubs < max_resubs:
-                            mod_reason = (
-                                f"Your score of {grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
-                                f"passing threshold of {passing_threshold}%. "
-                                f"Please review the instructor feedback and resubmit your work with improvements."
+                            grade_data = aage_grade_data('assignment', submission.id)
+                            mod_reason = build_revision_reason(
+                                total_score=grade,
+                                max_score=points_possible,
+                                passing_score=passing_threshold,
+                                grade_data=grade_data,
+                                existing_feedback=stored_feedback_text(submission.feedback or feedback),
                             )
-                            if feedback:
-                                mod_reason += f"\n\nInstructor Feedback: {feedback}"
-                            
+
+                            if assignment.lesson_id:
+                                lesson_completion = LessonCompletion.query.filter_by(
+                                    student_id=submission.student_id,
+                                    lesson_id=assignment.lesson_id,
+                                ).first()
+                                if lesson_completion:
+                                    lesson_completion.assignment_graded = False
+                                    lesson_completion.assignment_needs_resubmission = True
+                                    lesson_completion.modification_request_reason = mod_reason
+
                             assignment.modification_requested = True
                             assignment.modification_request_reason = mod_reason
                             assignment.modification_requested_at = now_local()
@@ -1302,15 +1342,20 @@ def grade_project_submission(submission_id):
         
         # Store rubric scores if provided with better structure
         rubric_scores = data.get('rubric_scores')
-        if rubric_scores and isinstance(rubric_scores, dict):
+        rubric_criteria = data.get('rubric_criteria')
+        if (rubric_scores and isinstance(rubric_scores, dict)) or (
+            rubric_criteria and isinstance(rubric_criteria, list)
+        ):
             rubric_data = {
                 'feedback': submission.feedback,
-                'rubric_scores': rubric_scores,
+                'rubric_scores': rubric_scores if isinstance(rubric_scores, dict) else {},
                 'graded_at': submission.graded_at.isoformat(),
                 'graded_by': current_user_id,
                 'project_type': 'collaborative' if submission.project.collaboration_allowed else 'individual',
                 'version': '1.0'  # For future compatibility
             }
+            if isinstance(rubric_criteria, list):
+                rubric_data['rubric_criteria'] = rubric_criteria
             # Store as properly formatted JSON
             submission.feedback = json.dumps(rubric_data, indent=2)
 
@@ -1437,18 +1482,29 @@ def grade_project_submission(submission_id):
                     if (sub.resubmission_count or 0) < max_resubs
                 ]
                 if eligible:
-                    modification_reason = (
-                        f"Your project score of {grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
-                        f"passing threshold of {passing_threshold}%. "
-                        f"Please review the instructor feedback and resubmit your project with improvements."
+                    grade_data = aage_grade_data('project', submission.id)
+                    if isinstance(rubric_criteria, list):
+                        grade_data['rubric_criteria'] = rubric_criteria
+                    if isinstance(rubric_scores, dict):
+                        grade_data['rubric_scores'] = rubric_scores
+                    modification_reason = build_revision_reason(
+                        total_score=grade,
+                        max_score=points_possible,
+                        passing_score=passing_threshold,
+                        grade_data=grade_data,
+                        existing_feedback=stored_feedback_text(submission.feedback),
                     )
 
-                    instructor_feedback = data.get('feedback', '').strip()
-                    if instructor_feedback:
-                        modification_reason += f"\n\nInstructor Feedback: {instructor_feedback}"
-
                     from ..services.project_scoring_service import request_project_modification
-                    request_project_modification(eligible, modification_reason, current_user_id)
+                    request_project_modification(
+                        eligible,
+                        modification_reason,
+                        current_user_id,
+                        grade=grade,
+                        feedback=submission.feedback,
+                        graded_at=submission.graded_at,
+                        graded_by=current_user_id,
+                    )
 
                     db.session.commit()
                     modification_auto_requested = True
@@ -2432,13 +2488,18 @@ def quick_grade():
             # covered module and every team member, exactly like the full
             # grading endpoint.
             from ..services.project_scoring_service import (
-                distribute_project_score, team_member_ids,
+                distribute_project_score, mirror_project_grade, team_member_ids,
             )
             points = submission.project.points_possible or 100
             pct = max(0.0, min(100.0, (grade / points) * 100)) if points > 0 else 0.0
             distribute_project_score(
                 submission.project, team_member_ids(submission.project, submission),
                 pct, allow_lower=True,
+            )
+            mirror_project_grade(
+                submission.project, submission,
+                grade=grade, feedback=feedback,
+                graded_at=submission.graded_at, graded_by=current_user_id,
             )
 
         from ..talent_passport.hooks import notify_talent_passport
