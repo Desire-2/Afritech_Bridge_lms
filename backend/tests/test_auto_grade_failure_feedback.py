@@ -495,3 +495,75 @@ def test_modification_history_and_stats_include_projects(app, env):
         assert stats["total_projects"] >= 1
         assert stats["projects_with_modifications"] >= 1
         assert stats["pending_resubmissions"] >= 1
+
+
+def test_passing_project_grade_clears_stale_revision_state(app, env):
+    """A high AI score must retire an older revision request for the team."""
+    with app.app_context():
+        primary = db.session.get(ProjectSubmission, env["primary_id"])
+        teammate = db.session.get(ProjectSubmission, env["other_id"])
+        project = db.session.get(Project, env["project_id"])
+        for row in (primary, teammate):
+            row.modification_requested = True
+            row.modification_request_reason = "Old failed attempt"
+            row.modification_requested_at = now_local()
+            row.modification_requested_by = env["instructor_id"]
+            row.can_resubmit = True
+            row.resubmission_count = 1
+        project.modification_requested = True
+        project.modification_request_reason = "Old failed attempt"
+        project.can_resubmit = True
+        db.session.commit()
+
+        assert _apply_grade_to_submission(
+            app, env["primary_id"], "project", env["student_id"],
+            85.0, 100.0, GRADE_DATA,
+        ) is True
+
+        db.session.refresh(primary)
+        db.session.refresh(teammate)
+        db.session.refresh(project)
+        assert primary.grade == 85.0
+        for row in (primary, teammate):
+            assert row.modification_requested is False
+            assert row.can_resubmit is False
+            assert row.modification_request_reason is None
+        assert project.modification_requested is False
+        assert project.can_resubmit is False
+
+
+def test_passing_project_score_never_auto_requests_revision(app, env):
+    with app.app_context():
+        primary = db.session.get(ProjectSubmission, env["primary_id"])
+        primary.modification_requested = True
+        primary.can_resubmit = True
+        db.session.commit()
+
+        details: dict = {}
+        assert _auto_request_modification_if_needed(
+            app, env["primary_id"], "project", env["student_id"],
+            85.0, 100.0, GRADE_DATA, details=details,
+        ) is False
+        assert details["status"] == "not_needed"
+        db.session.refresh(primary)
+        assert primary.resubmission_count == 0
+
+
+def test_automatic_revision_notification_does_not_blame_instructor(app, env):
+    from src.models.notification_models import Notification
+    from src.services.notification_service import notify_modification_requested
+
+    with app.app_context():
+        project = db.session.get(Project, env["project_id"])
+        notify_modification_requested(
+            env["student_id"], project, "AI found missing citations",
+            actor_id=None, course_id=env["course_id"], is_project=True,
+        )
+        note = Notification.query.filter_by(
+            user_id=env["student_id"],
+        ).order_by(Notification.id.desc()).first()
+        assert note is not None
+        assert "Automatic Review" in note.title
+        assert "AI review" in note.message
+        assert note.meta["requested_by"] == "ai_review"
+        assert note.actor_id is None

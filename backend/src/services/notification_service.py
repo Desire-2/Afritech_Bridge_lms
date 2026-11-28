@@ -288,22 +288,41 @@ def notify_modification_requested(
     course_id: int = None,
     is_project: bool = False,
 ):
-    """Notify student that a modification (resubmission) was requested."""
+    """Notify student that a modification (resubmission) was requested.
+
+    ``actor_id=None`` means the request came from automatic grading. Say so
+    explicitly: an AI review must never appear as an instructor's manual
+    decision in the student's notification feed.
+    """
     item_type = "Project" if is_project else "Assignment"
     title_text = assignment_or_project.title
+    automatic = actor_id is None
+    source = "AI review" if automatic else "Your instructor"
+    title = (
+        f"Automatic Review: Resubmission Requested: {title_text}"
+        if automatic else f"Resubmission Requested: {title_text}"
+    )
+    message = (
+        f"{source} requested a resubmission for {item_type.lower()} "
+        f"\"{title_text}\". Reason: {reason[:200]}"
+    )
 
     n = _create_notification(
         user_id=student_id,
         notification_type=NotificationType.GRADE_MODIFICATION_REQUESTED,
-        title=f"Resubmission Requested: {title_text}",
-        message=f"Your instructor has requested a resubmission for {item_type.lower()} \"{title_text}\". Reason: {reason[:200]}",
+        title=title,
+        message=message,
         priority=NotificationPriority.URGENT,
         action_url=f"/student/modifications",
         actor_id=actor_id,
         course_id=course_id,
         assignment_id=assignment_or_project.id if not is_project else None,
         project_id=assignment_or_project.id if is_project else None,
-        metadata={'reason': reason, 'item_type': item_type},
+        metadata={
+            'reason': reason,
+            'item_type': item_type,
+            'requested_by': 'ai_review' if automatic else 'instructor',
+        },
     )
     _bulk_commit()
     return n

@@ -14,6 +14,8 @@ import threading
 import time
 from typing import Optional, Dict, Any, List
 
+from sqlalchemy import or_
+
 from .excel_file_detection import (
     course_is_excel,
     has_excel_files as _has_detected_excel_files,
@@ -314,6 +316,60 @@ def _mark_excel_result_preliminary(
             pass
 
 
+def _clear_project_revision_if_passing(
+    project, submission, effective_grade, points_possible,
+) -> bool:
+    """Retire a project revision request once a passing grade is published.
+
+    Project rows have their own revision state. The legacy flags on ``Project``
+    are cohort-wide and may only be cleared when no teammate is still waiting
+    to resubmit. Returns True when a request was cleared.
+    """
+    if project is None or submission is None:
+        return False
+    try:
+        from src.models.course_models import ProjectSubmission
+        from src.services.project_scoring_service import (
+            clear_project_modification, team_member_ids,
+        )
+        from src.models.user_models import db
+
+        passing_score = float(getattr(project, 'passing_score', None) or 60.0)
+        maximum = float(points_possible or 100) or 100.0
+        percentage = (float(effective_grade or 0) / maximum) * 100.0
+        percentage = max(0.0, min(100.0, percentage))
+        if percentage < passing_score:
+            return False
+
+        member_ids = team_member_ids(project, submission)
+        rows = ProjectSubmission.query.filter(
+            ProjectSubmission.project_id == project.id,
+            ProjectSubmission.student_id.in_(member_ids),
+        ).all()
+        if not rows:
+            return False
+        clear_project_modification(rows)
+
+        still_pending = ProjectSubmission.query.filter(
+            ProjectSubmission.project_id == project.id,
+            or_(
+                ProjectSubmission.modification_requested.is_(True),
+                ProjectSubmission.can_resubmit.is_(True),
+            ),
+        ).first()
+        if not still_pending:
+            project.modification_requested = False
+            project.modification_request_reason = None
+            project.modification_requested_at = None
+            project.modification_requested_by = None
+            project.can_resubmit = False
+        db.session.flush()
+        return True
+    except Exception as exc:  # pragma: no cover - defensive cleanup
+        logger.warning(f"Could not clear passing project revision: {exc}")
+        return False
+
+
 def _apply_grade_to_submission(
     app,
     submission_id: int,
@@ -400,6 +456,16 @@ def _apply_grade_to_submission(
                     lower_grade_retained = True
             except (TypeError, ValueError):
                 pass
+
+        # A passing project score retires the older revision request even when
+        # the numeric grade itself was retained at a higher published value.
+        if submission_type == 'project' and parent is not None:
+            effective_grade = (
+                float(existing_grade) if lower_grade_retained else scaled_grade
+            )
+            _clear_project_revision_if_passing(
+                parent, submission, effective_grade, points_possible,
+            )
 
         # The AAGE narrative alone can be a short summary. Append the rubric
         # breakdown so the student sees why each criterion lost marks, exactly
@@ -505,6 +571,7 @@ def _update_learning_progress(
         else:
             percentage_score = 0
         percentage_score = max(0, min(100, percentage_score))
+        passing_score = getattr(parent, 'passing_score', None) or 60.0
 
         # Projects have ``module_ids`` (not ``module_id``) and can cover
         # several modules and several students. Use the shared distributor
@@ -513,9 +580,16 @@ def _update_learning_progress(
             from src.services.project_scoring_service import (
                 distribute_project_score, team_member_ids,
             )
+            # This branch returns below, so the shared "clear on passing"
+            # block at the end never runs for projects.
+            _clear_project_revision_if_passing(
+                parent, submission, percentage_score, 100.0,
+            )
+            member_ids = team_member_ids(parent, submission)
+
             distributed = distribute_project_score(
                 parent,
-                team_member_ids(parent, submission),
+                member_ids,
                 percentage_score,
                 allow_lower=allow_lower,
             )
@@ -654,7 +728,6 @@ def _update_learning_progress(
                     )
 
         # ── 3. Clear modification flags if passing ────────────────
-        passing_score = getattr(parent, 'passing_score', None) or 60.0
         if percentage_score >= passing_score:
             cleared = False
             if submission_type == 'project':
