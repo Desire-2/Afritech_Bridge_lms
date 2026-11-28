@@ -4,11 +4,14 @@
 console.log('=== File Upload Service Test ===');
 
 try {
-    // Test environment setup
-    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_5zXbcjoWYqcsdo8z_h2cVge5b3TMn9ovp0JwSd444ZVZNAP";
-    process.env.NEXT_PUBLIC_API_URL = "http://192.168.0.4:5001/api/v1";
-    
-    console.log('Environment variables set');
+    // Test environment setup. Credentials must come from the environment;
+    // never commit a Blob token to source control.
+    process.env.NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        console.warn('BLOB_READ_WRITE_TOKEN is not set — set it in your environment before testing uploads');
+    }
+
+    console.log('Environment variables checked');
     console.log('BLOB_READ_WRITE_TOKEN present:', !!process.env.BLOB_READ_WRITE_TOKEN);
     console.log('NEXT_PUBLIC_API_URL:', process.env.NEXT_PUBLIC_API_URL);
     
